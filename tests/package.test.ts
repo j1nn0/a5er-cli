@@ -39,7 +39,7 @@ describe('package manifest', () => {
     const pkg = readPackageJson()
     const engines = pkg['engines']
 
-    expect(engines).toEqual({ node: '>=22' })
+    expect(engines).toEqual({ node: '>=24' })
   })
 
   it('has no runtime dependencies', () => {
