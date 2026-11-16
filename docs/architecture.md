@@ -493,6 +493,13 @@ as ASCII for `^#\s*A5:ER\s*(FORMAT|ENCODING)\s*:\s*(\S+)$`, then re-parsed from 
 text as authoritative. This resolves the chicken-and-egg problem without trusting undecoded
 bytes.
 
+*Implementation status (unit U-2B):* the NUL-density heuristic for a UTF-16 file with **no BOM**
+is not implemented. Its condition is stated too loosely here ("odd-byte NUL ≥ 85 % printable") to
+pick a threshold without inventing one, so such a file decodes as UTF-8 — valid bytes with their
+NULs preserved — instead of being decoded as UTF-16. Every UTF-16 fixture carries a BOM (`enc-05`).
+The heuristic stays a design requirement until the threshold is fixed; `src/decode/decode.ts`
+records the same note next to the candidate list.
+
 ### 8.2 Decoding is strict; there is no lossy path (L3)
 
 `TextDecoder(codec, { fatal: true })` for every candidate. The first candidate that decodes
