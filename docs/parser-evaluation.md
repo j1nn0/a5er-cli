@@ -352,8 +352,10 @@ spec misreads.
 1. **Reimplement (do not copy)** two things learned from A, from observed behaviour rather
    than from its source: (a) the **warning taxonomy split** — trusted codes in a `warnings`
    array, untrusted file values in a separate `details` list, so hostile file content can
-   never masquerade as a trusted code; (b) the **encoding fallback chain** — strict UTF-8
-   first, then a legacy codec, then lossy decoding only as a last resort with a diagnostic.
+   never masquerade as a trusted code; (b) the **encoding probe order** — strict UTF-8 first,
+   then `shift_jis`, then `utf-16le`, every candidate decoded with `fatal: true` and rejected if
+   it yields U+FFFD. No lossy step is reimplemented: a file no candidate decodes is fatal
+   (`E_UNDECODABLE`), never mojibake.
    Both are roughly 50–150 LOC to reimplement, which removes the attribution and divergence
    question entirely.
 2. **Do what neither target did**: make `IndexInfo` the canonical index source; keep
@@ -387,7 +389,7 @@ B.
 |---|---|---|
 | L1 | **No untyped escape hatch.** Unknown data is retained in an explicitly typed raw-entry shape (section, key, raw value, source line), never as `Record<string, unknown>` on the public model. | A's `manager: Record<string, unknown>`: unknown data survives but with no provenance, no type, and no location — and only for one section. |
 | L2 | **No ignored errors.** Every unsupported section, unsupported key, undecodable byte sequence, malformed row and truncated element produces a diagnostic record that appears in output. No bare catch, no silently dropped branch. | B's diagnostic-free `switch` default and A's `[Memo]`-yields-nothing policy. |
-| L3 | **No lossy decoding by default.** Invalid UTF-8 yields a diagnostic; lossy text is emitted only under an explicit fallback step and is marked as such. Numbers are never re-coerced: raw text is always retained beside any typed value. | A's 0.9.9 `17777777777777777777` → `…79000` and `0012.50` → `12.5`, both silent. |
+| L3 | **No lossy decoding.** The chain is strict at every step — `utf-8` → `shift_jis` → `utf-16le`, each with `fatal: true` and U+FFFD rejection; no lossy step exists, and an undecodable file is fatal (`E_UNDECODABLE`). Numbers are never re-coerced: raw text is always retained beside any typed value. | A's 0.9.9 `17777777777777777777` → `…79000` and `0012.50` → `12.5`, both silent. |
 | L4 | **No illusory tests.** A test must assert a *value parsed from a fixture that actually contains the construct*. Count-only or "did not throw" assertions are not accepted as coverage. A fixture without an `IndexInfo` line cannot support any claim of index support. | A has no `IndexInfo` assertion at all; B has no assertions at all; both fixtures lack the canonical index key, so a green suite would have proven nothing. |
 | L5 | **Fixtures are gated on real exports.** Two to three anonymised real files are required before parser work is considered validated; synthetic fixtures alone are insufficient. | Both targets validated only against synthetic, non-conformant samples. |
 | L6 | **Legacy keys warn.** When `Index` / `IndexOption` are the only index evidence under an older `FORMAT`, the reader still returns them, labelled legacy, with a warning. | The v2.21 "ignore legacy" instruction being read as permission to discard index data. |

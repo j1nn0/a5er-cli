@@ -328,8 +328,7 @@ The registry is the only place that knows what a key means. Shape:
 
 ```ts
 export interface KeySpec {
-  key: string                  // canonical name
-  key: string                  // canonical name; `Cardinarity` keeps the format's spelling
+  key: string                  // canonical on-disk name incl. numeric suffix and real spelling (e.g. RelationType1, Cardinarity1)
   repeatable: boolean          // P4: exactly PageInfo, DomainInfo, CommonField, Field, IndexInfo, Position
   required: boolean            // 必須 rows
   type: 'string' | 'escaped' | 'int' | 'bool' | 'color' | 'complex'
@@ -483,10 +482,11 @@ bytes.
 `TextDecoder(codec, { fatal: true })` for every candidate. The first candidate that decodes
 strictly without error wins; candidates are ordered by the header hint first, then by a fixed
 list (utf-8, shift_jis, utf-16le), and a candidate that yields U+FFFD is rejected even when the
-decoder does not throw. If none succeeds, the file is
-fallback chain borrowed from `parser-evaluation.md` §6: emitting U+FFFD into Japanese logical
-names is exactly the silent corruption the project forbids (L3). The chain itself — strict
-UTF-8 first, legacy codec second, diagnostics at each step — is kept.
+decoder does not throw. If none succeeds, the file is rejected as fatal (`E_UNDECODABLE`): no
+lossy text is ever emitted, and an incomplete schema is never returned as healthy. This drops
+the lossy step of the fallback chain borrowed from `parser-evaluation.md` §6 — emitting U+FFFD
+into Japanese logical names is exactly the silent corruption the project forbids (L3). The
+chain itself — strict UTF-8 first, legacy codec second, diagnostics at each step — is kept.
 
 Verified locally on Node v24.22.3 (ICU 78.3): `new TextDecoder('shift_jis')` decodes
 `83 65 83 58 83 67` to `テスト`, and `new TextDecoder('utf-8', { fatal: true })` raises
@@ -537,12 +537,12 @@ never two objects.
   index evidence (D5, L6, U7). A legacy payload whose shape does not match the observed
   `name=flag,cols` pattern is preserved raw and flagged, never guessed (U7).
 - **Relations** carry parent/child physical names, column lists, cardinality and IDEF1X
-  strings. `Cardinarity` keeps the misspelled spelling the format actually writes (K7): the
-  registry key, the JSON field and `keyRaw` all read `Cardinarity`, and no corrected alias is
-  invented. `RelationType` absent → warning
-  `V_MISSING_REQUIRED_KEY` and `value: null`; the spec contradicts itself here (K6, U14), so
-  the tool reports rather than defaulting. `Fields1`/`Fields2` of different length → warning,
-  not error (U8).
+  strings. `Cardinarity1` / `Cardinarity2` keep the misspelled spelling the format actually
+  writes (K7): the registry keys, the JSON fields and `keyRaw` all read `Cardinarity1` /
+  `Cardinarity2`, and no corrected alias is invented. `RelationType1` / `RelationType2` absent
+  → warning `V_MISSING_REQUIRED_KEY` and `value: null`; the spec contradicts itself here (K6,
+  U14), so the tool reports rather than defaulting. `Fields1`/`Fields2` of different length →
+  warning, not error (U8).
 
 ### 9.3 Manager, presentation, DDL switches
 
@@ -691,9 +691,9 @@ Initial code list (frozen enough to test against, not a promise of completeness)
 | `V_UNSUPPORTED_SUBTYPE_MEMBERSHIP` | info | membership undeterminable (F7) |
 | `V_VIEW_COLUMNS_UNKNOWN` | info | columns not stored in the file |
 
-Severity is assigned by consequence, not by family: a missing `RelationType` is a `warning`
-(contradiction K6, U14), a missing `PName` is an `error`, a duplicate scalar key is a
-`warning` (U6 defines no semantics).
+Severity is assigned by consequence, not by family: a missing `RelationType1` / `RelationType2`
+is a `warning` (contradiction K6, U14), a missing `PName` is an `error`, and a duplicate scalar
+key is a `warning` (U6 defines no semantics).
 
 ---
 
@@ -820,14 +820,14 @@ schema key — never a partial diagram.
 | # | Input | Expected behaviour | Assertion |
 |---|---|---|---|
 | 1 | UTF-8 with BOM | parses, no diagnostic | `encoding.bom === true`, status ok |
-| 2 | UTF-8 without BOM | parses, `D_BOM_MISSING` | warning present, status degraded |
+| 2 | UTF-8 without BOM | parses, `D_BOM_MISSING` (info) | diagnostic present, status ok |
 | 3 | Shift_JIS bytes under `ENCODING:UTF8` | decodes as SJIS, `D_ENCODING_MISMATCH` | Japanese names correct; no U+FFFD anywhere |
 | 4 | Invalid UTF-8, no valid candidate | fatal `E_UNDECODABLE` | status failed, no schema |
 | 5 | Japanese logical names and comments with `\Q`, `,`, newline, TAB, backslash | round-trip exact | every escape reproduces the source character |
 | 6 | Multi-table and multi-view document | all objects, correct count | counts match fixture; no duplicate identity |
 | 7 | Composite PK (`0,1,2`) | `primaryKey` inferred in ordinal order | order preserved; spans cited |
 | 8 | Multi-column relation and multi-column index | columns split correctly | `["user_name","birthday"]`, not three fragments |
-| 9 | Unknown section and unknown key | preserved + diagnosed | `unsupported` non-empty, `dropped === 0`, status degraded |
+| 9 | Unknown section and unknown key | preserved + diagnosed (info) | `unsupported` non-empty, `dropped === 0`, status ok |
 | 10 | Duplicate scalar key, missing required key | last wins + warning; missing → error/warning | both spans present; no crash |
 | 11 | Truncated read (limit or mid-file) | fatal, no partial schema | `status: "failed"`, `schema` absent, `limits.truncated === true` |
 | 12 | File above `maxBytes` | fatal before allocation | `E_LIMIT_BYTES`, constant memory |
@@ -840,6 +840,12 @@ Fixture policy (L5, D8): fixtures are committed with expected JSON, and **a fixt
 contain the construct it claims to test**. Neither evaluated parser could demonstrate index
 support because its sample had no `IndexInfo` line; the same trap is closed here by
 construction.
+
+The status in each assertion above is derived mechanically and only from severities, as §11 and
+§12 rule 1 define it: `failed` if any fatal, `degraded` if any `error` or `warning`, `ok`
+otherwise — so rows 2 and 9 expect `ok` because `D_BOM_MISSING`, `S_UNKNOWN_SECTION` and
+`S_UNKNOWN_KEY` are `info`. This is the correction `docs/test-strategy.md` §8 was waiting for;
+that document's own §8 rule already reads this way.
 
 ---
 
@@ -925,7 +931,7 @@ Conservative posture for the unconfirmed items — the tool never upgrades a gue
 | U9, U12 — vertex point format, multi-line values | Preserve raw text; never parse the inner format or join lines | §7.3, §9.6 |
 | U11 — `[Subtype]` membership | `unsupported`, never inferred | §9.6 (F7) |
 | U13 — colour channel order | Raw token plus best-effort RGB, `channelOrder: 'assumed'` when ambiguous | §9.5 |
-| U14 — `RelationType` required versus defaulted | Follow 必須: emit `null` plus a warning, do not silently default | §9.2 |
+| U14 — `RelationType1` / `RelationType2` required versus defaulted | Follow 必須: emit `null` plus a warning, do not silently default | §9.2 |
 | U15 — 9-element `Field` prevalence in real files | Positional decode, `elementsSeen` recorded so the shape is measurable | §7.2 |
 Every A-item that resolves an unconfirmed format question is labelled as a **project choice**,
 not as spec behaviour. None of U1–U15 is presented as settled by these decisions.
