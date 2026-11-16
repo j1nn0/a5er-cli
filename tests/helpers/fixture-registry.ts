@@ -11,10 +11,13 @@
  *   reconciliation over concrete counts (architecture §13), never as a constant.
  * - `exitCode` is the code for `inspect`; `validate` may return 3 where an
  *   `error`-severity diagnostic exists (architecture TBD-O7).
- * - `codes` is the exact multiset of diagnostic codes, sorted; extra or missing
- *   codes must fail the test (test-strategy T2).
- * - `facts` carries semantic values by path so a fixture can assert parsed
- *   content without a golden document (test-strategy §3.6 ordering).
+ * - `codes` is the exact multiset of diagnostic codes, sorted; duplicates are
+ *   normal (two unknown keys are two `S_UNKNOWN_KEY`), while a missing or an extra
+ *   occurrence fails the comparison (`codesMatch`, test-strategy T2).
+ * - `sourceFacts` are assertions about the committed bytes and raw text (stage 1)
+ *   and are resolved today by `fixtures-content.test.ts`. `parseFacts` are
+ *   assertions about the future envelope (stages 2–5); they share the shape but
+ *   not the path vocabulary, so a parser test cannot borrow a source-only path.
  */
 
 /** Where a fixture lives and how it is materialised. */
@@ -45,9 +48,13 @@ export interface ExpectedSpan {
   readonly keyLine: number;
 }
 
-/** One semantic assertion, addressed by a dotted path into the envelope. */
+/**
+ * One assertion addressed by a dotted path. The same shape serves two disjoint
+ * path vocabularies: source paths address the bytes and raw text, envelope paths
+ * address the parsed document.
+ */
 export interface SemanticFact {
-  /** e.g. `objects[0].pname.value` or `pages[0].name.origin`. */
+  /** Source: `line.13.key`, `header.format`. Envelope: `objects[0].pname.value`. */
   readonly path: string;
   readonly equals: string | number | boolean | null;
 }
@@ -61,7 +68,10 @@ export interface FixtureExpectation {
   readonly codes: readonly string[];
   readonly counts: ExpectedCounts;
   readonly spans: readonly ExpectedSpan[];
-  readonly facts: readonly SemanticFact[];
+  /** Assertions against the committed bytes and raw text, resolved at stage 1. */
+  readonly sourceFacts: readonly SemanticFact[];
+  /** Assertions against the envelope; empty until stages 2–5 exist. */
+  readonly parseFacts: readonly SemanticFact[];
 }
 
 /** One catalog entry (test-strategy §4). */
@@ -107,7 +117,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
         { sectionIndex: 2, startLine: 13, endLine: 13, keyLine: 13 },
         { sectionIndex: 4, startLine: 24, endLine: 24, keyLine: 24 },
       ],
-      facts: [
+      sourceFacts: [
         { path: 'header.format', equals: 21 },
         { path: 'encoding.bom', equals: true },
         { path: 'encoding.crlf', equals: true },
@@ -115,10 +125,13 @@ export const FIXTURES: readonly FixtureSpec[] = [
         { path: 'view.count', equals: 1 },
         { path: 'relation.count', equals: 1 },
         { path: 'field.1.1.elements', equals: 10 },
-        { path: 'field.1.keyOrders', equals: '0,1' },
-        { path: 'index.1.1.columns', equals: 'user_name,birthday' },
+        // Single-column PK: only element 5 of the first Field is an ordinal; the
+        // second Field's キー順 is empty (not part of the key), so the join shows `0,`.
+        { path: 'field.1.keyOrders', equals: '0,' },
+        { path: 'index.1.1.columns', equals: 'id,email' },
         { path: 'line.13.key', equals: 'IndexInfo' },
       ],
+      parseFacts: [],
     },
   },
   {
@@ -137,12 +150,13 @@ export const FIXTURES: readonly FixtureSpec[] = [
         keys: { total: 5, parsed: 5, preservedRaw: 0 },
       },
       spans: [{ sectionIndex: 1, startLine: 7, endLine: 7, keyLine: 7 }],
-      facts: [
+      sourceFacts: [
         { path: 'header.format', equals: 19 },
         { path: 'encoding.bom', equals: true },
         { path: 'line.7.key', equals: 'Index' },
-        { path: 'text.contains', equals: 'Index=legacy_orders_ix1=0,user_id,created_at' },
+        { path: 'text.contains', equals: 'Index=legacy_orders_ix1=0,id' },
       ],
+      parseFacts: [],
     },
   },
   {
@@ -161,10 +175,11 @@ export const FIXTURES: readonly FixtureSpec[] = [
         keys: { total: 2, parsed: 2, preservedRaw: 0 },
       },
       spans: [{ sectionIndex: 1, startLine: 4, endLine: 4, keyLine: 4 }],
-      facts: [
+      sourceFacts: [
         { path: 'header.format', equals: 20 },
         { path: 'line.4.key', equals: 'PName' },
       ],
+      parseFacts: [],
     },
   },
   // ── encoding ───────────────────────────────────────────────────────────
@@ -184,11 +199,12 @@ export const FIXTURES: readonly FixtureSpec[] = [
         keys: { total: 4, parsed: 4, preservedRaw: 0 },
       },
       spans: [{ sectionIndex: 1, startLine: 5, endLine: 5, keyLine: 5 }],
-      facts: [
+      sourceFacts: [
         { path: 'header.format', equals: 21 },
         { path: 'encoding.bom', equals: false },
         { path: 'line.5.key', equals: 'PName' },
       ],
+      parseFacts: [],
     },
   },
   {
@@ -207,12 +223,13 @@ export const FIXTURES: readonly FixtureSpec[] = [
         keys: { total: 3, parsed: 3, preservedRaw: 0 },
       },
       spans: [{ sectionIndex: 1, startLine: 6, endLine: 6, keyLine: 6 }],
-      facts: [
+      sourceFacts: [
         { path: 'bytes.length', equals: 106 },
         { path: 'encoding.bom', equals: false },
         { path: 'header.format', equals: 21 },
         { path: 'encoding.declared', equals: 'UTF8' },
       ],
+      parseFacts: [],
     },
   },
   {
@@ -231,10 +248,11 @@ export const FIXTURES: readonly FixtureSpec[] = [
         keys: { total: 0, parsed: 0, preservedRaw: 0 },
       },
       spans: [],
-      facts: [
+      sourceFacts: [
         { path: 'bytes.length', equals: 39 },
         { path: 'strict.allReject', equals: true },
       ],
+      parseFacts: [],
     },
   },
   {
@@ -253,10 +271,11 @@ export const FIXTURES: readonly FixtureSpec[] = [
         keys: { total: 3, parsed: 3, preservedRaw: 0 },
       },
       spans: [{ sectionIndex: 1, startLine: 5, endLine: 5, keyLine: 5 }],
-      facts: [
+      sourceFacts: [
         { path: 'bytes.prefix', equals: 'fffe' },
         { path: 'header.format', equals: 21 },
       ],
+      parseFacts: [],
     },
   },
   // ── structure ──────────────────────────────────────────────────────────
@@ -264,24 +283,28 @@ export const FIXTURES: readonly FixtureSpec[] = [
     id: 'txt-04',
     file: 'txt-04-unknown-section-key.a5er.txt',
     fixtureClass: 'synthetic',
-    purpose: 'Unknown section and unknown key are preserved as raw evidence, not dropped.',
+    purpose: 'Unknown section and two unknown keys are preserved as raw evidence.',
     specRefs: ['§14 row 9', 'P13', 'F6'],
     stage: 3,
     expectation: {
       status: 'ok',
       exitCode: 0,
-      codes: ['S_UNKNOWN_KEY', 'S_UNKNOWN_SECTION'],
+      // Two unknown keys are two occurrences of the same code: `codes` is a multiset.
+      codes: ['S_UNKNOWN_KEY', 'S_UNKNOWN_KEY', 'S_UNKNOWN_SECTION'],
       counts: {
         sections: { total: 2, parsed: 1, preservedRaw: 1 },
-        keys: { total: 4, parsed: 2, preservedRaw: 2 },
+        keys: { total: 5, parsed: 2, preservedRaw: 3 },
       },
       spans: [{ sectionIndex: 1, startLine: 5, endLine: 5, keyLine: 5 }],
-      facts: [
+      sourceFacts: [
         { path: 'header.format', equals: 21 },
         { path: 'text.contains', equals: 'MysteryKey="value"' },
+        { path: 'text.contains', equals: 'SecondMystery="value2"' },
         { path: 'text.contains', equals: '[Memo]' },
         { path: 'line.5.key', equals: 'MysteryKey' },
+        { path: 'line.6.key', equals: 'SecondMystery' },
       ],
+      parseFacts: [],
     },
   },
   // ── values ─────────────────────────────────────────────────────────────
@@ -301,17 +324,19 @@ export const FIXTURES: readonly FixtureSpec[] = [
         keys: { total: 4, parsed: 4, preservedRaw: 0 },
       },
       spans: [{ sectionIndex: 1, startLine: 5, endLine: 5, keyLine: 5 }],
-      facts: [
+      sourceFacts: [
         { path: 'escape.sequences', equals: '\\Q,\\\\,\\q,\\t,\\n' },
         { path: 'line.5.key', equals: 'Comment' },
       ],
+      parseFacts: [],
     },
   },
   {
     id: 'val-02',
     file: 'val-02-index-multi-column.a5er.txt',
     fixtureClass: 'synthetic',
-    purpose: 'IndexInfo whose column list is one quoted element containing a comma.',
+    purpose:
+      'IndexInfo whose column list is one quoted element containing a comma; single-column PK.',
     specRefs: ['§14 row 8', 'P8', 'F3'],
     stage: 3,
     expectation: {
@@ -323,11 +348,15 @@ export const FIXTURES: readonly FixtureSpec[] = [
         keys: { total: 6, parsed: 6, preservedRaw: 0 },
       },
       spans: [{ sectionIndex: 1, startLine: 7, endLine: 7, keyLine: 7 }],
-      facts: [
+      sourceFacts: [
+        // Single-column PK: the second Field's キー順 is empty, so the ordinals
+        // present are just [0] and no duplicate ordinal can arise.
+        { path: 'field.1.keyOrders', equals: '0,' },
         { path: 'index.1.1.columns', equals: 'user_name,birthday' },
         { path: 'index.1.2.columns', equals: 'user_name' },
         { path: 'line.7.key', equals: 'IndexInfo' },
       ],
+      parseFacts: [],
     },
   },
   {
@@ -347,10 +376,11 @@ export const FIXTURES: readonly FixtureSpec[] = [
         keys: { total: 3, parsed: 3, preservedRaw: 0 },
       },
       spans: [{ sectionIndex: 1, startLine: 5, endLine: 5, keyLine: 5 }],
-      facts: [
+      sourceFacts: [
         { path: 'field.1.1.elements', equals: 9 },
         { path: 'line.5.key', equals: 'Field' },
       ],
+      parseFacts: [],
     },
   },
   {
@@ -369,10 +399,11 @@ export const FIXTURES: readonly FixtureSpec[] = [
         keys: { total: 3, parsed: 3, preservedRaw: 0 },
       },
       spans: [{ sectionIndex: 1, startLine: 5, endLine: 5, keyLine: 5 }],
-      facts: [
+      sourceFacts: [
         { path: 'field.1.1.elements', equals: 7 },
         { path: 'line.5.key', equals: 'Field' },
       ],
+      parseFacts: [],
     },
   },
   {
@@ -391,10 +422,11 @@ export const FIXTURES: readonly FixtureSpec[] = [
         keys: { total: 5, parsed: 5, preservedRaw: 0 },
       },
       spans: [{ sectionIndex: 1, startLine: 6, endLine: 6, keyLine: 6 }],
-      facts: [
+      sourceFacts: [
         { path: 'field.1.keyOrders', equals: '0,1,2' },
         { path: 'line.6.key', equals: 'Field' },
       ],
+      parseFacts: [],
     },
   },
   // ── semantics ──────────────────────────────────────────────────────────
@@ -415,12 +447,13 @@ export const FIXTURES: readonly FixtureSpec[] = [
         keys: { total: 14, parsed: 14, preservedRaw: 0 },
       },
       spans: [{ sectionIndex: 3, startLine: 14, endLine: 14, keyLine: 14 }],
-      facts: [
+      sourceFacts: [
         { path: 'text.contains', equals: 'Entity2="ghost_table"' },
         { path: 'text.contains', equals: 'Fields2="ghost_column"' },
         { path: 'text.contains', equals: 'Position="GhostPage",' },
         { path: 'line.14.key', equals: 'Entity2' },
       ],
+      parseFacts: [],
     },
   },
 ];
@@ -441,6 +474,18 @@ function duplicateIds(specs: readonly FixtureSpec[]): string[] {
     seen.add(spec.id);
   }
   return duplicates;
+}
+
+/**
+ * Compare produced diagnostic codes against the expectation as an order-normalised
+ * multiset (test-strategy §7 T2, §10 G-2): the arrays are sorted first, so a missing
+ * occurrence or an extra one fails while a repeat that both sides carry passes.
+ */
+export function codesMatch(actual: readonly string[], expected: readonly string[]): boolean {
+  const normalise = (codes: readonly string[]): string[] => [...codes].sort();
+  const left = normalise(actual);
+  const right = normalise(expected);
+  return left.length === right.length && left.every((code, index) => code === right[index]);
 }
 
 /**
@@ -487,7 +532,8 @@ export function validateRegistry(specs: readonly FixtureSpec[]): string[] {
     if (codes.some((code, index) => code !== sorted[index])) {
       problems.push(`${spec.id}: codes must be sorted`);
     }
-    if (new Set(codes).size !== codes.length) problems.push(`${spec.id}: codes must not repeat`);
+    // Duplicates are legal and expected: one diagnostic per occurrence (`codes` is a
+    // multiset). Comparison happens in `codesMatch`, so nothing is lost here.
 
     if (status === 'failed' && exitCode !== 1) problems.push(`${spec.id}: failed implies exit 1`);
     if (status !== 'failed' && exitCode !== 0 && exitCode !== 3) {
@@ -501,8 +547,19 @@ export function validateRegistry(specs: readonly FixtureSpec[]): string[] {
       if (span.sectionIndex < 0) problems.push(`${spec.id}: sectionIndex must be >= 0`);
     }
 
-    for (const fact of spec.expectation.facts) {
-      if (fact.path.trim() === '') problems.push(`${spec.id}: fact path is empty`);
+    for (const list of ['sourceFacts', 'parseFacts'] as const) {
+      for (const fact of spec.expectation[list]) {
+        if (fact.path.trim() === '') problems.push(`${spec.id}: ${list} path is empty`);
+      }
+    }
+
+    // The two lists must stay disjoint: a source path in `parseFacts` (or the reverse)
+    // would let a parser test assert stage-1 evidence it cannot observe.
+    const sourcePaths = new Set(spec.expectation.sourceFacts.map((fact) => fact.path));
+    for (const fact of spec.expectation.parseFacts) {
+      if (sourcePaths.has(fact.path)) {
+        problems.push(`${spec.id}: fact path ${fact.path} is both a source and a parse fact`);
+      }
     }
   }
 

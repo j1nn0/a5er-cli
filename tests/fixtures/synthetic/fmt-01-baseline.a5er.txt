@@ -9,14 +9,14 @@ PName="users"
 LName="ユーザー"
 Comment="利用者"
 Field="ユーザーID","id","Serial","NOT NULL",0,"","主キー",$FFFFFFFF,"",""
-Field="メール","email","varchar(255)","NOT NULL",1,"","",$FFFFFFFF,"",""
-IndexInfo="users_ix1",1,"user_name,birthday", ""
+Field="メール","email","varchar(255)","NOT NULL",,"","",$FFFFFFFF,"",""
+IndexInfo="users_ix1",1,"id,email", ""
 Position="Main",1000,2000
 
 [Entity]
 PName="orders"
 Field="注文ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,"",""
-Field="ユーザーID","user_id","Integer","NOT NULL",1,"","FK",$FFFFFFFF,"",""
+Field="ユーザーID","user_id","Integer","NOT NULL",,"","FK",$FFFFFFFF,"",""
 IndexInfo="orders_ix1",0,"user_id", ""
 Position="Main",3000,2000
 

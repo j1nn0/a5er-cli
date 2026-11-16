@@ -308,7 +308,7 @@ describe('fixture content', () => {
               ? null
               : new TextDecoder(module.encoding, { fatal: true }).decode(module.bytes);
           const parsed = decoded === null ? null : parseText(Buffer.from(module.bytes), decoded);
-          for (const fact of spec.expectation.facts) {
+          for (const fact of spec.expectation.sourceFacts) {
             evaluateFact(spec, parsed, module.bytes, fact);
           }
         });
@@ -339,10 +339,50 @@ describe('fixture content', () => {
         expect(keys.parsed + keys.preservedRaw).toBe(keys.total);
       });
 
+      it('names only declared columns in its index definitions', () => {
+        // R3: an index that references a column no `Field` declares is a dangling
+        // reference in a fixture that claims to be healthy. This asserts name
+        // existence only — resolution and the `V_DANGLING_*` codes belong to the
+        // semantic stage, never to a byte-level content test.
+        if (spec.expectation.codes.some((code) => code.startsWith('V_DANGLING'))) return;
+        const parsed = readText(path);
+        const declared = new Set(
+          parsed.keyLines
+            .filter((line) => keyAt(parsed, line) === 'Field')
+            .map((line) => unquote((splitComplex(valueAt(parsed, line))[1] ?? '').trim())),
+        );
+
+        const referenced: { column: string; where: string }[] = [];
+        for (const line of parsed.keyLines) {
+          const key = keyAt(parsed, line);
+          if (key === 'IndexInfo') {
+            const columns = unquote((splitComplex(valueAt(parsed, line))[2] ?? '').trim());
+            for (const column of columns.split(',')) {
+              referenced.push({
+                column: column.trim(),
+                where: `IndexInfo on line ${String(line)}`,
+              });
+            }
+          }
+          if (key === 'Index') {
+            // Legacy payload is `name=flag,columns`; the flag is not a column name.
+            const payload = valueAt(parsed, line).split('=').at(-1) ?? '';
+            for (const column of payload.split(',').slice(1)) {
+              referenced.push({ column: column.trim(), where: `Index on line ${String(line)}` });
+            }
+          }
+        }
+
+        const dangling = referenced.filter(
+          (entry) => entry.column !== '' && !declared.has(entry.column),
+        );
+        expect(dangling.map((entry) => `${entry.where}: ${entry.column}`)).toEqual([]);
+      });
+
       it('contains every construct its facts assert', () => {
         const parsed = readText(path);
-        expect(spec.expectation.facts.length).toBeGreaterThan(0);
-        for (const fact of spec.expectation.facts) {
+        expect(spec.expectation.sourceFacts.length).toBeGreaterThan(0);
+        for (const fact of spec.expectation.sourceFacts) {
           evaluateFact(spec, parsed, null, fact);
         }
       });

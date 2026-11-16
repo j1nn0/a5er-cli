@@ -20,10 +20,10 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, win32 } from 'node:path';
+import { basename, join, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { FIXTURES, validateRegistry } from './helpers/fixture-registry.js';
+import { FIXTURES, codesMatch, validateRegistry } from './helpers/fixture-registry.js';
 import {
   BYTES_DIR,
   FIXTURES_ROOT,
@@ -100,6 +100,49 @@ describe('fixture registry', () => {
 
     expect(listSyntheticFixtures()).toEqual(fromRegistry);
   });
+
+  it('treats diagnostic codes as an order-normalised multiset, repeats included', () => {
+    // R4: two unknown keys are two `S_UNKNOWN_KEY` occurrences. A repeat both sides
+    // carry passes; one missing or one extra occurrence fails.
+    const txt04 = FIXTURES.find((spec) => spec.id === 'txt-04');
+    if (txt04 === undefined) throw new Error('txt-04 is not registered');
+    const codes = txt04.expectation.codes;
+
+    expect(codes.filter((code) => code === 'S_UNKNOWN_KEY')).toHaveLength(2);
+    expect(codesMatch(codes, [...codes].reverse())).toBe(true);
+    expect(codesMatch(codes.slice(1), codes)).toBe(false);
+    expect(codesMatch([...codes, 'S_UNKNOWN_KEY'], codes)).toBe(false);
+  });
+
+  it('keeps source facts and parse facts in disjoint lists', () => {
+    // R5: a parser test consumes `parseFacts` only, so it can never import a
+    // stage-1 path such as `line.13.key`. Nothing may be authored in `parseFacts`
+    // before a parser exists; stages 2–5 add them deliberately.
+    for (const spec of FIXTURES) {
+      expect(spec.expectation.sourceFacts.length, spec.id).toBeGreaterThan(0);
+      expect(spec.expectation.parseFacts, spec.id).toEqual([]);
+    }
+  });
+
+  it('rejects a spec that declares the same path as a source and a parse fact', () => {
+    const base = FIXTURES.find((spec) => spec.id === 'fmt-01');
+    if (base === undefined) throw new Error('fmt-01 is not registered');
+    const fact = base.expectation.sourceFacts[0];
+    if (fact === undefined) throw new Error('fmt-01 has no source fact');
+
+    const problems = validateRegistry([
+      {
+        ...base,
+        expectation: {
+          ...base.expectation,
+          parseFacts: [{ path: fact.path, equals: fact.equals }],
+        },
+      },
+    ]);
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/is both a source and a parse fact$/);
+  });
 });
 
 describe('fixture staging', () => {
@@ -123,6 +166,45 @@ describe('fixture staging', () => {
     expect(() => stage('../escape')).toThrow(/unsafe fixture id/);
     expect(() => stage('nested/id')).toThrow(/unsafe fixture id/);
     expect(() => stage('.hidden')).toThrow(/unsafe fixture id/);
+  });
+
+  it('stages every catalog entry by ID through the registry', () => {
+    // R1 regression: `stage(id)` used to synthesise `<id>.a5er.txt`, which matches no
+    // fixture file, and no test ever passed a catalog ID — every call site used a
+    // hand-built path. Iterating `FIXTURES` is what puts the ID -> file resolution
+    // under test for all 14 entries.
+    for (const spec of FIXTURES) {
+      if (spec.fixtureClass !== 'synthetic') {
+        // Byte fixtures are imported as modules; staging one is a caller error.
+        expect(() => stage(spec.id), spec.id).toThrow(/not stageable by ID/);
+        continue;
+      }
+
+      const staged = stage(spec.id);
+      try {
+        expect(staged.id, spec.id).toBe(spec.id);
+        expect(basename(staged.path), spec.id).toBe(`${spec.id}.a5er`);
+        expect(staged.sourcePath, spec.id).toBe(join(SYNTHETIC_DIR, spec.file));
+        expect(isInsideFixtures(staged.path), spec.id).toBe(false);
+        expect(readFileSync(staged.path).equals(readFileSync(staged.sourcePath)), spec.id).toBe(
+          true,
+        );
+        expect(staged.sha256, spec.id).toBe(sha256File(staged.sourcePath));
+      } finally {
+        staged.cleanup();
+      }
+      expect(existsSync(staged.path), spec.id).toBe(false);
+    }
+  });
+
+  it('rejects an ID that is not in the registry instead of synthesising a path', () => {
+    expect(() => stage('fmt-99')).toThrow(/unknown fixture id/);
+    // The file stem is not an ID: `fmt-01` resolves to `fmt-01-baseline.a5er.txt`.
+    expect(() => stage('fmt-01-baseline')).toThrow(/unknown fixture id/);
+    // A path-shaped ID can never address a file inside the fixtures tree.
+    expect(() => stage(join(SYNTHETIC_DIR, 'fmt-01-baseline.a5er.txt'))).toThrow(
+      /unsafe fixture id/,
+    );
   });
 
   it('preserves bytes exactly, including BOM, CRLF, Japanese text and invalid UTF-8', () => {

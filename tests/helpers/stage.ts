@@ -6,6 +6,8 @@
  * - bytes are copied with `copyFileSync`, never decoded and re-encoded;
  * - the staged path is always outside `tests/fixtures/`, so a test can never
  *   write back into the repository;
+ * - a fixture is requested by its catalog ID and resolved through the registry, so a
+ *   file name is never synthesised from an ID (IDs are not file stems);
  * - `sha256` is the hash of the staged bytes, for immutability assertions;
  * - the temporary directory is removed by an idempotent `cleanup()`.
  *
@@ -26,6 +28,7 @@ import {
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { FIXTURES } from './fixture-registry.js';
 
 /** Absolute path to `tests/fixtures/`. */
 export const FIXTURES_ROOT = fileURLToPath(new URL('../fixtures/', import.meta.url));
@@ -53,7 +56,7 @@ export interface StageOptions {
 }
 
 export interface StagedFile {
-  /** Catalog ID or file stem the fixture was staged under. */
+  /** Catalog ID, or the file stem when staged from a direct path. */
   readonly id: string;
   /** Absolute path of the staged file, with the `.a5er` extension. */
   readonly path: string;
@@ -105,8 +108,10 @@ function assertSafeId(id: string): void {
  *
  * Throws when the source does not exist or when the copy is not byte-identical
  * to the source — a silent mismatch here would invalidate every fixture test.
+ * `id` is explicit so the caller decides the staged file's name; it is never
+ * re-derived from the source path.
  */
-export function stageSource(sourcePath: string, options: StageOptions = {}): StagedFile {
+function stageFile(sourcePath: string, id: string, options: StageOptions = {}): StagedFile {
   if (!existsSync(sourcePath)) {
     throw new Error(`fixture source not found: ${sourcePath}`);
   }
@@ -115,7 +120,6 @@ export function stageSource(sourcePath: string, options: StageOptions = {}): Sta
     throw new Error(`fixture source is not a file: ${sourcePath}`);
   }
 
-  const id = sourcePath.slice(sourcePath.lastIndexOf(sep) + 1).replace(SYNTHETIC_SUFFIX, '');
   assertSafeId(id);
 
   const sourceBytes = readFileSync(sourcePath);
@@ -163,12 +167,34 @@ export function stageSource(sourcePath: string, options: StageOptions = {}): Sta
   }
 }
 
+/** Stage a file by direct path; the staged ID is the file stem without `.a5er.txt`. */
+export function stageSource(sourcePath: string, options: StageOptions = {}): StagedFile {
+  const id = sourcePath.slice(sourcePath.lastIndexOf(sep) + 1).replace(SYNTHETIC_SUFFIX, '');
+  return stageFile(sourcePath, id, options);
+}
+
 /**
- * Stage a committed synthetic fixture by catalog ID (`fmt-01` or the full file
- * name). This is the only supported way to read fixture bytes.
+ * Stage a committed synthetic fixture by catalog ID (`fmt-01`).
+ *
+ * The ID is resolved through the fixture registry, so the file name comes from
+ * `FIXTURES` and is never synthesised from the ID: catalog IDs are not file
+ * stems (`fmt-01` is `fmt-01-baseline.a5er.txt`). Byte fixtures are imported as
+ * modules by their consumers, so asking to stage one is an error, not a guess.
  */
 export function stage(id: string, options: StageOptions = {}): StagedFile {
-  const file = id.endsWith(SYNTHETIC_SUFFIX) ? id : `${id}${SYNTHETIC_SUFFIX}`;
-  assertSafeId(file.replace(SYNTHETIC_SUFFIX, ''));
-  return stageSource(join(SYNTHETIC_DIR, file), options);
+  // Checked before the lookup, so a traversal attempt always reads as unsafe.
+  assertSafeId(id);
+
+  const spec = FIXTURES.find((candidate) => candidate.id === id);
+  if (spec === undefined) throw new Error(`unknown fixture id: ${id}`);
+  if (spec.fixtureClass !== 'synthetic') {
+    throw new Error(`fixture ${id} is a ${spec.fixtureClass} fixture, not stageable by ID`);
+  }
+
+  const sourcePath = join(SYNTHETIC_DIR, spec.file);
+  if (!isInsideFixtures(sourcePath)) {
+    throw new Error(`fixture ${id} resolves outside the fixtures tree: ${sourcePath}`);
+  }
+
+  return stageFile(sourcePath, spec.id, options);
 }

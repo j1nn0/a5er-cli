@@ -4,7 +4,7 @@
 [Entity]
 PName="legacy_orders"
 Field="注文ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,""
-Index=legacy_orders_ix1=0,user_id,created_at
+Index=legacy_orders_ix1=0,id
 Position="Main",100,200
 
 [Manager]

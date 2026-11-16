@@ -3,6 +3,7 @@
 [Entity]
 PName="known"
 MysteryKey="value"
+SecondMystery="value2"
 Position="Main",10,10
 
 [Memo]
