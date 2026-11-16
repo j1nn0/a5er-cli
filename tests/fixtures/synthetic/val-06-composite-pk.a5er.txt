@@ -1,0 +1,8 @@
+﻿# A5:ER FORMAT:21
+
+[Entity]
+PName="memberships"
+Field="ユーザーID","user_id","Integer","NOT NULL",0,"","",$FFFFFFFF,""
+Field="グループID","group_id","Integer","NOT NULL",1,"","",$FFFFFFFF,""
+Field="役割","role","varchar(20)","",2,"","",$FFFFFFFF,""
+Position="Main",10,10

@@ -1,0 +1,37 @@
+﻿# A5:ER FORMAT:21
+# A5:ER ENCODING:UTF8
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"
+
+[Entity]
+PName="users"
+LName="ユーザー"
+Comment="利用者"
+Field="ユーザーID","id","Serial","NOT NULL",0,"","主キー",$FFFFFFFF,"",""
+Field="メール","email","varchar(255)","NOT NULL",1,"","",$FFFFFFFF,"",""
+IndexInfo="users_ix1",1,"user_name,birthday", ""
+Position="Main",1000,2000
+
+[Entity]
+PName="orders"
+Field="注文ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,"",""
+Field="ユーザーID","user_id","Integer","NOT NULL",1,"","FK",$FFFFFFFF,"",""
+IndexInfo="orders_ix1",0,"user_id", ""
+Position="Main",3000,2000
+
+[Relation]
+Entity1="users"
+Entity2="orders"
+Fields1="id"
+Fields2="user_id"
+RelationType1=2
+RelationType2=4
+Cardinarity1="P"
+Cardinarity2="Z"
+Position="Main",0,5000,5000,5000,R,R,""
+
+[View]
+PName="active_users"
+Query="SELECT * FROM users WHERE active = 1"
+Position="Main",500,4000

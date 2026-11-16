@@ -1,0 +1,6 @@
+﻿# A5:ER FORMAT:21
+
+[Entity]
+PName="no_color"
+Field="論理名","phys_name","varchar(10)","NOT NULL",0,"","コメント"
+Position="Main",10,10

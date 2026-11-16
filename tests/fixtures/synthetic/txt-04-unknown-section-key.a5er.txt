@@ -1,0 +1,9 @@
+﻿# A5:ER FORMAT:21
+
+[Entity]
+PName="known"
+MysteryKey="value"
+Position="Main",10,10
+
+[Memo]
+Note="自由メモ"

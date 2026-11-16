@@ -1,0 +1,7 @@
+﻿# A5:ER FORMAT:21
+
+[Entity]
+PName="escapes"
+Comment="引用\Qと\\と\qと\tと\nです"
+Field="論理","phys","varchar(10)","NOT NULL",0,"","コメント\Q付き",$FFFFFFFF,""
+Position="Main",10,10

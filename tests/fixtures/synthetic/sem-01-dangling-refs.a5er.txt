@@ -1,0 +1,21 @@
+﻿# A5:ER FORMAT:21
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"
+
+[Entity]
+PName="orders"
+Field="注文ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,""
+Field="ユーザーID","user_id","Integer","NOT NULL",1,"","",$FFFFFFFF,""
+Position="Main",10,10
+
+[Relation]
+Entity1="orders"
+Entity2="ghost_table"
+Fields1="user_id"
+Fields2="ghost_column"
+RelationType1=1
+RelationType2=3
+Cardinarity1="Z"
+Cardinarity2="P"
+Position="GhostPage",0,5000,5000,5000,R,R,""

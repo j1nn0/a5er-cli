@@ -1,0 +1,6 @@
+﻿# A5:ER FORMAT:21
+
+[Entity]
+PName="legacy_shape"
+Field="ユーザーID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,""
+Position="Main",10,10

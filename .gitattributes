@@ -1,8 +1,20 @@
 * text=auto eol=lf
-tests/fixtures/** binary
+
+# Committed synthetic fixtures are reviewable text: LF in the index and in the
+# working tree, so a diff shows the actual fixture content.
+tests/fixtures/synthetic/** text eol=lf
+
+# The EOL fixture must arrive as CRLF on every platform; the index stays LF, so
+# it is still diffable. This is the only per-file override and it exists because
+# the fixture's purpose is the line-ending case itself.
+tests/fixtures/synthetic/fmt-01-baseline.a5er.txt text eol=crlf
+
+# Byte-shaped and generated fixtures are never EOL-converted or diffed.
+tests/fixtures/bytes/** binary
+tests/fixtures/generated/** binary
 
 # eol=lf is the load-bearing token: `text=auto` alone defers to core.autocrlf,
 # which the Windows runner sets to true, so the checkout arrives as CRLF and
 # oxfmt (endOfLine=lf) reports every file as misformatted. Later lines override
-# earlier ones and gitattributes has no negation, so the fixtures rule must stay
-# after the global one: byte-exact fixtures must never be EOL-converted.
+# earlier ones and gitattributes has no negation, so the specific rules must stay
+# after the global one.

@@ -1,0 +1,11 @@
+﻿# A5:ER FORMAT:19
+# A5:ER ENCODING:UTF8
+
+[Entity]
+PName="legacy_orders"
+Field="注文ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,""
+Index=legacy_orders_ix1=0,user_id,created_at
+Position="Main",100,200
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"

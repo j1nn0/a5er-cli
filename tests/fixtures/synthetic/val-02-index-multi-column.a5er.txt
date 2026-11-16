@@ -1,0 +1,9 @@
+﻿# A5:ER FORMAT:21
+
+[Entity]
+PName="users"
+Field="ユーザー名","user_name","varchar(100)","NOT NULL",0,"","",$FFFFFFFF,""
+Field="誕生日","birthday","Date","",0,"","",$FFFFFFFF,""
+IndexInfo="users_ix1",1,"user_name,birthday", ""
+IndexInfo="users_ix2",2,"user_name", "UNIQUE"
+Position="Main",10,10

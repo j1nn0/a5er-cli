@@ -1,0 +1,5 @@
+﻿# A5:ER FORMAT:20
+
+[Entity]
+PName="hole"
+Position="Main",10,10
