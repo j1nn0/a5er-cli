@@ -9,8 +9,10 @@ tests/fixtures/synthetic/** text eol=lf
 # the fixture's purpose is the line-ending case itself.
 tests/fixtures/synthetic/fmt-01-baseline.a5er.txt text eol=crlf
 
-# Byte-shaped and generated fixtures are never EOL-converted or diffed.
-tests/fixtures/bytes/** binary
+# Byte-shaped payloads are never EOL-converted or diffed; the committed `.ts`
+# modules that export them stay reviewable LF text.
+tests/fixtures/bytes/**/*.bin binary
+tests/fixtures/bytes/**/*.ts text eol=lf
 tests/fixtures/generated/** binary
 
 # eol=lf is the load-bearing token: `text=auto` alone defers to core.autocrlf,
