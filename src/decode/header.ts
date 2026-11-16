@@ -4,9 +4,10 @@
  * The two header comments are `# A5:ER FORMAT:<n>` and `# A5:ER ENCODING:<enc>`. They are
  * **hints**, and they are read twice:
  *
- * 1. `peekHeader` scans the first 8 KiB of the *bytes* as ASCII, because the encoding is exactly
- *    what is not known yet. A wrong guess here only changes the candidate order, never the
- *    result.
+ * 1. `peekHeader` scans the first 8 KiB of the *bytes* as ASCII, before the encoding is known.
+ *    Its result does **not** order the candidates: since R11 the order is fixed (a BOM pins the
+ *    codec, otherwise UTF-8 first), so a pre-decode reading decides nothing. It is kept for
+ *    byte-level callers; the pipeline uses `parseHeader` alone (§8.1).
  * 2. `parseHeader` runs the same pattern over the *decoded* text, and that reading is
  *    authoritative (§8.1: "re-parsed from the decoded text as authoritative").
  *

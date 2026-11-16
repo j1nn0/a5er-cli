@@ -76,7 +76,7 @@ Input File
    │  §10.1  bounded, read-only read; pre/post stat
    ▼
 Encoding Detection / Decoding
-   │  §8      BOM sniff → header peek → strict decode chain
+   │  §8      BOM sniff → fixed-order strict decode chain → header parse (authoritative)
    ▼
 Syntax Parsing
    │  §5,§6,§7   lines → sections → (sectionKind,key) registry → Complex/Field/Position decoders
@@ -927,7 +927,7 @@ Planned layout (not created in this unit):
 src/
   cli/          command dispatch, flags, exit-code mapping, text renderer
   io/           bounded read-only read, stat before/after, sha256
-  decode/       BOM sniff, header peek, strict decode chain, codec probe
+  decode/       BOM sniff, fixed-order strict decode chain, authoritative header parse, codec probe
   syntax/       line scanner, complex splitter, Field/Position/Index decoders
   schema/       section-scoped key registry, FORMAT profiles
   model/        Span, Value, RawEntry, AST, ResolvedSchema types
@@ -942,7 +942,7 @@ Module responsibilities, one line each, with the invariant that makes the bounda
 | Module | Responsibility | Must not | Invariant |
 |---|---|---|---|
 | `io/` | Bounded read, sha256, stat before and after | Write, hold a partial buffer, follow the input through a rename | A18 |
-| `decode/` | BOM sniff, header peek, strict decode chain, codec probe | Emit lossy text or U+FFFD | L3, §8.2 |
+| `decode/` | BOM sniff, fixed-order strict decode chain, authoritative header parse, codec probe | Emit lossy text or U+FFFD | L3, §8.2 |
 | `syntax/` | Line scanner, complex splitter, `Field`/`Position`/`IndexInfo` decoders | Resolve references, drop a line, join continuations | F3, F4, §7.3 |
 | `schema/` | Section-scoped registry and FORMAT profiles | Treat an unregistered key as structured, or a key name as globally meaningful | F1, F2 |
 | `model/` | `Span`, `Value`, `RawEntry`, AST and resolved types | Contain `any`, or an untyped attribute bag | L1, A4 |
