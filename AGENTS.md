@@ -14,6 +14,7 @@ Rules for agents working in this repository.
   make. Ask before touching a dirty working tree.
 - Treat ER diagrams as confidential. `.a5er` files are gitignored for that reason; never commit,
   paste or quote a real `.a5er` file or its schema.
-- Never push, publish to npm, or create releases without explicit permission.
+- Push normally to the branch you were assigned. Direct pushes to `main`, force pushes, `npm
+  publish` and Release creation still need separate approval.
 - Stay within the assigned scope. Do not add features, refactors, dependencies or files that the
   task did not ask for.
