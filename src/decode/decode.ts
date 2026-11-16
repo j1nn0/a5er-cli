@@ -10,8 +10,21 @@
  *   consumer can see the disagreement (`D_ENCODING_MISMATCH`), and the decoder is never re-run
  *   blindly after a successful decode.
  *
- * Candidate order: a BOM pins the codec outright (no chain — a BOM is evidence, not a hint);
- * otherwise the ASCII header hint goes first, then the fixed list of §8.2.
+ * Candidate order (R11): a BOM pins the codec outright — no chain, because a BOM is evidence.
+ * Without a BOM the fixed list of §8.2 decides, UTF-8 first, and **the declaration never
+ * reorders it**: a legacy codec is only reached once UTF-8 has *failed strictly*. This replaces
+ * the earlier rule that put a declared codec first, which silently mojibake-decoded UTF-8 bytes
+ * under `ENCODING:SJIS` (the UTF-8 bytes of ユーザー are also valid Shift_JIS, so the decoder
+ * reported success and corruption).
+ *
+ * What priority does and does not prove: it resolves the ambiguity, it does not identify the
+ * source encoding. When UTF-8 succeeds, a legacy codec *might* also have succeeded — the reader
+ * does not try it, so it cannot claim uniqueness. The residual risk is a genuine Shift_JIS file
+ * whose bytes happen to be valid UTF-8: it decodes as UTF-8 with no diagnostic. That is
+ * inherent to byte-only detection, is recorded here on purpose, and is not papered over with a
+ * statistical detector. What *is* reported is the disagreement the reader can see: when the
+ * declaration names a different codec than the one that decoded, `D_ENCODING_MISMATCH` carries
+ * both values. See §8.2 and §8.4.
  *
  * Not implemented: §8.1's "NUL density heuristic" for a UTF-16 file with **no BOM**. The
  * document gives a threshold we cannot read unambiguously ("odd-byte NUL ≥ 85 % printable"),
@@ -20,11 +33,11 @@
  * rather than guessed at; every fixture that needs UTF-16 carries a BOM (enc-05).
  *
  * Ambiguity is real and is *not* papered over: pure ASCII decodes successfully under all four
- * codecs, so a strict success alone never proves which one wrote the bytes. Priority is what
- * resolves it, and the reason is §8.4's first row: UTF-8 with or without a BOM is the
- * spec-preferred form (P2), and UTF-8 is an ASCII superset, so reading ASCII as UTF-8 is the
- * only order that cannot turn a legacy file into mojibake. A file that is genuinely Shift_JIS
- * therefore has to be declared or contain non-ASCII bytes — which is exactly what enc-03 covers.
+ * codecs, so a strict success alone never proves which one wrote the bytes. Priority resolves it
+ * on one ground only — P2 makes UTF-8 the spec-preferred form and it is an ASCII superset, so
+ * reading ASCII as UTF-8 cannot turn a legacy file into mojibake — and the bytes win over the
+ * header (§8.4). A genuinely Shift_JIS file is detected when its bytes are invalid UTF-8, which
+ * is exactly what enc-03 covers; when they are valid UTF-8, no byte-only rule can tell.
  */
 
 import { emit } from '../diagnostics/diagnostic.js';
@@ -33,7 +46,7 @@ import type { Limits } from '../io/limits.js';
 import { withLimits } from '../io/limits.js';
 import type { Codec } from './bom.js';
 import { CANDIDATE_ORDER, sniffBom } from './bom.js';
-import { parseHeader, peekHeader } from './header.js';
+import { parseHeader } from './header.js';
 
 /** Encoding facts reported alongside the decoded text (§4.2, §8.4). */
 export interface EncodingInfo {
@@ -104,8 +117,9 @@ export function decodeBytes(bytes: Uint8Array, options: DecodeOptions = {}): Dec
     };
   }
 
-  const hint = peekHeader(payload);
-  const candidates = candidateList(bom.codec, hint.encoding);
+  // R11: the declared encoding is deliberately not consulted here. It is read from the
+  // decoded text below (authoritative) and compared with the detected codec afterwards.
+  const candidates = candidateList(bom.codec);
 
   const rejected: Codec[] = [];
   for (const codec of candidates) {
@@ -135,17 +149,18 @@ export function decodeBytes(bytes: Uint8Array, options: DecodeOptions = {}): Dec
   };
 }
 
-/** The ordered, de-duplicated candidate list for one input (§8.1/§8.2). */
-function candidateList(bomCodec: Codec | null, declared: string | null): readonly Codec[] {
-  // A BOM is evidence, not a hint: it pins the codec, and a strict failure means undecodable.
+/**
+ * The candidate list for one input (§8.1/§8.2, R11).
+ *
+ * A BOM pins the codec: a strict failure then means `E_UNDECODABLE`, never a fallback to a
+ * codec the bytes contradict. Without a BOM the list is the fixed order of §8.2 and nothing
+ * else — in particular the `ENCODING:` declaration is **not** an argument here. It describes
+ * what the writer believed, not what the bytes are, and letting it promote Shift_JIS over
+ * UTF-8 corrupted UTF-8 input that merely happened to be Shift_JIS-decodable.
+ */
+function candidateList(bomCodec: Codec | null): readonly Codec[] {
   if (bomCodec !== null) return [bomCodec];
-
-  const hinted = normaliseDeclared(declared);
-  const order: Codec[] = hinted === null ? [] : [hinted];
-  for (const codec of CANDIDATE_ORDER) {
-    if (!order.includes(codec)) order.push(codec);
-  }
-  return order;
+  return CANDIDATE_ORDER;
 }
 
 /** Strict decode of one candidate, or `null` when it is not lossless. */

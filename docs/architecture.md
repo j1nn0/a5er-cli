@@ -485,13 +485,22 @@ bytes
  ├─ UTF-16LE/BE BOM?             → utf-16le/be
  ├─ NUL density heuristic?       → utf-16le (odd-byte NUL ≥ 85 % printable)
  └─ strict UTF-8 (fatal)         → utf-8
-     └─ fails → candidate list from header + (shift_jis, utf-16le)
+     └─ fails → fixed list (shift_jis, utf-16le, utf-16be), first strict success wins
 ```
 
 Header peek happens **before** the full decode but is only a hint: the first 8 KiB are scanned
 as ASCII for `^#\s*A5:ER\s*(FORMAT|ENCODING)\s*:\s*(\S+)$`, then re-parsed from the decoded
 text as authoritative. This resolves the chicken-and-egg problem without trusting undecoded
 bytes.
+
+The declaration does **not** order the candidates (R11). `ENCODING:SJIS` says what the writer
+believed, not what the bytes are, and the UTF-8 bytes of `ユーザー` are also valid Shift_JIS —
+promoting the declared codec made such a file decode to mojibake with no diagnostic. Without a
+BOM the order is therefore fixed: UTF-8 first, legacy codecs only after UTF-8 has failed
+**strictly**, which is affirmative evidence rather than a preference (`enc-03` is exactly that
+case). Priority resolves the ambiguity; it does not prove the source encoding, and no statistical
+detector is invented to pretend otherwise — the residual risk is stated in §8.2 and recorded
+rather than hidden.
 
 *Implementation status (unit U-2B):* the NUL-density heuristic for a UTF-16 file with **no BOM**
 is not implemented. Its condition is stated too loosely here ("odd-byte NUL ≥ 85 % printable") to
@@ -503,13 +512,22 @@ records the same note next to the candidate list.
 ### 8.2 Decoding is strict; there is no lossy path (L3)
 
 `TextDecoder(codec, { fatal: true })` for every candidate. The first candidate that decodes
-strictly without error wins; candidates are ordered by the header hint first, then by a fixed
-list (utf-8, shift_jis, utf-16le), and a candidate that yields U+FFFD is rejected even when the
-decoder does not throw. If none succeeds, the file is rejected as fatal (`E_UNDECODABLE`): no
+strictly without error wins, and the candidate list is fixed: **a BOM pins the codec;
+otherwise UTF-8, then shift_jis, utf-16le, utf-16be** — the header declaration never reorders it
+(§8.1). A candidate that yields U+FFFD is rejected even when the decoder does not throw. If none
+succeeds, the file is rejected as fatal (`E_UNDECODABLE`): no
 lossy text is ever emitted, and an incomplete schema is never returned as healthy. This drops
 the lossy step of the fallback chain borrowed from `parser-evaluation.md` §6 — emitting U+FFFD
 into Japanese logical names is exactly the silent corruption the project forbids (L3). The
 chain itself — strict UTF-8 first, legacy codec second, diagnostics at each step — is kept.
+
+**What priority does not prove.** A strict success is not an identification: pure ASCII decodes
+under every codec, and the UTF-8 bytes of `ユーザー` also decode as `繝ｦ繝ｼ繧ｶ繝ｼ` under
+Shift_JIS. The reader stops at the first strict success, so it never learns whether a later
+candidate would also have succeeded and must not claim uniqueness. The residual risk is a genuine
+Shift_JIS file whose bytes happen to be valid UTF-8: it decodes as UTF-8 and is reported as such,
+with no diagnostic. That is inherent to byte-only detection; it is recorded here and in
+`src/decode/decode.ts` rather than papered over.
 
 Verified locally on Node v24.22.3 (ICU 78.3): `new TextDecoder('shift_jis')` decodes
 `83 65 83 58 83 67` to `テスト`, and `new TextDecoder('utf-8', { fatal: true })` raises
@@ -533,7 +551,10 @@ full ICU, so this should never fire in practice. Node >= 24 is required for this
 | utf-16le | absent | `D_ENCODING_ASSUMED` (info) |
 
 The decoded text always wins over the header; the header is a hint (P2). Both values are
-reported so a consumer can see the disagreement.
+reported so a consumer can see the disagreement: `D_ENCODING_MISMATCH` means exactly "the
+declaration names a different codec than the one that decoded the bytes", and it fires in both
+directions (rows 3 and 4). A declared legacy codec never wins on its declaration alone (§8.1), so
+the mismatch is reported on the decoded outcome, never used to choose it.
 
 ---
 

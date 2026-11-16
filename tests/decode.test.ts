@@ -302,6 +302,98 @@ describe('the generated families', () => {
   });
 });
 
+describe('candidate order without a BOM (R11)', () => {
+  /** The exact case from the R11 report: these UTF-8 bytes are also valid Shift_JIS. */
+  const mojibakeCase = '# A5:ER FORMAT:21\n# A5:ER ENCODING:SJIS\n[Entity]\nPName=ユーザー\n';
+
+  it('R11 premise: the bytes decode strictly under both codecs', () => {
+    // Without this, the regression below could pass by luck rather than because of the order.
+    const bytes = Buffer.from('ユーザー', 'utf8');
+    expect(new TextDecoder('utf-8', { fatal: true }).decode(bytes)).toBe('ユーザー');
+    // Strict success, wrong text: 繝ｦ繝ｼ繧ｶ繝ｼ is the mojibake the old candidate order returned
+    // as `ok: true` with no diagnostic at all.
+    expect(new TextDecoder('shift_jis', { fatal: true }).decode(bytes)).toBe('繝ｦ繝ｼ繧ｶ繝ｼ');
+  });
+
+  it('R11: a UTF-8 file declaring ENCODING:SJIS decodes as UTF-8, not mojibake', () => {
+    const outcome = decodeBytes(Buffer.from(mojibakeCase, 'utf8'));
+    if (!outcome.ok) throw new Error('the input must decode');
+
+    expect(outcome.decoded.encoding).toEqual({
+      detected: 'utf-8',
+      bom: false,
+      declared: 'SJIS',
+      mismatch: true,
+    });
+    // The Japanese string itself, not merely "ok".
+    expect(outcome.decoded.text).toContain('PName=ユーザー');
+    // And the Shift_JIS reading of those bytes must never reach a consumer.
+    expect(outcome.decoded.text.includes('繝ｦ繝ｼ繧ｶ繝ｼ')).toBe(false);
+    assertCodes(
+      outcome.decoded.diagnostics.map((diagnostic) => diagnostic.code),
+      ['D_BOM_MISSING', 'D_ENCODING_MISMATCH'],
+    );
+
+    // The mismatch carries both values, so a consumer can see what disagreed (§8.4).
+    const mismatch = outcome.decoded.diagnostics.find(
+      (diagnostic) => diagnostic.code === 'D_ENCODING_MISMATCH',
+    );
+    expect(mismatch?.details).toEqual({ declared: 'SJIS', detected: 'utf-8' });
+    expect(mismatch?.severity).toBe('warning');
+  });
+
+  it('never lets the declaration promote a legacy codec over UTF-8', () => {
+    // Same bytes, three declarations: the detected codec is utf-8 in every case, and the
+    // declaration only decides whether the disagreement is reported.
+    const cases: readonly (readonly [string, string | null])[] = [
+      ['# A5:ER FORMAT:21\nPName=ユーザー\n', null],
+      ['# A5:ER FORMAT:21\n# A5:ER ENCODING:UTF8\nPName=ユーザー\n', 'UTF8'],
+      ['# A5:ER FORMAT:21\n# A5:ER ENCODING:SJIS\nPName=ユーザー\n', 'SJIS'],
+    ];
+
+    for (const [text, declared] of cases) {
+      const outcome = decodeBytes(Buffer.from(text, 'utf8'));
+      if (!outcome.ok) throw new Error(`decode failed for declared=${String(declared)}`);
+      expect(outcome.decoded.encoding.detected, String(declared)).toBe('utf-8');
+      expect(outcome.decoded.encoding.declared).toBe(declared);
+      expect(outcome.decoded.encoding.mismatch).toBe(declared === 'SJIS');
+      expect(outcome.decoded.text).toContain('PName=ユーザー');
+    }
+  });
+
+  it('accepts a legacy codec only once UTF-8 has failed strictly', () => {
+    // enc-03 is the affirmative case: its bytes are invalid UTF-8, so the Shift_JIS success is
+    // evidence rather than a preference. This is the only rule by which a non-UTF-8 codec wins.
+    const bytes = Buffer.from(enc03.BYTES);
+    expect(() => new TextDecoder('utf-8', { fatal: true }).decode(bytes)).toThrow();
+    expect(new TextDecoder('shift_jis', { fatal: true }).decode(bytes)).toContain('注文');
+
+    const outcome = decodeBytes(bytes);
+    if (!outcome.ok) throw new Error('enc-03 must decode');
+    expect(outcome.decoded.encoding).toEqual({
+      detected: 'shift_jis',
+      bom: false,
+      declared: 'UTF8',
+      mismatch: true,
+    });
+  });
+
+  it('does not claim uniqueness when UTF-8 succeeds', () => {
+    // Both readings exist; the reader reports the one priority chose and says nothing more.
+    const bytes = Buffer.from('PName=ユーザー\n', 'utf8');
+    const outcome = decodeBytes(bytes);
+    if (!outcome.ok) throw new Error('decode failed');
+
+    expect(outcome.decoded.encoding.detected).toBe('utf-8');
+    // No diagnostic asserts "this file is UTF-8"; only the absent BOM is reported.
+    assertCodes(
+      outcome.decoded.diagnostics.map((diagnostic) => diagnostic.code),
+      ['D_BOM_MISSING'],
+    );
+    expect(outcome.decoded.encoding.mismatch).toBe(false);
+  });
+});
+
 describe('the catalog, decoded end to end', () => {
   it('produces exactly the decode-stage codes each committed fixture declares', () => {
     // Every synthetic fixture must load, and its observed D_*/E_* codes must be exactly the
