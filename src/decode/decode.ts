@@ -27,10 +27,13 @@
  * both values. See §8.2 and §8.4.
  *
  * Not implemented: §8.1's "NUL density heuristic" for a UTF-16 file with **no BOM**. The
- * document gives a threshold we cannot read unambiguously ("odd-byte NUL ≥ 85 % printable"),
- * and every guard we could pick would be invented. Such a file therefore decodes as UTF-8
- * (valid bytes, NULs preserved) instead of being decoded as UTF-16. Recorded as an open item
- * rather than guessed at; every fixture that needs UTF-16 carries a BOM (enc-05).
+ * document gives a threshold we cannot read unambiguously ("odd-byte NUL ≥ 85 % printable"), and
+ * every guard we could pick would be invented, so nothing here guesses UTF-16. The outcome is
+ * decided by §10.4's binary probe in `load.ts`, which runs first: a UTF-16 file whose first 4 KiB
+ * contains ASCII — any header or section line — is half NUL bytes and is refused as
+ * `E_BINARY_INPUT`; a payload with no ASCII has no NUL bytes, reaches this candidate list, and is
+ * refused there. Recorded as an open item rather than guessed at; every fixture that needs UTF-16
+ * carries a BOM (enc-05).
  *
  * Ambiguity is real and is *not* papered over: pure ASCII decodes successfully under all four
  * codecs, so a strict success alone never proves which one wrote the bytes. Priority resolves it
@@ -250,8 +253,16 @@ function isMismatch(declared: string | null, detected: Codec): boolean {
  * Enforce the text limits of §10.2.
  *
  * `maxLines` and `maxLineLength` cannot be checked on bytes: a CRLF pair is one line break, and
- * a multi-byte character is one column. They are therefore checked here, on the decoded text,
- * before any consumer sees it — leaving nothing half-parsed behind (§10.2, no partial success).
+ * a character is not a byte. They are checked here, on the decoded text, before any consumer sees
+ * it — leaving nothing half-parsed behind (§10.2, no partial success).
+ *
+ * **Unit (R14): `maxLineLength` counts UTF-16 code units** — JS string indices, the same unit
+ * `String.prototype.length` and the JSON encoder use. A BMP character is 1 unit, a surrogate pair
+ * (any code point above U+FFFF) is 2, a lone surrogate is 1, and CRLF is one break rather than two.
+ * It is deliberately *not* bytes, not code points and not terminal columns: a stated unit beats a
+ * guess, and code units need no grapheme model. A lone surrogate cannot reach this function —
+ * strict UTF-8 cannot encode one and a strict UTF-16 decode rejects it — so the rule is documented
+ * rather than exercised.
  *
  * Scanning is index-based rather than `split`, so a 64 MiB single-line file does not allocate a
  * second 64 MiB array just to be rejected.

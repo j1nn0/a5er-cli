@@ -483,7 +483,7 @@ recorded only as line offsets, never as data.
 bytes
  ├─ UTF-8 BOM (EF BB BF)?        → utf-8,      bom: true
  ├─ UTF-16LE/BE BOM?             → utf-16le/be
- ├─ NUL density heuristic?       → utf-16le (odd-byte NUL ≥ 85 % printable)
+ ├─ NUL density heuristic?       → utf-16le — **NOT IMPLEMENTED**, see below
  └─ strict UTF-8 (fatal)         → utf-8
      └─ fails → fixed list (shift_jis, utf-16le, utf-16be), first strict success wins
 ```
@@ -502,12 +502,17 @@ case). Priority resolves the ambiguity; it does not prove the source encoding, a
 detector is invented to pretend otherwise — the residual risk is stated in §8.2 and recorded
 rather than hidden.
 
-*Implementation status (unit U-2B):* the NUL-density heuristic for a UTF-16 file with **no BOM**
-is not implemented. Its condition is stated too loosely here ("odd-byte NUL ≥ 85 % printable") to
-pick a threshold without inventing one, so such a file decodes as UTF-8 — valid bytes with their
-NULs preserved — instead of being decoded as UTF-16. Every UTF-16 fixture carries a BOM (`enc-05`).
-The heuristic stays a design requirement until the threshold is fixed; `src/decode/decode.ts`
-records the same note next to the candidate list.
+*Implementation status (R13):* the NUL-density heuristic for a UTF-16 file with **no BOM** is
+**not implemented**. Its condition is stated too loosely above ("odd-byte NUL ≥ 85 % printable")
+to pick a threshold without inventing one, and this unit does not invent one. What happens instead
+is decided by §10.4's binary probe, which runs before decoding: a UTF-16 file whose first 4 KiB
+contains ASCII — every real document starts with a header comment or a section header, and each
+ASCII character contributes a NUL byte — exceeds the 10 % NUL density and is refused as
+`E_BINARY_INPUT`, never guessed at. A UTF-16 payload with no ASCII at all has no NUL bytes, so it
+reaches the fixed candidate list and is refused there (`E_UNRECOGNIZED_DOCUMENT`: no section
+header). Either way, nothing is decoded as UTF-16 without a BOM. The heuristic stays an open design
+item until its threshold is fixed; `src/decode/decode.ts` records the same note, and
+`tests/decode.test.ts` pins both outcomes so closing the gap is a deliberate, visible change.
 
 ### 8.2 Decoding is strict; there is no lossy path (L3)
 
@@ -653,7 +658,7 @@ admits more than one reading. `$FFFFFFFF` is reported as the default colour, not
 |---|---|---|
 | `maxBytes` | 64 MiB | `E_LIMIT_BYTES` — fatal, no schema |
 | `maxLines` | 2,000,000 | `E_LIMIT_LINES` — fatal |
-| `maxLineLength` | 4 MiB | `E_LIMIT_LINE_LENGTH` — fatal |
+| `maxLineLength` | 4 MiB, measured in **UTF-16 code units** (a surrogate pair counts 2) | `E_LIMIT_LINE_LENGTH` — fatal |
 | `readBudgetMs` | none in v1 | — |
 
 There is **no partial-success mode**: if the reader stops early, the result is a failed

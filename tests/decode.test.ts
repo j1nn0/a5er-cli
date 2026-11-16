@@ -666,6 +666,97 @@ describe('the text limits (§10.2)', () => {
   });
 });
 
+describe('the maxLineLength unit (R14)', () => {
+  it('counts maxLineLength in UTF-16 code units for BMP Japanese', () => {
+    // テスト is three BMP characters: three code units, nine UTF-8 bytes. The limit counts units.
+    const text = 'テスト';
+    expect(text.length).toBe(3);
+    expect(Buffer.byteLength(text, 'utf8')).toBe(9);
+
+    const atLimit = decodeBytes(Buffer.from(text, 'utf8'), { limits: { maxLineLength: 3 } });
+    expect(atLimit.ok).toBe(true);
+
+    const over = decodeBytes(Buffer.from(text, 'utf8'), { limits: { maxLineLength: 2 } });
+    expect(over.ok).toBe(false);
+    assertCodes(failureCodes(over), ['E_LIMIT_LINE_LENGTH']);
+    // The reported length is in the same unit as the limit.
+    expect(over.ok ? {} : over.diagnostics[0]?.details).toEqual({
+      maxLineLength: 2,
+      longestLine: 3,
+    });
+  });
+
+  it('counts a surrogate pair as two code units, so a glyph is not a unit', () => {
+    // U+2000B: one code point, two UTF-16 code units, four UTF-8 bytes.
+    const glyph = '\u{2000B}';
+    expect([...glyph]).toHaveLength(1);
+    expect(glyph.length).toBe(2);
+    expect(Buffer.byteLength(glyph, 'utf8')).toBe(4);
+
+    // Two units fit a limit of two and not a limit of one.
+    expect(decodeBytes(Buffer.from(glyph, 'utf8'), { limits: { maxLineLength: 2 } }).ok).toBe(true);
+    const overOne = decodeBytes(Buffer.from(glyph, 'utf8'), { limits: { maxLineLength: 1 } });
+    expect(overOne.ok).toBe(false);
+    expect(overOne.ok ? {} : overOne.diagnostics[0]?.details['longestLine']).toBe(2);
+
+    // Two glyphs are four units, so a limit of three breaches although only two glyphs exist.
+    const twoGlyphs = decodeBytes(Buffer.from(glyph + glyph, 'utf8'), {
+      limits: { maxLineLength: 3 },
+    });
+    expect(twoGlyphs.ok).toBe(false);
+    expect(twoGlyphs.ok ? {} : twoGlyphs.diagnostics[0]?.details['longestLine']).toBe(4);
+  });
+
+  it('applies the unit to the longest line, not the whole text', () => {
+    // Two lines of three units each fit a limit of three; the line count is what would breach.
+    const outcome = decodeBytes(Buffer.from('テスト\nテスト', 'utf8'), {
+      limits: { maxLineLength: 3, maxLines: 2 },
+    });
+    expect(outcome.ok).toBe(true);
+  });
+});
+
+describe('R13 — a BOM-less UTF-16 file is refused, never guessed at', () => {
+  const documentText = '# A5:ER FORMAT:21\n[Entity]\nPName=テスト\n';
+
+  it('refuses a BOM-less UTF-16LE document as binary instead of decoding it', () => {
+    const bytes = Buffer.from(documentText, 'utf16le');
+    // The mechanism: the ASCII half of a UTF-16 document is NUL bytes, so §10.4's probe fires.
+    expect(nulDensity(bytes)).toBeGreaterThan(0.1);
+
+    const outcome = loadBytes(bytes, 'utf16le-without-bom.a5er');
+
+    expect(outcome.ok).toBe(false);
+    assertCodes(failureCodes(outcome), ['E_BINARY_INPUT']);
+    // Neither a guessed UTF-16 decode nor a silent mis-decode: a failure carries no text at all.
+    expect(Object.keys(outcome)).toEqual(['ok', 'diagnostics']);
+  });
+
+  it('decodes the same document once it carries a BOM', () => {
+    // The contrast that stops the test above passing for the wrong reason: the BOM is what makes
+    // UTF-16 readable, and it is checked before the binary probe.
+    const bytes = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(documentText, 'utf16le')]);
+    const outcome = loadBytes(bytes, 'utf16le-with-bom.a5er');
+
+    if (!outcome.ok) throw new Error('a BOM-carrying UTF-16LE document must load');
+    expect(outcome.source.encoding.detected).toBe('utf-16le');
+    expect(outcome.source.text).toContain('PName=テスト');
+  });
+
+  it('records the gap for a payload with no ASCII: no NUL bytes, so no probe', () => {
+    // Documented gap, not a contract. A payload of BMP Japanese has no NUL bytes at all, so the
+    // density probe cannot fire and the unimplemented heuristic would be the only detector. The
+    // input is still refused — a fatal code and no schema — which is why the gap is survivable.
+    // When the heuristic or a threshold lands, this expectation must be updated deliberately.
+    const bytes = Buffer.from('テスト', 'utf16le');
+    expect(nulDensity(bytes)).toBe(0);
+
+    const outcome = loadBytes(bytes, 'japanese-only-utf16le.a5er');
+    expect(outcome.ok).toBe(false);
+    assertCodes(failureCodes(outcome), ['E_UNRECOGNIZED_DOCUMENT']);
+  });
+});
+
 describe('trusted codes, untrusted details (§11 rule 1)', () => {
   it('never lets file content reach a code or a message', () => {
     const hostile = '# A5:ER FORMAT:21\n[Entity]\nPName="<script>alert(1)</script>"\n';
