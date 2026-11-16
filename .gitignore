@@ -147,3 +147,14 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# Build and test outputs
+dist/
+coverage/
+
+# Local development files
+.local/
+tmp/
+
+# Real ER diagrams may contain confidential schema information
+*.a5er
