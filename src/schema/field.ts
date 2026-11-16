@@ -46,7 +46,7 @@
 import type { Diagnostic } from '../diagnostics/diagnostic.js';
 import { emitSyntax } from '../diagnostics/diagnostic.js';
 import type { Span } from '../model/span.js';
-import { elementAt, emptyDefault, partRaw, unescapeEscaped } from './values.js';
+import { decodeInteger, elementAt, emptyDefault, partRaw, unescapeEscaped } from './values.js';
 import type { ComplexValue, Value } from './values.js';
 
 /** Element 8 (色) is required, so a value with fewer elements cannot describe a column (§7.2). */
@@ -73,14 +73,28 @@ export interface DecodedField {
    * this stage (§P7, P12).
    */
   readonly dataType: Value<string>;
-  /** Element 4 as the literal it has to be; `unrecognised` keeps a foreign token traceable. */
-  readonly notNull: Value<boolean>;
-  /** How element 4 was written, so `notNull === false` is not ambiguous. */
+  /**
+   * Element 4 as the literal it has to be.
+   *
+   * `null` means the writer wrote something that is *neither* the documented `NOT NULL` literal nor
+   * empty (R20). It is deliberately not `false`: a consumer that reads `notNull?.value` gets
+   * `undefined` for such a token instead of a nullable column the file never declared, and
+   * `notNullRaw` still holds the text.
+   */
+  readonly notNull: Value<boolean> | null;
+  /** How element 4 was written, so a `null` reading is never ambiguous. */
   readonly notNullToken: NotNullToken;
-  /** キー順 (element 5) as the declared ordinal, or `null` when the slot is empty or unrecognised. */
+  /** Element 4 exactly as written, or `null` when the slot is absent. Always available. */
+  readonly notNullRaw: string | null;
+  /**
+   * キー順 (element 5) as the declared ordinal, or `null` when the slot is empty or the token is not
+   * a usable ordinal (R19: out of range, negative, or not a decimal integer).
+   */
   readonly keyOrder: Value<number> | null;
-  /** How element 5 was written, so a null ordinal is never ambiguous. */
+  /** How element 5 was written, so a `null` ordinal is never ambiguous. */
   readonly keyOrderToken: KeyOrderToken;
+  /** Element 5 exactly as written, or `null` when the slot is absent. Always available. */
+  readonly keyOrderRaw: string | null;
   /** デフォルト値 (element 6): an expression, never evaluated. */
   readonly defaultValue: Value<string>;
   /** コメント (element 7), escapes applied. */
@@ -107,48 +121,69 @@ function text(element: Value<string> | null): Value<string> {
   return { ...element, value: unescapeEscaped(element.value) };
 }
 
-/** Element 4: `NOT NULL` is a literal, not a boolean the writer computes. */
+/**
+ * Element 4: `NOT NULL` is a literal, not a boolean the writer computes.
+ *
+ * Three answers, and the third one is the reason this returns a `null` value (R20):
+ *
+ * - `NOT NULL` → `true`, declared;
+ * - empty → `false`, declared (or `defaulted` when the slot itself was omitted);
+ * - anything else → **`null`**, because a token the format does not define is not evidence of
+ *   nullability. The old reading coerced it to `false`, which let a consumer print "nullable" for
+ *   a column whose declarations contradict each other.
+ */
 function readNotNull(element: Value<string> | null): {
-  value: Value<boolean>;
+  value: Value<boolean> | null;
   token: NotNullToken;
+  raw: string | null;
 } {
   if (element === null) {
     return {
       value: { value: false, origin: 'defaulted', raw: '', span: null },
       token: 'nullable',
+      raw: null,
     };
   }
   if (element.value === 'NOT NULL') {
     return {
       value: { value: true, origin: 'declared', raw: element.raw, span: element.span },
       token: 'not-null',
+      raw: element.raw,
     };
   }
   if (element.value === '') {
     return {
-      value: { value: false, origin: 'declared', raw: element.raw, span: element.span },
+      value: { value: false, origin: element.origin, raw: element.raw, span: element.span },
       token: 'nullable',
+      raw: element.raw,
     };
   }
-  // A token that is neither the literal nor empty is not coerced to `false`: it is kept verbatim
-  // and flagged as unrecognised, so a consumer never reads an invention as data.
-  return {
-    value: { value: false, origin: 'declared', raw: element.raw, span: element.span },
-    token: 'unrecognised',
-  };
+  return { value: null, token: 'unrecognised', raw: element.raw };
 }
 
 /** How element 5 was written; `unrecognised` keeps a foreign token visible instead of dropping it. */
 export type KeyOrderToken = 'ordinal' | 'empty' | 'unrecognised';
 
-/** Element 5: a `0`-based ordinal or empty (`§P8`); anything else is kept as unrecognised. */
+/**
+ * Element 5: a `0`-based ordinal or empty (`§P8`); anything else is kept as unrecognised.
+ *
+ * The number goes through `decodeInteger` (R19) rather than `Number()`. `Number('9007199254740993')`
+ * rounds to `9007199254740992` and forty digits become `1e39`, so a naive read would publish an
+ * ordinal the file never contained. An unsafe or malformed token yields `null` with its text kept;
+ * a negative token is a valid integer but not a `0`-based ordinal, so it is unrecognised too.
+ */
 function readKeyOrder(element: Value<string> | null): {
   value: Value<number> | null;
   token: KeyOrderToken;
+  raw: string | null;
 } {
-  if (element === null || element.value === '') return { value: null, token: 'empty' };
-  if (!/^(?:0|[1-9]\d*)$/.test(element.value)) return { value: null, token: 'unrecognised' };
-  return { value: { ...element, value: Number(element.value) }, token: 'ordinal' };
+  if (element === null) return { value: null, token: 'empty', raw: null };
+  if (element.value === '') return { value: null, token: 'empty', raw: element.raw };
+  const decoded = decodeInteger(element.value);
+  if (!decoded.ok || decoded.value < 0) {
+    return { value: null, token: 'unrecognised', raw: element.raw };
+  }
+  return { value: { ...element, value: decoded.value }, token: 'ordinal', raw: element.raw };
 }
 
 /**
@@ -182,7 +217,20 @@ export function decodeField(parts: ComplexValue, span: Span, raw: string): Field
     );
   }
 
-  const element = (index: number): Value<string> | null => elementAt(elements, index, span);
+  /**
+   * One element, honouring the tokeniser's omitted-tail flag (R21).
+   *
+   * Three outcomes, and conflating the last two is what R21 was about:
+   *
+   * - past the end of the value → `null` (the writer stopped before this slot);
+   * - the final slot left blank by a trailing separator → `emptyDefault()`, i.e. `defaulted`;
+   * - written out, even as `""` → `declared`, with its own raw text and span.
+   */
+  const element = (index: number): Value<string> | null => {
+    if (index >= elements.length) return null;
+    if (parts.trailingElementsOmitted && index === elements.length - 1) return emptyDefault();
+    return elementAt(elements, index, span);
+  };
   const notNull = readNotNull(element(3));
   const keyOrder = readKeyOrder(element(4));
 
@@ -190,7 +238,10 @@ export function decodeField(parts: ComplexValue, span: Span, raw: string): Field
   // `raw` is the tail as written (quotes restored), `value` is its unescaped text: the two are
   // different things whenever the writer quoted or escaped anything, and merging them would put
   // the quote characters into the value a consumer reads.
-  const tail = elements.slice(FIELD_MAX_ELEMENTS - 1);
+  const tail = elements.slice(
+    FIELD_MAX_ELEMENTS - 1,
+    parts.trailingElementsOmitted ? elements.length - 1 : elements.length,
+  );
   const additionalOption: Value<string> =
     tail.length === 0
       ? emptyDefault()
@@ -208,8 +259,10 @@ export function decodeField(parts: ComplexValue, span: Span, raw: string): Field
     dataType: text(element(2)),
     notNull: notNull.value,
     notNullToken: notNull.token,
+    notNullRaw: notNull.raw,
     keyOrder: keyOrder.value,
     keyOrderToken: keyOrder.token,
+    keyOrderRaw: keyOrder.raw,
     defaultValue: text(element(5)),
     comment: text(element(6)),
     color: element(7) === null ? null : text(element(7)),

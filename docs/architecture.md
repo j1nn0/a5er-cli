@@ -589,19 +589,36 @@ the mismatch is reported on the decoded outcome, never used to choose it.
 Resolution runs once, over the AST, and produces `ResolvedSchema` plus diagnostics. It never
 mutates the AST.
 
+The layer lands in increments. The first one produces a **`PartialSemantics`** — object identities,
+duplicate names, absent required keys, inferred primary keys and legacy-only index data — together
+with an explicit list of the areas it does **not** model: relation endpoints, page resolution,
+domain resolution, common columns, view columns and subtype membership. The name is part of the
+contract: a consumer that reads an absent finding must also read that list, because "nothing
+reported" means "nothing checked" for everything on it.
+
 ### 9.1 Object identity
 
 `PName` is the identity and must be unique per diagram; uniqueness is checked across
 `Entity` + `View` + `Subtype` (P6). Duplicates produce `V_DUPLICATE_OBJECT_NAME` (error) and
 both objects are still emitted, each with its span — a validation failure is data, not an
-abort. The same `PName` appearing on two pages is **one** object with two `positions` (P6),
+abort. One finding is reported per duplicated name, on the later declaring `PName` line, and the
+finding carries every object that declares it: repairing the duplication (merging, renaming,
+dropping one) is never a parser's decision. The same `PName` appearing on two pages is **one** object with two `positions` (P6),
 never two objects.
 
 ### 9.2 PK, indexes, relations
 
 - **PK is synthesised, not read.** `Field` element 5 (キー順) is a declared 0-based ordinal;
   `primaryKey` is an `inferred` value listing columns in ordinal order, citing each
-  contributing span (P8). Gaps or duplicate ordinals → `V_PK_ORDER_CONFLICT` (warning).
+  contributing span (P8). Gaps or duplicate ordinals → `V_PK_ORDER_CONFLICT` (warning), one
+  finding per object on its first contributing `Field` line, and the declared ordinals are left
+  exactly as written: no renumbering, no filled gap. An ordinal that is not an exact integer
+  contributes nothing rather than a rounded one.
+- **Required keys are reported per subject, not per key.** A section missing three required keys is
+  one `V_MISSING_REQUIRED_KEY` listing all three, pointing at the object's `PName` line (the section
+  header when it has none); a column missing its 色 is one finding on its `Field` line (§7.2). No
+  default is invented for an absent required key — K6's `RelationType1` default is exactly the case
+  where 必須 wins.
 - **Indexes** come from `IndexInfo` (`origin: 'declared'`). Legacy `Index`/`IndexOption` are
   decoded under the F2 gate with `origin: 'legacy'` and a diagnostic whenever they are the only
   index evidence (D5, L6, U7). A legacy payload whose shape does not match the observed

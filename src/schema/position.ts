@@ -32,7 +32,7 @@ import type { Span } from '../model/span.js';
 import type { SectionKind } from '../syntax/sections.js';
 import type { ComplexValue, Value } from './values.js';
 import type { ComplexPart } from '../syntax/complex.js';
-import { elementAt, emptyDefault, partRaw, unescapeEscaped } from './values.js';
+import { decodeInteger, elementAt, emptyDefault, partRaw, unescapeEscaped } from './values.js';
 
 /** Which grammar a section's `Position` follows. */
 export type PositionShape = 'object' | 'relation' | 'undocumented';
@@ -124,11 +124,22 @@ function pageOf(parts: readonly ComplexPart[], span: Span): Value<string> {
   return { ...element, value: unescapeEscaped(element.value) };
 }
 
-/** A documented integer element: `null` when the token is not a decimal integer or is absent. */
+/**
+ * A documented integer element: `null` when the token is absent, not a decimal integer, or outside
+ * the exact range a JavaScript number can hold (R19).
+ *
+ * The number goes through `decodeInteger`, so `9999999999999999999999` cannot arrive as `1e22` and
+ * `9007199254740993` cannot silently become `9007199254740992`. A negative coordinate is decoded as
+ * the integer it is: the documented ranges (`0`–`10000`, `0`–`10`) are validation concerns, and
+ * rejecting a value here would be this stage inventing a rule the specification states elsewhere.
+ * The declared token stays in `rawElements` either way.
+ */
 function numberAt(parts: ComplexValue['parts'], index: number, span: Span): Value<number> | null {
   const element = elementAt(parts, index, span);
-  if (element === null || !/^-?(?:0|[1-9]\d*)$/.test(element.value)) return null;
-  return { ...element, value: Number(element.value) };
+  if (element === null) return null;
+  const decoded = decodeInteger(element.value);
+  if (!decoded.ok) return null;
+  return { ...element, value: decoded.value };
 }
 
 /** A text element with escapes applied; empty default when the writer stopped earlier. */

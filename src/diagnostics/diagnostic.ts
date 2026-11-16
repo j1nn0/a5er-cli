@@ -111,6 +111,19 @@ export type SyntaxStageCode =
 export type RegistryStageCode = 'S_UNKNOWN_KEY' | 'S_LEGACY_KEY' | 'S_DUPLICATE_KEY';
 
 /**
+ * A code the semantic stage can raise (§9, §11).
+ *
+ * Only the four findings this unit derives: object identity, required keys, key order and legacy-only
+ * index data. The remaining `V_` codes (dangling references, field counts, view columns, subtype
+ * membership) belong to the resolution work that is still open, and are not raised from anywhere yet.
+ */
+export type SemanticStageCode =
+  | 'V_DUPLICATE_OBJECT_NAME'
+  | 'V_MISSING_REQUIRED_KEY'
+  | 'V_PK_ORDER_CONFLICT'
+  | 'V_INDEX_LEGACY_ONLY';
+
+/**
  * Detail values, per `architecture.md` §11.
  *
  * Untrusted text lives here and nowhere else: `code` and `message` are fixed strings, so a
@@ -252,6 +265,32 @@ const REGISTRY_DEFINITIONS: Readonly<Record<RegistryStageCode, Definition>> = {
   },
 };
 
+/**
+ * Semantic-stage definitions (§11's table).
+ *
+ * `V_MISSING_REQUIRED_KEY` is the one code §11 types as "warning **or** error" — error for identity
+ * and `PageInfo`, warning otherwise — so its severity travels with the finding instead of living in
+ * this table; see `emitMissingRequiredKey`.
+ */
+const SEMANTIC_DEFINITIONS: Readonly<Record<SemanticStageCode, Definition>> = {
+  V_DUPLICATE_OBJECT_NAME: {
+    severity: 'error',
+    message: 'Two objects declare the same physical name',
+  },
+  V_MISSING_REQUIRED_KEY: {
+    severity: 'warning',
+    message: 'A key the specification requires is absent',
+  },
+  V_PK_ORDER_CONFLICT: {
+    severity: 'warning',
+    message: 'The declared key ordinals are not a unique zero-based sequence',
+  },
+  V_INDEX_LEGACY_ONLY: {
+    severity: 'warning',
+    message: 'The only index data this object declares uses the legacy spelling',
+  },
+};
+
 export interface EmitOptions {
   /** Untrusted values; strings are bounded here, not at the call site. */
   readonly details?: Readonly<Record<string, DiagnosticDetail>>;
@@ -300,6 +339,34 @@ export function emitSyntax(code: SyntaxStageCode, options: EmitOptions = {}): Di
  */
 export function emitRegistry(code: RegistryStageCode, options: EmitOptions = {}): Diagnostic {
   return build(code, REGISTRY_DEFINITIONS[code], options);
+}
+
+/**
+ * Build a `Diagnostic` for a code the semantic stage can raise (§9).
+ *
+ * Same contract as `emit`; `V_MISSING_REQUIRED_KEY` is emitted through
+ * `emitMissingRequiredKey`, which is the only place a severity may be chosen.
+ */
+export function emitSemantic(code: SemanticStageCode, options: EmitOptions = {}): Diagnostic {
+  return build(code, SEMANTIC_DEFINITIONS[code], options);
+}
+
+/**
+ * Build the `V_MISSING_REQUIRED_KEY` diagnostic, whose severity §11 defines per subject:
+ * `error` when the absent key is an identity key (`PName`) or `PageInfo`, `warning` otherwise.
+ *
+ * The finding supplies the severity because the specification assigns it per key; a call site can
+ * still only pick one of the two values §11 allows, never a third.
+ */
+export function emitMissingRequiredKey(
+  options: EmitOptions & { readonly severity: 'warning' | 'error' },
+): Diagnostic {
+  const definition = SEMANTIC_DEFINITIONS.V_MISSING_REQUIRED_KEY;
+  return build(
+    'V_MISSING_REQUIRED_KEY',
+    { severity: options.severity, message: definition.message },
+    options,
+  );
 }
 
 /** Shared body of the stage emitters; the definition is already resolved by the caller. */
