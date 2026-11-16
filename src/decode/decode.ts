@@ -212,7 +212,7 @@ function finish(text: string, detected: Codec, bom: boolean, limits: Limits): De
   const lineBreach = checkLineLimits(text, limits);
   if (lineBreach !== null) return { ok: false, diagnostics: [lineBreach] };
 
-  // The decoded text is authoritative; the byte peek only ordered the candidates.
+  // The decoded text is authoritative; the candidate order is fixed (§8.1).
   const header = parseHeader(text);
   const encoding: EncodingInfo = {
     detected,
