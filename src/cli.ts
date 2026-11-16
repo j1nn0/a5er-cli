@@ -11,7 +11,7 @@
  * the package is linked or installed; `node dist/cli.js` needs no mode at all.
  */
 
-import { VERSION } from './index.js'
+import { VERSION } from './index.js';
 
 const HELP = `a5er — read-only CLI for A5:SQL Mk-2 ER diagram (.a5er) files
 
@@ -26,13 +26,13 @@ Options:
 Status: Phase 1 scaffold only. The .a5er parser and every analysis command
 (inspect, tables, relations, search, validate, export) are NOT implemented
 yet, so no file can be read with this build.
-`
+`;
 
-const USAGE = 'Usage: a5er [--help | --version]'
+const USAGE = 'Usage: a5er [--help | --version]';
 
 /** Long and short spellings accepted by this build. */
-const HELP_FLAGS: readonly string[] = ['--help', '-h']
-const VERSION_FLAGS: readonly string[] = ['--version', '-v']
+const HELP_FLAGS: readonly string[] = ['--help', '-h'];
+const VERSION_FLAGS: readonly string[] = ['--version', '-v'];
 
 /**
  * Quote a user-supplied argument so that control characters cannot reach the
@@ -40,11 +40,11 @@ const VERSION_FLAGS: readonly string[] = ['--version', '-v']
  * purpose: the argument is untrusted input.
  */
 function quote(value: string): string {
-  return JSON.stringify(value)
+  return JSON.stringify(value);
 }
 
 function renderUnknown(token: string): string {
-  return `a5er: unknown option ${quote(token)}\n\n${USAGE}\nRun 'a5er --help' for details.\n`
+  return `a5er: unknown option ${quote(token)}\n\n${USAGE}\nRun 'a5er --help' for details.\n`;
 }
 
 /**
@@ -62,28 +62,28 @@ function renderUnknown(token: string): string {
  */
 function main(argv: readonly string[]): { code: number; stdout: string; stderr: string } {
   if (argv.length === 0) {
-    return { code: 0, stdout: HELP, stderr: '' }
+    return { code: 0, stdout: HELP, stderr: '' };
   }
 
   const unknown = argv.find(
     (token) => !HELP_FLAGS.includes(token) && !VERSION_FLAGS.includes(token),
-  )
+  );
   if (unknown !== undefined) {
-    return { code: 2, stdout: '', stderr: renderUnknown(unknown) }
+    return { code: 2, stdout: '', stderr: renderUnknown(unknown) };
   }
 
   if (argv.some((token) => HELP_FLAGS.includes(token))) {
-    return { code: 0, stdout: HELP, stderr: '' }
+    return { code: 0, stdout: HELP, stderr: '' };
   }
 
-  return { code: 0, stdout: `${VERSION}\n`, stderr: '' }
+  return { code: 0, stdout: `${VERSION}\n`, stderr: '' };
 }
 
-const result = main(process.argv.slice(2))
+const result = main(process.argv.slice(2));
 if (result.stdout !== '') {
-  process.stdout.write(result.stdout)
+  process.stdout.write(result.stdout);
 }
 if (result.stderr !== '') {
-  process.stderr.write(result.stderr)
+  process.stderr.write(result.stderr);
 }
-process.exitCode = result.code
+process.exitCode = result.code;

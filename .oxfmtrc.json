@@ -1,6 +1,6 @@
 {
   "ignorePatterns": ["docs/**", "README.md", "LICENSE"],
-  "semi": false,
+  "semi": true,
   "singleQuote": true,
   "printWidth": 100,
   "trailingComma": "all",

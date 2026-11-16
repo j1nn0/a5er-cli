@@ -6,4 +6,4 @@
  * Phase 2; until then there is deliberately nothing else to import.
  */
 
-export const VERSION = '0.1.0'
+export const VERSION = '0.1.0';
