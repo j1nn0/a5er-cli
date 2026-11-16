@@ -24,7 +24,14 @@ export interface SourceStat {
   readonly isRegularFile: boolean;
 }
 
-/** An open input, read-only. */
+/**
+ * An open input, read-only.
+ *
+ * Contract (R12): any method may throw, and the reader treats a throw as a *file condition* —
+ * an `E_IO` diagnostic, never an escaping exception — except for `read` returning more bytes
+ * than requested, which is a breach of this contract rather than a property of the input.
+ * A `close` that throws is not retried: the descriptor state is unknown after it.
+ */
 export interface SourceHandle {
   /** Current stat. Called twice by the reader: before and after the read. */
   stat(): SourceStat;
@@ -35,7 +42,7 @@ export interface SourceHandle {
    * reader reports `E_TRUNCATED_INPUT` rather than returning a short buffer.
    */
   read(position: number, length: number): Buffer;
-  /** Release the handle. Idempotent. */
+  /** Release the handle. Called at most once per handle; idempotent is still expected. */
   close(): void;
 }
 

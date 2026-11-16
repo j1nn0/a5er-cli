@@ -50,37 +50,58 @@ interface FakeOptions {
   readonly stats: readonly SourceStat[];
   /** Bytes each `read` call returns, in order; a short or empty entry ends the input early. */
   readonly chunks: readonly Buffer[];
+  /** Throw from this 1-based `stat` call instead of answering (R12). */
+  readonly statFailsAt?: number;
+  /** Error thrown by the failing `stat`, `read` or `close`; defaults to a plain `Error`. */
+  readonly failure?: unknown;
+  /** Throw from every `read` call (R12). */
+  readonly readFails?: boolean;
+  /** Return more bytes than were requested, breaking the handle contract (R12). */
+  readonly overReads?: boolean;
+  /** Throw from `close` (R12). */
+  readonly closeFails?: boolean;
 }
 
 /** Handle recording how often it was read and closed. */
 interface FakeHandle {
   readonly handle: SourceHandle;
   readonly reads: number[];
+  readonly stats: () => number;
   readonly closes: () => number;
+}
+
+/** An error carrying a Node errno code, shaped like the ones `node:fs` throws. */
+function errnoError(code: string, message: string): Error {
+  return Object.assign(new Error(message), { code });
 }
 
 function fakeHandle(options: FakeOptions): FakeHandle {
   const reads: number[] = [];
   let closeCount = 0;
-  let statIndex = 0;
+  let statCount = 0;
+  const failure = options.failure ?? new Error('the seam failed');
 
   const handle: SourceHandle = {
     stat(): SourceStat {
-      const value = options.stats[Math.min(statIndex, options.stats.length - 1)];
-      statIndex += 1;
+      statCount += 1;
+      if (options.statFailsAt === statCount) throw failure;
+      const value = options.stats[Math.min(statCount - 1, options.stats.length - 1)];
       if (value === undefined) throw new Error('fake handle has no stat');
       return value;
     },
-    read(position: number, _length: number): Buffer {
+    read(position: number, length: number): Buffer {
       reads.push(position);
+      if (options.readFails === true) throw failure;
+      if (options.overReads === true) return Buffer.alloc(length + 1, 0x41);
       return options.chunks[reads.length - 1] ?? Buffer.alloc(0);
     },
     close(): void {
       closeCount += 1;
+      if (options.closeFails === true) throw failure;
     },
   };
 
-  return { handle, reads, closes: () => closeCount };
+  return { handle, reads, stats: () => statCount, closes: () => closeCount };
 }
 
 function fakeFileSystem(fake: FakeHandle): FileSystem {
@@ -351,6 +372,169 @@ describe('readSource — immutability (imm-01)', () => {
     } finally {
       staged.cleanup();
     }
+  });
+});
+
+describe('readSource — failing handle operations (R12)', () => {
+  const okStat = stat(4);
+
+  it('turns a failing first stat into E_IO and still releases the handle', () => {
+    const fake = fakeHandle({
+      stats: [okStat],
+      chunks: [],
+      statFailsAt: 1,
+      failure: errnoError('EIO', 'fstat failed'),
+    });
+    const outcome = readSource('stat-fails', { fileSystem: fakeFileSystem(fake) });
+
+    expect(outcome.ok).toBe(false);
+    assertCodes(codesOf(outcome), ['E_IO']);
+    expect(outcome.ok ? null : outcome.diagnostics[0]?.details).toEqual({
+      path: 'stat-fails',
+      errno: 'EIO',
+      op: 'stat',
+    });
+    expect(fake.reads).toEqual([]);
+    expect(fake.closes()).toBe(1);
+  });
+
+  it('turns a failing re-stat into E_IO, never into a changed-file verdict', () => {
+    // The reader never got a second opinion, so it may not claim the file changed.
+    const fake = fakeHandle({
+      stats: [okStat],
+      chunks: [Buffer.from('abcd')],
+      statFailsAt: 2,
+      failure: errnoError('EIO', 'fstat failed'),
+    });
+    const outcome = readSource('restat-fails', { fileSystem: fakeFileSystem(fake) });
+
+    expect(outcome.ok).toBe(false);
+    assertCodes(codesOf(outcome), ['E_IO']);
+    expect(outcome.ok ? null : outcome.diagnostics[0]?.details['op']).toBe('stat');
+    expect(fake.stats()).toBe(2);
+    expect(fake.closes()).toBe(1);
+  });
+
+  it('turns a failing read into E_IO and exposes no partial bytes', () => {
+    const fake = fakeHandle({
+      stats: [okStat],
+      chunks: [Buffer.from('ab')],
+      readFails: true,
+      failure: errnoError('EIO', 'read failed'),
+    });
+    const outcome = readSource('read-fails', { fileSystem: fakeFileSystem(fake) });
+
+    expect(outcome.ok).toBe(false);
+    assertCodes(codesOf(outcome), ['E_IO']);
+    expect(outcome.ok ? null : outcome.diagnostics[0]?.details['op']).toBe('read');
+    // The second chunk was never requested: the failure ended the read immediately.
+    expect(fake.reads).toHaveLength(1);
+    // A failure carries diagnostics only — there is no field to hold a short buffer.
+    expect(Object.keys(outcome)).toEqual(['ok', 'diagnostics']);
+    expect(fake.closes()).toBe(1);
+  });
+
+  it('turns a failing close after a successful read into E_IO and keeps no bytes', () => {
+    const fake = fakeHandle({
+      stats: [okStat],
+      chunks: [Buffer.from('abcd')],
+      closeFails: true,
+      failure: errnoError('EBADF', 'close failed'),
+    });
+    const outcome = readSource('close-fails', { fileSystem: fakeFileSystem(fake) });
+
+    // The bytes were read, but the handle's state is unknown, so they are not handed out.
+    expect(outcome.ok).toBe(false);
+    assertCodes(codesOf(outcome), ['E_IO']);
+    expect(outcome.ok ? null : outcome.diagnostics[0]?.details).toEqual({
+      path: 'close-fails',
+      errno: 'EBADF',
+      op: 'close',
+    });
+    expect(fake.closes()).toBe(1);
+  });
+
+  it('keeps the primary failure and appends the close failure', () => {
+    const fake = fakeHandle({ stats: [stat(0)], chunks: [], closeFails: true });
+    const outcome = readSource('empty-close-fails', { fileSystem: fakeFileSystem(fake) });
+
+    expect(outcome.ok).toBe(false);
+    // Primary first, close second: neither finding is lost and the order is stable.
+    assertCodes(codesOf(outcome), ['E_EMPTY_INPUT', 'E_IO']);
+    expect(outcome.ok ? [] : outcome.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+      'E_EMPTY_INPUT',
+      'E_IO',
+    ]);
+    expect(outcome.ok ? null : outcome.diagnostics[1]?.details['op']).toBe('close');
+    expect(fake.closes()).toBe(1);
+  });
+
+  it('keeps a short read and appends the close failure', () => {
+    const fake = fakeHandle({
+      stats: [stat(9)],
+      chunks: [Buffer.alloc(3)],
+      closeFails: true,
+    });
+    const outcome = readSource('short-close-fails', { fileSystem: fakeFileSystem(fake) });
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.ok ? [] : outcome.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+      'E_TRUNCATED_INPUT',
+      'E_IO',
+    ]);
+    expect(fake.closes()).toBe(1);
+  });
+
+  it('reports a close failure with no errno when the seam throws a plain error', () => {
+    const fake = fakeHandle({ stats: [okStat], chunks: [Buffer.from('abcd')], closeFails: true });
+    const outcome = readSource('close-plain-error', { fileSystem: fakeFileSystem(fake) });
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.ok ? null : outcome.diagnostics[0]?.details['errno']).toBeNull();
+  });
+
+  it('throws on a seam that returns more bytes than requested, after releasing the handle', () => {
+    // A contract breach is a programming error, not a file condition: it must not be dressed up
+    // as `E_IO`. The handle is still released exactly once before the error escapes.
+    const fake = fakeHandle({ stats: [okStat], chunks: [], overReads: true });
+
+    expect(() => readSource('over-reads', { fileSystem: fakeFileSystem(fake) })).toThrow(
+      /read returned 5 bytes for a 4-byte request/,
+    );
+    expect(fake.closes()).toBe(1);
+  });
+
+  it('reports a contract breach and a close failure together instead of hiding one', () => {
+    const fake = fakeHandle({ stats: [okStat], chunks: [], overReads: true, closeFails: true });
+
+    let thrown: unknown;
+    try {
+      readSource('over-reads-close-fails', { fileSystem: fakeFileSystem(fake) });
+    } catch (error: unknown) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    const errors = thrown instanceof AggregateError ? thrown.errors : [];
+    expect(errors).toHaveLength(2);
+    expect(String(errors[0])).toMatch(/read returned 5 bytes for a 4-byte request/);
+    expect(fake.closes()).toBe(1);
+  });
+
+  it('still decodes a Japanese document end to end (no regression)', () => {
+    const text = '# A5:ER FORMAT:21\n[Entity]\nPName=ユーザー\n';
+    withTempDir((directory) => {
+      const path = join(directory, 'japanese.a5er');
+      writeFileSync(path, Buffer.from(text, 'utf8'));
+
+      const outcome = readSource(path);
+      if (!outcome.ok) throw new Error('the read must succeed');
+      const decoded = outcome.source.bytes.toString('utf8');
+      expect(decoded).toContain('PName=ユーザー');
+      expect(decoded.includes('\uFFFD')).toBe(false);
+      // Four characters, twelve bytes: the bytes were passed through, not re-encoded.
+      expect(Buffer.byteLength('ユーザー', 'utf8')).toBe(12);
+    });
   });
 });
 
