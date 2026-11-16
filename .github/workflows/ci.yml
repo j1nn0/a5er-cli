@@ -34,8 +34,6 @@ jobs:
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 12
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -53,8 +51,8 @@ jobs:
         run: pnpm typecheck
 
       - name: Lint
-        # Bypasses a pnpm-11 `run lint` resolution flake; same oxlint binary and .oxlintrc.json.
-        run: pnpm exec oxlint
+        # Covered by the `lint` script again (pnpm exec oxlint); the Windows failure was EOL, not lint.
+        run: pnpm lint
 
       - name: Format check
         run: pnpm format:check

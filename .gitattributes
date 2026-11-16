@@ -1,0 +1,8 @@
+* text=auto eol=lf
+tests/fixtures/** binary
+
+# eol=lf is the load-bearing token: `text=auto` alone defers to core.autocrlf,
+# which the Windows runner sets to true, so the checkout arrives as CRLF and
+# oxfmt (endOfLine=lf) reports every file as misformatted. Later lines override
+# earlier ones and gitattributes has no negation, so the fixtures rule must stay
+# after the global one: byte-exact fixtures must never be EOL-converted.
