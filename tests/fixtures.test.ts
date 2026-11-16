@@ -20,7 +20,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative, win32 } from 'node:path';
+import { join, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { FIXTURES, validateRegistry } from './helpers/fixture-registry.js';
@@ -153,7 +153,7 @@ describe('fixture staging', () => {
       writeFileSync(source, Buffer.from('PName="users"\n', 'utf8'));
 
       const staged = stageSource(source);
-      expect(relative(FIXTURES_ROOT, staged.path).startsWith('..')).toBe(true);
+      expect(isInsideFixtures(staged.path)).toBe(false);
       expect(existsSync(staged.path)).toBe(true);
 
       staged.cleanup();
