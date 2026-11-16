@@ -411,6 +411,15 @@ The gate decides **interpretation**, never **acceptance**. Every key, in every p
 preserved; the profile only changes what the decoder is allowed to conclude. A file whose keys
 contradict its declared FORMAT is a diagnostic, not a refusal.
 
+Concretely, the four rows above collapse into one switch: **which index spelling is primary.**
+`IndexInfo` and the legacy `Index`/`IndexOption` are decoded in *every* profile — `legacyIndex` as a
+per-profile "decode it" flag would be constantly true, so it is not a field — and each decoded index
+carries `role: 'primary' | 'compatibility'` from `declared === 21`. `21` makes the canonical spelling
+primary; `19`, `20`, absent and `99` make the legacy one primary. *Assumption, not spec:* for an
+absent or future declaration the specification says both decoders are active and stops there, so the
+legacy-primary reading is this project's choice, made in the same direction §6 already chose for `20`
+(being permissive loses nothing) and recorded here rather than presented as a spec rule (K2, U1).
+
 The `S_HEADER_UNKNOWN_FORMAT` warning points at the `# A5:ER FORMAT:` line that declared the
 value it is about, wherever that line sits in the header region — not at a fixed first line. When
 no numeric declaration exists (absent, or a value the header parser cannot read as a number, such

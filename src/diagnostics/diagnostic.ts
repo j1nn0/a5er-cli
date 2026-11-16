@@ -89,15 +89,18 @@ export type SourceStageCode =
 /**
  * A code the syntax stage can raise (§7).
  *
- * Only the codes a line scan can justify are here. `S_UNKNOWN_KEY`, `S_LEGACY_KEY`,
- * `S_DUPLICATE_KEY` and `S_FIELD_TOO_FEW_ELEMENTS`/`S_FIELD_TOO_MANY_ELEMENTS` need the
- * section-scoped key registry (§5, §7.2), so they are raised by `src/schema/` instead.
+ * The three line-level codes are raised by the scanner; the two `Field`-arity codes are raised by
+ * the per-section decoders in `src/schema/` (§7.2's "S_ never becomes V_" split). `S_UNKNOWN_KEY`,
+ * `S_LEGACY_KEY` and `S_DUPLICATE_KEY` need the section-scoped key registry (§5) and have their own
+ * stage below.
  */
 export type SyntaxStageCode =
   | 'S_HEADER_UNKNOWN_FORMAT'
   | 'S_UNKNOWN_SECTION'
   | 'S_MALFORMED_LINE'
-  | 'S_COMPLEX_UNTERMINATED_QUOTE';
+  | 'S_COMPLEX_UNTERMINATED_QUOTE'
+  | 'S_FIELD_TOO_FEW_ELEMENTS'
+  | 'S_FIELD_TOO_MANY_ELEMENTS';
 
 /**
  * A code the registry stage can raise (§5, F1).
@@ -216,6 +219,14 @@ const SYNTAX_DEFINITIONS: Readonly<Record<SyntaxStageCode, Definition>> = {
   S_COMPLEX_UNTERMINATED_QUOTE: {
     severity: 'warning',
     message: 'A Complex value ends inside a quote that is never closed',
+  },
+  S_FIELD_TOO_FEW_ELEMENTS: {
+    severity: 'warning',
+    message: 'A Field value has fewer elements than its required shape needs',
+  },
+  S_FIELD_TOO_MANY_ELEMENTS: {
+    severity: 'warning',
+    message: 'A Field value has more elements than this format defines',
   },
 };
 

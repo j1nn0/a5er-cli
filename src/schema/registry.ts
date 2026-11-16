@@ -32,9 +32,26 @@ import { emitRegistry } from '../diagnostics/diagnostic.js';
 import type { Span } from '../model/span.js';
 import type { KeyRecord, SyntaxScan } from '../syntax/scanner.js';
 import type { SectionKind } from '../syntax/sections.js';
+import type { DecodedField } from './field.js';
+import { decodeField } from './field.js';
+import type {
+  DecodedIndexOption,
+  DecodedIndexes,
+  DecodedIndexInfo,
+  DecodedLegacyIndex,
+} from './indexinfo.js';
+import { decodeIndexInfo, decodeIndexOption, decodeLegacyIndex, indexesOf } from './indexinfo.js';
+import type { DecodedPosition } from './position.js';
+import { decodePosition } from './position.js';
 import type { FormatProfile } from './profiles.js';
 import { profileOf } from './profiles.js';
-import type { DecodeOutcome, DecodedValue, InvalidReason, ValueType } from './values.js';
+import type {
+  ComplexValue,
+  DecodeOutcome,
+  DecodedValue,
+  InvalidReason,
+  ValueType,
+} from './values.js';
 import { decodeValue, defaultValue } from './values.js';
 
 /** A section kind this project models; the 8 of §10.4 with `[Relationship]` folded into `Relation`. */
@@ -338,6 +355,25 @@ export type ClassifiedEntry =
   | { readonly kind: 'parsed'; readonly occurrence: KeyOccurrence }
   | { readonly kind: 'preserved'; readonly entry: RawEntry };
 
+/**
+ * The typed reading of a section's shaped keys.
+ *
+ * Separate from `KeyOccurrence.decoded`, which is the *token*: every shaped key is tokenised once
+ * (that is where `S_COMPLEX_UNTERMINATED_QUOTE` comes from) and then interpreted here by the decoder
+ * its section kind and key name select (§7.2, P8, P11). A key this section does not define never
+ * reaches this layer — it is preserved raw instead.
+ *
+ * Arrays are empty when the section has no such key, so a consumer reads one uniform shape.
+ */
+export interface SectionDecoding {
+  /** `Field` columns in declaration order (`[Entity]`). */
+  readonly fields: readonly DecodedField[];
+  /** Index data from both spellings, labelled with the role the profile gives each (§6). */
+  readonly indexes: DecodedIndexes;
+  /** Every `Position` occurrence in declaration order, whatever its shape. */
+  readonly positions: readonly DecodedPosition[];
+}
+
 export interface ClassifiedSection {
   readonly index: number;
   readonly kind: SectionKind;
@@ -347,6 +383,8 @@ export interface ClassifiedSection {
   readonly entries: readonly ClassifiedEntry[];
   /** Documented defaults for required-by-default keys this section omitted (§4.2 `defaulted`). */
   readonly defaults: readonly KeyOccurrence[];
+  /** Typed decoding of the shaped keys, with the profile's interpretation applied. */
+  readonly decoded: SectionDecoding;
 }
 
 /** §13's counters, resolved over the classified entries. */
@@ -427,6 +465,87 @@ function preservedKey(
     raw: entry.raw,
     span: entry.span,
     reason,
+  };
+}
+
+/**
+ * The tokenised form of a Complex occurrence.
+ *
+ * `decodeValue` only ever produces this shape for a `complex` key, so a `null` here means the
+ * occurrence is not a Complex value at all — a case that cannot arise for the keys this is used on,
+ * and that is handled rather than asserted so a future registry edit fails softly.
+ */
+function complexOf(occurrence: KeyOccurrence): ComplexValue | null {
+  if (!occurrence.decoded.ok) return null;
+  const value = occurrence.decoded.value.value;
+  if (typeof value !== 'object') return null;
+  return value;
+}
+
+/**
+ * Decode the shaped keys of one section (`Field`, `IndexInfo`/`Index`/`IndexOption`, `Position`).
+ *
+ * Dispatch is by `(section kind, key)`, which is the whole reason the registry is section-scoped:
+ * `Position` means three different things in three sections, and `Field` exists only in `[Entity]`.
+ * A decoder never sees a key that is not registered for the section, because unregistered keys were
+ * preserved raw before this point.
+ */
+function decodeSection(
+  kind: SectionKind,
+  entries: readonly ClassifiedEntry[],
+  profile: FormatProfile,
+  sectionSpan: Span,
+): { decoding: SectionDecoding; diagnostics: readonly Diagnostic[] } {
+  const fields: DecodedField[] = [];
+  const canonical: DecodedIndexInfo[] = [];
+  const legacy: DecodedLegacyIndex[] = [];
+  const legacyOptions: DecodedIndexOption[] = [];
+  const positions: DecodedPosition[] = [];
+  const diagnostics: Diagnostic[] = [];
+
+  for (const entry of entries) {
+    if (entry.kind !== 'parsed') continue;
+    const { occurrence } = entry;
+    const span = occurrence.span ?? sectionSpan;
+    const key = occurrence.spec.key;
+
+    // The legacy index payloads are bare strings, not Complex values (U7): `name=flag,cols` has no
+    // quoting at all, so they are decoded before the Complex gate below.
+    if (key === 'Index') {
+      legacy.push(decodeLegacyIndex(occurrence.raw, span));
+      continue;
+    }
+    if (key === 'IndexOption') {
+      legacyOptions.push(decodeIndexOption(occurrence.raw, span));
+      continue;
+    }
+
+    if (occurrence.spec.type !== 'complex') continue;
+    const parts = complexOf(occurrence);
+    if (parts === null) continue;
+
+    switch (key) {
+      case 'Field': {
+        const decoded = decodeField(parts, span, occurrence.raw);
+        fields.push(decoded.field);
+        diagnostics.push(...decoded.diagnostics);
+        break;
+      }
+      case 'IndexInfo':
+        canonical.push(decodeIndexInfo(parts, span, occurrence.raw));
+        break;
+      case 'Position':
+        positions.push(decodePosition(kind, parts, span, occurrence.raw));
+        break;
+      default:
+        // Any other Complex key is tokenised but not shaped by this unit (§7.2's per-key decoders).
+        break;
+    }
+  }
+
+  return {
+    decoding: { fields, indexes: indexesOf(canonical, legacy, legacyOptions, profile), positions },
+    diagnostics,
   };
 }
 
@@ -588,6 +707,9 @@ export function classify(scan: SyntaxScan): Classification {
       }
     }
 
+    const typed = decodeSection(section.kind, entries, profile, section.span);
+    diagnostics.push(...typed.diagnostics);
+
     sections.push({
       index: section.index,
       kind: section.kind,
@@ -595,6 +717,7 @@ export function classify(scan: SyntaxScan): Classification {
       span: section.span,
       entries,
       defaults,
+      decoded: typed.decoding,
     });
   }
 

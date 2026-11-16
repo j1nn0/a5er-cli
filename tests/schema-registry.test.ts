@@ -27,7 +27,11 @@ import { FIXTURES } from './helpers/fixture-registry.js';
 import type { FixtureSpec } from './helpers/fixture-registry.js';
 import { stage } from './helpers/stage.js';
 
-/** Codes this unit owns. `S_FIELD_*` and every `V_` belong to later units. */
+/**
+ * Codes the syntax and registry stages own together.
+ *
+ * `S_FIELD_*` joined in 3B-2, when the `Field` decoder landed; every `V_` belongs to the validator.
+ */
 const REGISTRY_CODES: ReadonlySet<string> = new Set([
   'S_UNKNOWN_KEY',
   'S_LEGACY_KEY',
@@ -36,6 +40,8 @@ const REGISTRY_CODES: ReadonlySet<string> = new Set([
   'S_UNKNOWN_SECTION',
   'S_MALFORMED_LINE',
   'S_HEADER_UNKNOWN_FORMAT',
+  'S_FIELD_TOO_FEW_ELEMENTS',
+  'S_FIELD_TOO_MANY_ELEMENTS',
 ]);
 
 /** The `S_` codes a fixture declares that this unit is responsible for. */

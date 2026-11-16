@@ -14,6 +14,26 @@
  * shapes), resolution (§9) and anything that emits a `V_` finding.
  */
 
+export type { FieldDecode, DecodedField, KeyOrderToken, NotNullToken } from './field.js';
+export { decodeField, FIELD_MAX_ELEMENTS, FIELD_MIN_ELEMENTS } from './field.js';
+export type {
+  DecodedIndexInfo,
+  DecodedIndexOption,
+  DecodedIndexes,
+  DecodedLegacyIndex,
+  IndexRole,
+  Uniqueness,
+} from './indexinfo.js';
+export { decodeIndexInfo, decodeIndexOption, decodeLegacyIndex, indexesOf } from './indexinfo.js';
+export type {
+  DecodedPosition,
+  ObjectPosition,
+  PositionShape,
+  RawElement,
+  RelationPosition,
+  UnsupportedPosition,
+} from './position.js';
+export { decodePosition, positionShapeOf } from './position.js';
 export type {
   Classification,
   ClassifiedEntry,
@@ -26,6 +46,7 @@ export type {
   KeySpec,
   RawEntry,
   RetentionKind,
+  SectionDecoding,
 } from './registry.js';
 export {
   classify,
@@ -48,6 +69,7 @@ export type {
   Value,
   ValueType,
 } from './values.js';
+export { elementAt, emptyDefault, partRaw } from './values.js';
 export {
   decodeBoolean,
   decodeInteger,

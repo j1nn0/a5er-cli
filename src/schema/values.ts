@@ -25,9 +25,11 @@
  * be mistaken for data, and the validator stage can turn it into a diagnostic once a code is
  * agreed.
  *
- * Complex values are **tokenised, never positionally decoded**. `Field`, `IndexInfo` and
- * `Position` have per-section shapes (§7.2, P7, P9, P11), which is the next unit's work; what
- * this module returns is the element list plus `trailingElementsOmitted`.
+ * Complex values are **tokenised here and positionally decoded elsewhere**. What this module
+ * returns is the element list plus `trailingElementsOmitted`; `field.ts`, `indexinfo.ts` and
+ * `position.ts` turn those elements into columns, indexes and geometry by the section they appeared
+ * in (§7.2, P7, P8, P11). Tokenising once, in one place, is what keeps `S_COMPLEX_UNTERMINATED_QUOTE`
+ * reported exactly once per value.
  */
 
 import { splitComplex } from '../syntax/complex.js';
@@ -216,6 +218,42 @@ export function decodeValue(type: ValueType, raw: string, span: Span): DecodeOut
       };
     }
   }
+}
+
+/**
+ * The declared text of one Complex element: its quotes restored, its outside padding gone.
+ *
+ * `ComplexPart.value` is the element *content* (§7.1), so a quoted element loses its delimiters and
+ * an unquoted one loses the spaces that separated it. `raw` has to be the token as written, so the
+ * quotes are put back from the `quoted` flag. Padding is not restored because §7.1 defines it as
+ * padding rather than data — the whole line is still preserved verbatim by the scanner, so nothing
+ * is lost by not repeating it here.
+ */
+export function partRaw(part: ComplexPart): string {
+  return part.quoted ? `"${part.value}"` : part.value;
+}
+
+/**
+ * One positional element as a declared value, or `null` when the value stopped before it.
+ *
+ * `null` means "the writer did not emit this slot", which is different from an empty element: an
+ * empty slot is `""` or nothing between two commas and still occupies its position, while a short
+ * value simply has no element there (§7.1's "elements may be empty or quoted-empty"). Callers keep
+ * the difference: a missing required element is a defect, an empty one is data.
+ */
+export function elementAt(
+  parts: readonly ComplexPart[],
+  index: number,
+  span: Span,
+): Value<string> | null {
+  const part = parts[index];
+  if (part === undefined) return null;
+  return { value: part.value, origin: 'declared', raw: partRaw(part), span };
+}
+
+/** An empty string value that the format's tail defaulting supplies, not the file. */
+export function emptyDefault(): Value<string> {
+  return { value: '', origin: 'defaulted', raw: '', span: null };
 }
 
 /**
