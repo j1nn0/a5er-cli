@@ -26,6 +26,7 @@
  * (`complex.ts` does that, without unescaping), interpret a key, or resolve anything.
  */
 
+import { parseHeader } from '../decode/header.js';
 import { headerNameOf } from '../decode/sections.js';
 import { emitSyntax } from '../diagnostics/diagnostic.js';
 import type { Diagnostic } from '../diagnostics/diagnostic.js';
@@ -277,7 +278,6 @@ export function scanSource(input: ScanInput): SyntaxScan {
   const headerKeyLines: KeyRecord[] = [];
   const headerRawLines: RawLineRecord[] = [];
   const drafts: SectionDraft[] = [];
-  const kinds = { sectionHeaders: 0, keys: 0, comments: 0, blank: 0, raw: 0 };
 
   let current: SectionDraft | null = null;
 
@@ -300,27 +300,22 @@ export function scanSource(input: ScanInput): SyntaxScan {
         };
         drafts.push(draft);
         current = draft;
-        kinds.sectionHeaders += 1;
         break;
       }
       case 'blank': {
         blankLines.push(line.number);
-        kinds.blank += 1;
         break;
       }
       case 'comment': {
         comments.push({ raw: line.text, span: lineSpan(sectionIndex, line.number) });
-        kinds.comments += 1;
         break;
       }
       case 'key': {
-        kinds.keys += 1;
         if (current === null) headerKeyLines.push(classified);
         else current.entries.push(classified);
         break;
       }
       case 'raw-line': {
-        kinds.raw += 1;
         if (current === null) headerRawLines.push(classified);
         else current.entries.push(classified);
         break;
@@ -346,49 +341,118 @@ export function scanSource(input: ScanInput): SyntaxScan {
     entries: draft.entries,
   }));
 
+  const records: CoverageInput = {
+    lines,
+    sections,
+    comments,
+    blankLines,
+    header: { keyLines: headerKeyLines, rawLines: headerRawLines },
+  };
+
   return {
     format: { declared: input.format, known: isKnownFormat(input.format) },
-    header: { keyLines: headerKeyLines, rawLines: headerRawLines },
+    header: records.header,
     sections,
     comments,
     blankLines,
     lines,
-    accounting: account(lines.length, kinds, headerKeyLines, sections),
-    diagnostics: buildDiagnostics(input.format, headerRawLines, sections, lines.length > 0),
+    accounting: deriveAccounting(records),
+    diagnostics: buildDiagnostics(input.format, records),
   };
+}
+
+/** The records the coverage derivation and the diagnostics read. */
+export interface CoverageInput {
+  /** Every physical line of the document, in order. */
+  readonly lines: readonly SourceLine[];
+  readonly sections: readonly SectionScan[];
+  readonly comments: readonly CommentRecord[];
+  readonly blankLines: readonly number[];
+  readonly header: HeaderRegion;
+}
+
+/**
+ * The ways a scan can fail to account for its own lines.
+ *
+ * Every rule here describes a defect in this module's own bookkeeping — the scanner is the only
+ * producer of these records. A violation is therefore never a statement about the input file.
+ */
+export type CoverageRule =
+  | 'line-number-broken'
+  | 'section-ordinal-broken'
+  | 'section-extent-broken'
+  | 'bad-section-index'
+  | 'header-region-misuse'
+  | 'uncovered-line'
+  | 'double-covered-line';
+
+/** One line the derivation could not account for, and why. Never contains file content. */
+export interface CoverageViolation {
+  readonly rule: CoverageRule;
+  readonly line: number;
+  readonly detail: string;
+}
+
+/** Thrown when a scan does not account for its own lines. Never silent, never input-triggered. */
+export class CoverageError extends Error {
+  readonly violations: readonly CoverageViolation[];
+
+  constructor(violations: readonly CoverageViolation[]) {
+    super(`scan coverage does not reconcile: ${violations.map((v) => v.rule).join(', ')}`);
+    this.name = 'CoverageError';
+    this.violations = violations;
+  }
+}
+
+/**
+ * The `#` line that declares a numeric FORMAT, or `null` when there is none.
+ *
+ * The declaration is located by running `decode/header.ts`'s own parser over the header-region
+ * comment lines, not by re-typing its pattern: one definition of "this is a FORMAT declaration",
+ * and the line the diagnostic points at is exactly the line whose value the parser used (the last
+ * one wins, as it does there). A declaration whose value is not numeric cannot be located this
+ * way — the parser reports `format: null` for it — so it falls back to the absent policy below.
+ */
+function formatDeclarationLine(input: CoverageInput): number | null {
+  const firstHeaderLine = input.sections[0]?.headerSpan.keyLine ?? Number.POSITIVE_INFINITY;
+  let found: number | null = null;
+  for (const comment of input.comments) {
+    if (comment.span.keyLine >= firstHeaderLine) continue;
+    if (parseHeader(comment.raw).format !== null) found = comment.span.keyLine;
+  }
+  return found;
 }
 
 /**
  * Diagnostics this stage can justify, in the order the file mentions them (§12 rule 7).
  *
  * `S_HEADER_UNKNOWN_FORMAT` comes first because it is about the header, which precedes every
- * section; it points at line 1 of the header region, which is where §12's example puts it. A
- * document with no lines at all has no position to point at and gets no header diagnostic — it
- * never reaches this stage (`E_EMPTY_INPUT` fires first), but the pure function stays honest.
+ * section, and it points at the **actual** declaration line when the file carries a numeric one
+ * (fmt-04's `FORMAT:20` is line 1, a file that puts the comment after a licence block is whatever
+ * line that is). When no declaration can be located, the policy is to point at line 1,
+ * `sectionIndex` 0: that is the first position at which a declaration would have been read, it is
+ * a real line of the file, and §12's example envelope shows exactly this span. A document with no
+ * lines at all has no position to point at and gets no header diagnostic — it never reaches this
+ * stage (`E_EMPTY_INPUT` fires first), but the pure function stays honest.
  */
-function buildDiagnostics(
-  declared: number | null,
-  headerRawLines: readonly RawLineRecord[],
-  sections: readonly SectionScan[],
-  hasLines: boolean,
-): Diagnostic[] {
+function buildDiagnostics(declared: number | null, input: CoverageInput): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
 
-  if (!isKnownFormat(declared) && hasLines) {
+  if (!isKnownFormat(declared) && input.lines.length > 0) {
     diagnostics.push(
       emitSyntax('S_HEADER_UNKNOWN_FORMAT', {
         details: { declared },
-        span: lineSpan(0, 1),
+        span: lineSpan(0, formatDeclarationLine(input) ?? 1),
         construct: 'Header',
       }),
     );
   }
 
-  for (const record of headerRawLines) {
+  for (const record of input.header.rawLines) {
     diagnostics.push(emitSyntax('S_MALFORMED_LINE', { span: record.span, construct: 'Line' }));
   }
 
-  for (const section of sections) {
+  for (const section of input.sections) {
     if (section.kind === 'unknown') {
       diagnostics.push(
         emitSyntax('S_UNKNOWN_SECTION', {
@@ -409,56 +473,239 @@ function buildDiagnostics(
 }
 
 /**
- * Resolve §13's counters over the records.
+ * Check that every line of the document is claimed by exactly one record.
  *
- * `dropped` is the remainder of three partitions — lines, sections, keys — and is therefore
- * `0` only when each of them is complete. Computing it rather than returning a constant is the
- * point (§13): a scan that silently stopped producing a record for some line would move this
- * number, while `dropped: 0` written by hand would not move at all.
+ * This is §13's guarantee expressed as a property of the data rather than of the code that built
+ * it: the records are walked *after* the fact, so a line the scan forgot, a line two records both
+ * claim, and a `sectionIndex` that names no section all become visible. It is exported because a
+ * test must be able to hand it a deliberately broken structure — that is the only way to know the
+ * checker still checks anything.
  */
-function account(
-  lineCount: number,
-  kinds: {
-    readonly sectionHeaders: number;
-    readonly keys: number;
-    readonly comments: number;
-    readonly blank: number;
-    readonly raw: number;
-  },
-  headerKeyLines: readonly KeyRecord[],
-  sections: readonly SectionScan[],
-): SyntaxAccounting {
-  const recognised = sections.filter((section) => section.kind !== 'unknown');
-  const unknown = sections.filter((section) => section.kind === 'unknown');
-  const inRecognisedSections = recognised.reduce(
-    (sum, section) => sum + countKeys(section.entries),
-    0,
-  );
-  const inUnknownSections = unknown.reduce((sum, section) => sum + countKeys(section.entries), 0);
-  const beforeFirstSection = headerKeyLines.length;
+export function verifyCoverage(input: CoverageInput): readonly CoverageViolation[] {
+  const violations: CoverageViolation[] = [];
+  const claims = new Map<number, string[]>();
+  const claim = (line: number, what: string): void => {
+    const existing = claims.get(line);
+    if (existing === undefined) claims.set(line, [what]);
+    else existing.push(what);
+  };
 
-  const keyTotal = beforeFirstSection + inRecognisedSections + inUnknownSections;
-  const accountedLines =
-    kinds.sectionHeaders + kinds.keys + kinds.comments + kinds.blank + kinds.raw;
-  const accountedSections = recognised.length + unknown.length;
-  const accountedKeys = beforeFirstSection + inRecognisedSections + inUnknownSections;
+  const total = input.lines.length;
 
-  const dropped =
-    lineCount - accountedLines + (sections.length - accountedSections) + (keyTotal - accountedKeys);
+  for (const [index, line] of input.lines.entries()) {
+    if (line.number !== index + 1) {
+      violations.push({
+        rule: 'line-number-broken',
+        line: index + 1,
+        detail: `recorded as line ${String(line.number)}`,
+      });
+    }
+  }
+
+  const firstHeaderLine = input.sections[0]?.headerSpan.keyLine ?? Number.POSITIVE_INFINITY;
+
+  for (const [index, section] of input.sections.entries()) {
+    const ordinal = index + 1;
+    const headerLine = section.headerSpan.keyLine;
+
+    if (section.index !== ordinal) {
+      violations.push({
+        rule: 'section-ordinal-broken',
+        line: headerLine,
+        detail: `section ${String(section.index)} sits at position ${String(ordinal)}`,
+      });
+    }
+    if (
+      section.headerSpan.sectionIndex !== section.index ||
+      section.span.sectionIndex !== section.index
+    ) {
+      violations.push({
+        rule: 'bad-section-index',
+        line: headerLine,
+        detail: `section ${String(section.index)} carries another sectionIndex`,
+      });
+    }
+    if (
+      section.headerSpan.startLine !== headerLine ||
+      section.headerSpan.endLine !== headerLine ||
+      section.span.startLine !== headerLine ||
+      section.span.keyLine !== headerLine ||
+      section.span.endLine < headerLine
+    ) {
+      violations.push({
+        rule: 'section-extent-broken',
+        line: headerLine,
+        detail: `section ${String(section.index)} has inconsistent extent`,
+      });
+    }
+    const previous = index === 0 ? undefined : input.sections[index - 1];
+    if (previous !== undefined && section.span.startLine !== previous.span.endLine + 1) {
+      violations.push({
+        rule: 'section-extent-broken',
+        line: headerLine,
+        detail: `section ${String(section.index)} does not continue the previous one`,
+      });
+    }
+
+    claim(headerLine, `section ${String(ordinal)} header`);
+
+    for (const entry of section.entries) {
+      const line = entry.span.keyLine;
+      if (entry.span.sectionIndex !== section.index) {
+        violations.push({
+          rule: 'bad-section-index',
+          line,
+          detail: `${entry.kind} of section ${String(section.index)} claims ${String(entry.span.sectionIndex)}`,
+        });
+      }
+      if (line < section.span.startLine || line > section.span.endLine) {
+        violations.push({
+          rule: 'section-extent-broken',
+          line,
+          detail: `${entry.kind} lies outside section ${String(section.index)}`,
+        });
+      }
+      if (entry.span.startLine !== line || entry.span.endLine !== line) {
+        violations.push({
+          rule: 'section-extent-broken',
+          line,
+          detail: `${entry.kind} spans more than one line`,
+        });
+      }
+      claim(line, `section ${String(ordinal)} ${entry.kind}`);
+    }
+  }
+
+  const last = input.sections.at(-1);
+  if (last !== undefined && last.span.endLine !== total) {
+    violations.push({
+      rule: 'section-extent-broken',
+      line: last.span.endLine,
+      detail: 'last section does not reach the last line',
+    });
+  }
+
+  for (const record of [...input.header.keyLines, ...input.header.rawLines]) {
+    if (record.span.sectionIndex !== 0) {
+      violations.push({
+        rule: 'bad-section-index',
+        line: record.span.keyLine,
+        detail: `${record.kind} in the header region claims ${String(record.span.sectionIndex)}`,
+      });
+    }
+    if (record.span.keyLine >= firstHeaderLine) {
+      violations.push({
+        rule: 'header-region-misuse',
+        line: record.span.keyLine,
+        detail: `${record.kind} claims the header region after the first header`,
+      });
+    }
+    claim(record.span.keyLine, `header ${record.kind}`);
+  }
+
+  for (const comment of input.comments) {
+    const line = comment.span.keyLine;
+    if (comment.span.sectionIndex === 0) {
+      if (line >= firstHeaderLine) {
+        violations.push({
+          rule: 'header-region-misuse',
+          line,
+          detail: 'comment claims the header region after the first header',
+        });
+      }
+    } else {
+      const owner = input.sections.find((section) => section.index === comment.span.sectionIndex);
+      if (owner === undefined) {
+        violations.push({
+          rule: 'bad-section-index',
+          line,
+          detail: `comment claims section ${String(comment.span.sectionIndex)}`,
+        });
+      } else if (line < owner.span.startLine || line > owner.span.endLine) {
+        violations.push({
+          rule: 'bad-section-index',
+          line,
+          detail: `comment claims section ${String(comment.span.sectionIndex)} but sits outside it`,
+        });
+      }
+    }
+    claim(line, 'comment');
+  }
+
+  for (const line of input.blankLines) claim(line, 'blank line');
+
+  // Iterate the document's line numbers, not the records' own numbering: a record whose
+  // `number` was corrupted must leave its real line uncovered (and its new one double-claimed)
+  // instead of hiding both behind a self-consistent loop.
+  for (let line = 1; line <= total; line += 1) {
+    const owners = claims.get(line) ?? [];
+    if (owners.length === 0) {
+      violations.push({ rule: 'uncovered-line', line, detail: 'no record claims this line' });
+      continue;
+    }
+    if (owners.length > 1) {
+      violations.push({ rule: 'double-covered-line', line, detail: owners.join(' + ') });
+    }
+  }
+
+  for (const [line, owners] of claims) {
+    if (line < 1 || line > total) {
+      violations.push({
+        rule: 'line-number-broken',
+        line,
+        detail: `${String(owners.length)} record(s) point outside the document`,
+      });
+    }
+  }
+
+  return violations;
+}
+
+/**
+ * Resolve §13's counters from the stored records, or refuse.
+ *
+ * Every counter is derived by walking `sections`, `comments`, `blankLines` and `lines`; none is
+ * taken from a counter that the classification pass happened to increment, because two bookkeeping
+ * paths are exactly how a line silently stops being counted. `dropped` is the remainder of the line
+ * partition, so it moves when the records and the lines disagree — while `dropped: 0` written by
+ * hand would never move at all (§13).
+ *
+ * `CoverageError` is thrown rather than returned: an inconsistent scan is a defect in this module,
+ * and a caller must not be able to render it as a healthy document.
+ */
+export function deriveAccounting(input: CoverageInput): SyntaxAccounting {
+  const violations = verifyCoverage(input);
+  if (violations.length > 0) throw new CoverageError(violations);
+
+  const total = input.lines.length;
+  const sectionHeaders = input.sections.length;
+  const comments = input.comments.length;
+  const blank = input.blankLines.length;
+
+  let keys = input.header.keyLines.length;
+  let raw = input.header.rawLines.length;
+  let inRecognisedSections = 0;
+  let inUnknownSections = 0;
+
+  for (const section of input.sections) {
+    let sectionKeys = 0;
+    for (const entry of section.entries) {
+      if (entry.kind === 'key') sectionKeys += 1;
+      else raw += 1;
+    }
+    keys += sectionKeys;
+    if (section.kind === 'unknown') inUnknownSections += sectionKeys;
+    else inRecognisedSections += sectionKeys;
+  }
+
+  const recognised = input.sections.filter((section) => section.kind !== 'unknown').length;
+  const beforeFirstSection = input.header.keyLines.length;
+  const accounted = sectionHeaders + keys + comments + blank + raw;
 
   return {
-    lines: { total: lineCount, ...kinds },
-    sections: {
-      total: sections.length,
-      recognised: recognised.length,
-      unknown: unknown.length,
-    },
-    keys: {
-      total: keyTotal,
-      inRecognisedSections,
-      inUnknownSections,
-      beforeFirstSection,
-    },
-    dropped,
+    lines: { total, sectionHeaders, keys, comments, blank, raw },
+    sections: { total: sectionHeaders, recognised, unknown: sectionHeaders - recognised },
+    keys: { total: keys, inRecognisedSections, inUnknownSections, beforeFirstSection },
+    dropped: total - accounted,
   };
 }

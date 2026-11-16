@@ -411,6 +411,14 @@ The gate decides **interpretation**, never **acceptance**. Every key, in every p
 preserved; the profile only changes what the decoder is allowed to conclude. A file whose keys
 contradict its declared FORMAT is a diagnostic, not a refusal.
 
+The `S_HEADER_UNKNOWN_FORMAT` warning points at the `# A5:ER FORMAT:` line that declared the
+value it is about, wherever that line sits in the header region — not at a fixed first line. When
+no numeric declaration exists (absent, or a value the header parser cannot read as a number, such
+as `FORMAT:abc`), it points at line 1 with `sectionIndex` 0: that is the first position at which a
+declaration would have been read, it is a real line of the file, and it is the span §12's example
+shows. The scanner finds the line with the same parser `decode/` uses, not with a second copy of
+its pattern.
+
 ---
 
 ## 7. Syntax layer
@@ -669,6 +677,11 @@ There is **no partial-success mode**: if the reader stops early, the result is a
 envelope, never a shorter schema. This is the `not-attempted` pattern recorded in
 `parser-evaluation.md` §2.2, adopted as a hard rule.
 
+A line is a physical line of the decoded text, as §4.1 defines it: `\r\n`, `\n` or a bare `\r`
+terminates one, and a **trailing** terminator does not create an extra empty line. `maxLines`
+counts exactly the lines the scanner later numbers, so a file at the boundary is not refused for a
+line it does not have.
+
 ### 10.3 Streaming
 
 Not in v1. The AST is materialised in memory regardless, so a streaming reader would only move
@@ -864,6 +877,15 @@ never increments `total` would pass it. A test that reconciles the totals will f
 code path learns to skip, which is the only durable defence against the failure mode this project
 exists to avoid (D8, L4); both evaluated parsers fail precisely here (`parser-evaluation.md` §4 —
 "neither reports what it skipped").
+
+The counters are **derived, never accumulated**. Both stages recompute them by walking the
+records they stored — lines, section headers, keys, comments, blank positions, raw lines — and
+then verify the partition from the other side: every source line must be claimed by exactly one
+record, and every record's `sectionIndex` must name a section that exists (or the header region
+before the first one). A line claimed twice, a line claimed by nothing, or a `sectionIndex` that
+names no section raises a typed error, because it is a defect in the tool rather than in the file.
+Accumulating the same numbers in a second place during classification is what R15 removed: two
+bookkeeping paths can drift silently, and only one of them would be tested.
 
 `unsupported` is separate and expected to be non-empty: `Subtype` membership, unknown
 `ShapeType`, undefined vertex format, multi-line values, unknown keys and sections.

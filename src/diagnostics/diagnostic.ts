@@ -91,14 +91,21 @@ export type SourceStageCode =
  *
  * Only the codes a line scan can justify are here. `S_UNKNOWN_KEY`, `S_LEGACY_KEY`,
  * `S_DUPLICATE_KEY` and `S_FIELD_TOO_FEW_ELEMENTS`/`S_FIELD_TOO_MANY_ELEMENTS` need the
- * section-scoped key registry (§5, §7.2), so they join this list when that stage lands rather
- * than being emitted from a place that cannot know whether a key exists.
+ * section-scoped key registry (§5, §7.2), so they are raised by `src/schema/` instead.
  */
 export type SyntaxStageCode =
   | 'S_HEADER_UNKNOWN_FORMAT'
   | 'S_UNKNOWN_SECTION'
   | 'S_MALFORMED_LINE'
   | 'S_COMPLEX_UNTERMINATED_QUOTE';
+
+/**
+ * A code the registry stage can raise (§5, F1).
+ *
+ * These three are the ones that need to know whether a key exists *for this section kind*, which
+ * a line scan cannot. The `Field`-arity codes stay with the per-section decoders (§7.2).
+ */
+export type RegistryStageCode = 'S_UNKNOWN_KEY' | 'S_LEGACY_KEY' | 'S_DUPLICATE_KEY';
 
 /**
  * Detail values, per `architecture.md` §11.
@@ -212,6 +219,28 @@ const SYNTAX_DEFINITIONS: Readonly<Record<SyntaxStageCode, Definition>> = {
   },
 };
 
+/**
+ * Registry-stage definitions (§11's table).
+ *
+ * `S_UNKNOWN_KEY` and `S_LEGACY_KEY` are `info` on purpose (§14 row 9): a file that uses keys this
+ * tool does not model is preserved and reported, not degraded. `S_DUPLICATE_KEY` is a `warning`
+ * because the file states two values for one slot and the reader had to choose between them (U6).
+ */
+const REGISTRY_DEFINITIONS: Readonly<Record<RegistryStageCode, Definition>> = {
+  S_UNKNOWN_KEY: {
+    severity: 'info',
+    message: 'A key this section does not define was preserved verbatim',
+  },
+  S_LEGACY_KEY: {
+    severity: 'info',
+    message: 'A key superseded by a canonical spelling was decoded as legacy',
+  },
+  S_DUPLICATE_KEY: {
+    severity: 'warning',
+    message: 'A non-repeatable key appears more than once; the last occurrence is selected',
+  },
+};
+
 export interface EmitOptions {
   /** Untrusted values; strings are bounded here, not at the call site. */
   readonly details?: Readonly<Record<string, DiagnosticDetail>>;
@@ -252,7 +281,17 @@ export function emitSyntax(code: SyntaxStageCode, options: EmitOptions = {}): Di
   return build(code, SYNTAX_DEFINITIONS[code], options);
 }
 
-/** Shared body of `emit`/`emitSyntax`; the definition is already resolved by the caller. */
+/**
+ * Build a `Diagnostic` for a code the registry stage can raise (§5).
+ *
+ * Same contract as `emit`: the severity and the message come from the table, and file text may
+ * only reach bounded `details`, never `code` or `message` (§11 rule 1).
+ */
+export function emitRegistry(code: RegistryStageCode, options: EmitOptions = {}): Diagnostic {
+  return build(code, REGISTRY_DEFINITIONS[code], options);
+}
+
+/** Shared body of the stage emitters; the definition is already resolved by the caller. */
 function build(code: DiagnosticCode, definition: Definition, options: EmitOptions): Diagnostic {
   const details: Record<string, DiagnosticDetail> = {};
   for (const [key, value] of Object.entries(options.details ?? {})) {

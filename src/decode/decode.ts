@@ -264,11 +264,19 @@ function isMismatch(declared: string | null, detected: Codec): boolean {
  * strict UTF-8 cannot encode one and a strict UTF-16 decode rejects it — so the rule is documented
  * rather than exercised.
  *
+ * **Unit (R17): a line is a physical line of the decoded text**, exactly as `syntax/lines.ts`
+ * splits them — and a trailing terminator does **not** create an extra empty line, because it is
+ * the end of the line it closes. `"a\n"` is one line here and one `SourceLine` there; before R17
+ * this counted two and a file at the `maxLines` boundary was rejected for a line it did not have.
+ * The count is index-based rather than `split`-based for the reason below; the agreement with
+ * `splitLines` is pinned by a test over every terminator combination instead of by sharing the
+ * loop, because a 64 MiB single-line file must not be materialised twice.
+ *
  * Scanning is index-based rather than `split`, so a 64 MiB single-line file does not allocate a
  * second 64 MiB array just to be rejected.
  */
 function checkLineLimits(text: string, limits: Limits): Diagnostic | null {
-  let lines = text.length === 0 ? 0 : 1;
+  let breaks = 0;
   let lineStart = 0;
   let longest = 0;
 
@@ -280,10 +288,15 @@ function checkLineLimits(text: string, limits: Limits): Diagnostic | null {
       // CRLF is one break, not two: skip the LF that follows a CR.
       if (char === 0x0d && text.charCodeAt(index + 1) === 0x0a) index += 1;
       lineStart = index + 1;
-      lines += 1;
+      breaks += 1;
     }
   }
   longest = Math.max(longest, text.length - lineStart);
+
+  // R17: the line a terminator closes is the last line, so a final break adds no line.
+  const last = text.charCodeAt(text.length - 1);
+  const endsWithBreak = text.length > 0 && (last === 0x0a || last === 0x0d);
+  const lines = text.length === 0 ? 0 : breaks + (endsWithBreak ? 0 : 1);
 
   if (lines > limits.maxLines) {
     return emit('E_LIMIT_LINES', {
