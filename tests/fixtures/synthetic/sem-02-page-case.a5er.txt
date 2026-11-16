@@ -1,0 +1,9 @@
+﻿# A5:ER FORMAT:21
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"
+
+[Entity]
+PName="case_page"
+Field="ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,"",""
+Position="MAIN",10,10

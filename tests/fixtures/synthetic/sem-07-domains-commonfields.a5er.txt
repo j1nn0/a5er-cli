@@ -1,0 +1,18 @@
+﻿# A5:ER FORMAT:21
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"
+DomainInfo="int_domain","INTEGER","整数ドメイン",""
+CommonField="共通ID","common_id","Integer",,,,"共通列",$FFFFFFFF
+
+[Entity]
+PName="with_common"
+Field="ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,"",""
+Field="整数","value_int","@INT","",,"","",$FFFFFFFF,"",""
+Position="Main",10,10
+
+[Entity]
+PName="without_common"
+UsingCommonColumns=0
+Field="ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,"",""
+Position="Main",300,10

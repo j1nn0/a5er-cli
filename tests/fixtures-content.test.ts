@@ -17,15 +17,27 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import type { FixtureSpec } from './helpers/fixture-registry.js';
 import { FIXTURES } from './helpers/fixture-registry.js';
+import {
+  BOM,
+  entityKeyLines,
+  evaluateFact,
+  keyAt,
+  lineAt,
+  parseText,
+  readText,
+  splitComplex,
+  unquote,
+  valueAt,
+} from './helpers/fixture-text.js';
 import { BYTES_DIR, SYNTHETIC_DIR, sha256File, stageSource } from './helpers/stage.js';
 import * as enc03 from './fixtures/bytes/enc-03-sjis.js';
 import * as enc04 from './fixtures/bytes/enc-04-undecodable.js';
 import * as enc05 from './fixtures/bytes/enc-05-utf16le.js';
+import * as hst02 from './fixtures/bytes/hst-02-binary.js';
+import * as hst05 from './fixtures/bytes/hst-05-mixed-eol.js';
 
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
-const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
 
 interface ByteModule {
   readonly bytes: Uint8Array;
@@ -37,230 +49,12 @@ const BYTE_MODULES: Readonly<Record<string, ByteModule>> = {
   'enc-03': { bytes: enc03.BYTES, encoding: 'shift_jis' },
   'enc-04': { bytes: enc04.BYTES },
   'enc-05': { bytes: enc05.BYTES, encoding: 'utf-16le' },
+  // Binary input: no decoder is ever asked, so no encoding is declared.
+  'hst-02': { bytes: hst02.BYTES },
+  'hst-05': { bytes: hst05.BYTES, encoding: 'utf-8' },
 };
 
 const KNOWN_SECTIONS = ['[Manager]', '[Entity]', '[Relation]', '[Relationship]', '[View]'];
-
-interface ParsedText {
-  readonly raw: Buffer;
-  readonly text: string;
-  readonly lines: readonly string[];
-  readonly sectionLines: readonly number[];
-  readonly keyLines: readonly number[];
-}
-
-/** Strip a UTF-8 BOM and split on CRLF/LF/CR, preserving line order. */
-function readText(path: string): ParsedText {
-  return parseText(readFileSync(path));
-}
-
-/** Parse already-decoded text, so byte fixtures can be inspected after decoding. */
-function parseText(raw: Buffer, decoded?: string): ParsedText {
-  const text = decoded ?? (raw.subarray(0, 3).equals(BOM) ? raw.subarray(3) : raw).toString('utf8');
-  const lines = text.split(/\r\n|\n|\r/);
-  const sectionLines: number[] = [];
-  const keyLines: number[] = [];
-  for (const [index, line] of lines.entries()) {
-    // P3: whitespace around a header is trimmed for recognition; the raw line keeps it.
-    if (/^\s*\[[^\]]+\]\s*$/.test(line)) {
-      sectionLines.push(index + 1);
-      continue;
-    }
-    if (line.trim() === '' || line.startsWith('#')) continue;
-    if (/^[^=]+?=/.test(line)) keyLines.push(index + 1);
-  }
-  return { raw, text, lines, sectionLines, keyLines };
-}
-
-/**
- * Split a Complex value on commas that are not inside double quotes. Escape
- * sequences are not interpreted — the fixtures that carry them assert their
- * presence as raw text instead.
- */
-function splitComplex(value: string): string[] {
-  const parts: string[] = [];
-  let current = '';
-  let quoted = false;
-  for (const char of value) {
-    if (char === '"') {
-      quoted = !quoted;
-      current += char;
-      continue;
-    }
-    if (char === ',' && !quoted) {
-      parts.push(current);
-      current = '';
-      continue;
-    }
-    current += char;
-  }
-  parts.push(current);
-  return parts;
-}
-
-function lineAt(parsed: ParsedText, line: number): string {
-  const value = parsed.lines[line - 1];
-  if (value === undefined) throw new Error(`line ${String(line)} does not exist`);
-  return value;
-}
-
-function keyAt(parsed: ParsedText, line: number): string {
-  const value = lineAt(parsed, line);
-  const equals = value.indexOf('=');
-  if (equals < 1) throw new Error(`line ${String(line)} is not a key=value line: ${value}`);
-  return value.slice(0, equals);
-}
-
-function valueAt(parsed: ParsedText, line: number): string {
-  const value = lineAt(parsed, line);
-  const equals = value.indexOf('=');
-  if (equals < 1) throw new Error(`line ${String(line)} is not a key=value line: ${value}`);
-  return value.slice(equals + 1);
-}
-
-/** Section header text with surrounding whitespace trimmed; the raw line keeps it. */
-function headerName(parsed: ParsedText, line: number): string {
-  return lineAt(parsed, line).trim();
-}
-
-/** Line numbers of the `key` occurrences inside the n-th `[Entity]` section. */
-function entityKeyLines(parsed: ParsedText, entity: number, key: string): number[] {
-  const headers = parsed.sectionLines.filter((line) => headerName(parsed, line) === '[Entity]');
-  const start = headers[entity - 1];
-  if (start === undefined) throw new Error(`entity ${String(entity)} does not exist`);
-  const next = parsed.sectionLines.find((line) => line > start) ?? parsed.lines.length + 1;
-  const found: number[] = [];
-  for (const line of parsed.keyLines) {
-    if (line <= start || line >= next) continue;
-    if (keyAt(parsed, line) === key) found.push(line);
-  }
-  return found;
-}
-
-function unquote(value: string): string {
-  return /^".*"$/.test(value) ? value.slice(1, -1) : value;
-}
-
-/** Evaluate the small, documented fact vocabulary the registry uses. */
-function factValue(path: string, parsed: ParsedText | null, bytes: Uint8Array | null): unknown {
-  if (path === 'bytes.length') {
-    if (bytes === null) throw new Error('bytes fact on a text fixture');
-    return bytes.byteLength;
-  }
-  if (path === 'bytes.prefix') {
-    if (bytes === null) throw new Error('bytes fact on a text fixture');
-    return Buffer.from(bytes.subarray(0, 2)).toString('hex');
-  }
-  if (path === 'strict.allReject') {
-    if (bytes === null) throw new Error('bytes fact on a text fixture');
-    const rejected = (['utf-8', 'shift_jis', 'utf-16le'] as const).every((encoding) => {
-      try {
-        new TextDecoder(encoding, { fatal: true }).decode(bytes);
-        return false;
-      } catch {
-        return true;
-      }
-    });
-    return rejected;
-  }
-
-  if (parsed === null) throw new Error(`text fact ${path} on a bytes fixture`);
-
-  if (path === 'text.contains') throw new Error('text.contains needs its argument in equals');
-  if (path === 'header.format') {
-    const match = /^# A5:ER FORMAT:(\d+)$/m.exec(parsed.text);
-    if (match?.[1] === undefined) throw new Error('no FORMAT header');
-    return Number(match[1]);
-  }
-  if (path === 'header.absent') return /^# A5:ER FORMAT:/m.test(parsed.text) === false;
-  if (path === 'encoding.bom') return parsed.raw.subarray(0, 3).equals(BOM);
-  if (path === 'encoding.crlf') return parsed.text.includes('\r\n');
-  if (path === 'encoding.declared') {
-    const match = /^# A5:ER ENCODING:(\S+)$/m.exec(parsed.text);
-    return match?.[1] ?? null;
-  }
-  if (path === 'escape.sequences') {
-    const sequences = ['\\Q', '\\\\', '\\q', '\\t', '\\n'];
-    return sequences.filter((sequence) => !parsed.text.includes(sequence)).length === 0
-      ? sequences.join(',')
-      : 'missing';
-  }
-  if (path === 'entity.count')
-    return parsed.sectionLines.filter((l) => headerName(parsed, l) === '[Entity]').length;
-  if (path === 'view.count')
-    return parsed.sectionLines.filter((l) => headerName(parsed, l) === '[View]').length;
-  if (path === 'relation.count') {
-    // P3: `[Relationship]` is the alias of `[Relation]`, so both spellings count as a relation.
-    return parsed.sectionLines.filter((l) =>
-      ['[Relation]', '[Relationship]'].includes(headerName(parsed, l)),
-    ).length;
-  }
-  if (path === 'page.count') {
-    return parsed.keyLines.filter((line) => keyAt(parsed, line) === 'PageInfo').length;
-  }
-  if (path === 'pname.unique') {
-    // P6: PName is the identity and must be unique across every object in the diagram.
-    const names = parsed.keyLines
-      .filter((line) => keyAt(parsed, line) === 'PName')
-      .map((line) => unquote(valueAt(parsed, line)));
-    return new Set(names).size === names.length;
-  }
-  const fieldCount = /^field\.(\d+)\.count$/.exec(path);
-  if (fieldCount?.[1] !== undefined) {
-    return entityKeyLines(parsed, Number(fieldCount[1]), 'Field').length;
-  }
-  if (path === 'field.1.keyOrders') {
-    return entityKeyLines(parsed, 1, 'Field')
-      .map((line) => unquote((splitComplex(valueAt(parsed, line))[4] ?? '').trim()))
-      .join(',');
-  }
-
-  const lineKey = /^line\.(\d+)\.key$/.exec(path);
-  if (lineKey?.[1] !== undefined) return keyAt(parsed, Number(lineKey[1]));
-
-  const sectionHeader = /^section\.(\d+)\.header$/.exec(path);
-  if (sectionHeader?.[1] !== undefined) {
-    const line = parsed.sectionLines[Number(sectionHeader[1]) - 1];
-    if (line === undefined) throw new Error(`section ${sectionHeader[1]} does not exist`);
-    return lineAt(parsed, line);
-  }
-
-  const fieldElements = /^field\.(\d+)\.(\d+)\.elements$/.exec(path);
-  if (fieldElements?.[1] !== undefined && fieldElements[2] !== undefined) {
-    const lines = entityKeyLines(parsed, Number(fieldElements[1]), 'Field');
-    const line = lines[Number(fieldElements[2]) - 1];
-    if (line === undefined) throw new Error(`field ${path} does not exist`);
-    return splitComplex(valueAt(parsed, line)).length;
-  }
-
-  const indexColumns = /^index\.(\d+)\.(\d+)\.columns$/.exec(path);
-  if (indexColumns?.[1] !== undefined && indexColumns[2] !== undefined) {
-    const lines = entityKeyLines(parsed, Number(indexColumns[1]), 'IndexInfo');
-    const line = lines[Number(indexColumns[2]) - 1];
-    if (line === undefined) throw new Error(`index ${path} does not exist`);
-    const parts = splitComplex(valueAt(parsed, line));
-    if (parts.length < 3)
-      throw new Error(`IndexInfo on line ${String(line)} has no column element`);
-    return unquote((parts[2] ?? '').trim());
-  }
-
-  throw new Error(`unknown fact path: ${path}`);
-}
-
-function evaluateFact(
-  spec: FixtureSpec,
-  parsed: ParsedText | null,
-  bytes: Uint8Array | null,
-  fact: { path: string; equals: unknown },
-): void {
-  if (fact.path === 'text.contains') {
-    if (typeof fact.equals !== 'string') throw new Error('text.contains needs a string');
-    if (parsed === null) throw new Error('text.contains on a bytes fixture');
-    expect(parsed.text).toContain(fact.equals);
-    return;
-  }
-  expect(factValue(fact.path, parsed, bytes), `${spec.id}: ${fact.path}`).toEqual(fact.equals);
-}
 
 /**
  * True when git knows the path as tracked, or as an untracked file that is not
@@ -280,8 +74,8 @@ function isKnownToGit(relativePath: string): boolean {
 }
 
 describe('fixture content', () => {
-  it('registers exactly the 28 catalog fixtures', () => {
-    expect(FIXTURES).toHaveLength(28);
+  it('registers exactly the 51 catalog fixtures', () => {
+    expect(FIXTURES).toHaveLength(51);
     expect(FIXTURES.map((spec) => spec.id)).toEqual([
       'fmt-01',
       'fmt-02',
@@ -310,11 +104,39 @@ describe('fixture content', () => {
       'val-07',
       'val-08',
       'val-09',
+      'val-10',
+      'val-11',
       'sem-01',
+      'sem-02',
+      'sem-03',
+      'sem-04',
+      'sem-05',
+      'sem-06',
+      'sem-07',
+      'sem-08',
+      'sem-09',
+      'sem-10',
+      'sem-11',
+      'hst-01',
+      'hst-02',
+      'hst-03',
+      'hst-04',
+      'hst-05',
+      'hst-06',
+      'res-01',
+      'res-02',
+      'res-03',
+      'imm-01',
+      'fuzz-01',
     ]);
   });
 
   for (const spec of FIXTURES) {
+    // Generated, injected and catalog-wide entries have no committed file. Their bytes come
+    // from a builder (`fixtures-generated.test.ts`) or do not exist at all yet, so asserting
+    // a git-tracked path here would be a lie and an empty suite would be a second one.
+    if (spec.fixtureClass !== 'synthetic' && spec.fixtureClass !== 'bytes') continue;
+
     describe(`${spec.id} — ${spec.file}`, () => {
       const path = join(spec.fixtureClass === 'bytes' ? BYTES_DIR : SYNTHETIC_DIR, spec.file);
 
@@ -332,7 +154,8 @@ describe('fixture content', () => {
           expect(lineCount).toBeGreaterThanOrEqual(span.endLine);
           // A span must point at a key line or at a section header.
           const line = lineAt(parsed, span.keyLine);
-          expect(/^\s*\[[^\]]+\]\s*$/.test(line) || line.includes('=')).toBe(true);
+          // The header shape may carry inner brackets, as the section scanner allows.
+          expect(/^\s*\[.+\]\s*$/.test(line) || line.includes('=')).toBe(true);
         }
       });
 

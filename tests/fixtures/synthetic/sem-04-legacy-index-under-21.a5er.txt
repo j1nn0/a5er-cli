@@ -1,0 +1,12 @@
+﻿# A5:ER FORMAT:21
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"
+
+[Entity]
+PName="legacy_orders_21"
+Field="注文ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,"",""
+Field="ユーザーID","user_id","Integer","NOT NULL",,"","",$FFFFFFFF,"",""
+Field="作成日時","created_at","datetime","",,"","",$FFFFFFFF,"",""
+Index=legacy_ix1=0,user_id,created_at
+Position="Main",100,200

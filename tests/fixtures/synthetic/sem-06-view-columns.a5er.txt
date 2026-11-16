@@ -1,0 +1,15 @@
+﻿# A5:ER FORMAT:21
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"
+
+[View]
+PName="view_with_lname"
+Query="SELECT id FROM subtype_member"
+LNameByComment=1
+Position="Main",100,300
+
+[View]
+PName="plain_view"
+Query="SELECT id FROM subtype_member"
+Position="Main",400,300

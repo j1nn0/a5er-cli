@@ -1,0 +1,4 @@
+﻿# A5:ER FORMAT:21
+
+[Manager]
+ProjectName="no_pages"

@@ -1,0 +1,10 @@
+﻿# A5:ER FORMAT:21
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"
+
+[Entity]
+PName="equals_value"
+Field="ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,"",""
+TableInnerOption="ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+Position="Main",10,10

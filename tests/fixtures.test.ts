@@ -119,7 +119,13 @@ describe('fixture registry', () => {
     // stage-1 path such as `line.13.key`. Nothing may be authored in `parseFacts`
     // before a parser exists; stages 2–5 add them deliberately.
     for (const spec of FIXTURES) {
-      expect(spec.expectation.sourceFacts.length, spec.id).toBeGreaterThan(0);
+      // Only classes that own bytes can carry a source fact: `injected` waits for an IO
+      // seam and `catalog-wide` is a harness, so an empty list there is the honest state.
+      if (spec.fixtureClass === 'injected' || spec.fixtureClass === 'catalog-wide') {
+        expect(spec.expectation.sourceFacts, spec.id).toEqual([]);
+      } else {
+        expect(spec.expectation.sourceFacts.length, spec.id).toBeGreaterThan(0);
+      }
       expect(spec.expectation.parseFacts, spec.id).toEqual([]);
     }
   });

@@ -1,0 +1,16 @@
+﻿# A5:ER FORMAT:21
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"
+
+[Entity]
+PName="subtype_member"
+Field="ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,"",""
+Position="Main",100,100
+
+[Subtype]
+PName="unknown_membership"
+SharedMode=0
+CompleteCategory=0
+Position="Main",400,400
+ZOrder=1

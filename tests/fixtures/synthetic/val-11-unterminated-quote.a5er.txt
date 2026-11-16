@@ -1,0 +1,9 @@
+﻿# A5:ER FORMAT:21
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"
+
+[Entity]
+PName="unterminated"
+Field="論理名","phys","varchar(10)","NOT NULL",0,"","",$FFFFFFFF,"オプション未終端
+Position="Main",10,10

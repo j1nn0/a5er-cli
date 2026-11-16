@@ -1,0 +1,28 @@
+﻿# A5:ER FORMAT:21
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"
+
+[Entity]
+PName="parent_a"
+Field="項目A","a","Integer","NOT NULL",0,"","",$FFFFFFFF,"",""
+Field="項目B","b","Integer","NOT NULL",1,"","",$FFFFFFFF,"",""
+Position="Main",100,100
+
+[Entity]
+PName="child_b"
+Field="項目X","x","Integer","NOT NULL",0,"","",$FFFFFFFF,"",""
+Field="項目Y","y","Integer","NOT NULL",1,"","",$FFFFFFFF,"",""
+Field="項目Z","z","Integer","",2,"","",$FFFFFFFF,"",""
+Position="Main",300,100
+
+[Relation]
+Entity1="parent_a"
+Entity2="child_b"
+Fields1="a,b"
+Fields2="x,y,z"
+RelationType1=2
+RelationType2=4
+Cardinarity1="P"
+Cardinarity2="Z"
+Position="Main",0,400,400,400,R,R,""
