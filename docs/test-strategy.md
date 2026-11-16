@@ -1,9 +1,11 @@
 # Test strategy — Phase 1 (Vitest, synthetic fixtures)
 
-Phase 1 design output. **Nothing here is implemented:** no `package.json`, no `src/`, no
-`tests/` exist in this repository as of this unit. This file decides how the parser and CLI
-will be tested in Phase 2, so that tests are written against a contract rather than invented
-alongside the code.
+Phase 1 design output. **Scaffold in place, features not:** `package.json` (ESM, Node >= 24,
+pnpm 11.28.12 pinned through `packageManager`), `src/cli.ts` + `src/index.ts`, `tests/`, CI,
+`oxlint` + `oxfmt` all exist and build; the CLI exposes exactly `--help` and `--version`, and the
+parser and every analysis command remain unimplemented. This file decides how they will be
+tested in Phase 2, so that tests are written against a contract rather than invented alongside
+the code.
 
 Companions, both committed: `docs/architecture.md` (pipeline, data model, diagnostics, JSON
 envelope, §13 completeness, §14 adversarial matrix, §17 TBDs, §18 staging) and
@@ -40,7 +42,7 @@ without reaching into another, that is a design defect to report, not a test to 
 | **L1 unit** | One exported function: `splitComplex`, `decodeField`, registry lookup, `decodeBuffer`, span arithmetic, diagnostics factory, envelope serialiser | Pure, no filesystem | Vitest, in-process |
 | **L2 integration** | Decode → parse → resolve → validate over in-memory bytes; AST and resolved-model assertions | Temp dir for anything needing a path | Vitest |
 | **L3 fixture snapshot** | Committed fixture file → full JSON envelope → golden comparison | Real file on disk | Vitest |
-| **L4 contract** | Envelope shape invariants: `dropped === 0`, status derivation, exit codes, stdout/stderr separation, span presence rules | Spawned CLI | Vitest + `execa`-free `node:child_process` |
+| **L4 contract** | Envelope shape invariants: `dropped` reconciliation, status derivation, exit codes, stdout/stderr separation, span presence rules | Spawned CLI | Vitest + `execa`-free `node:child_process` |
 | **L5 end-to-end** | `a5er inspect` / `validate` on a staged fixture, including failure modes | Spawned CLI, temp cwd | Vitest |
 | **L6 hostile/fuzz floor** | Fixed-seed byte mutation of a baseline fixture | In-process | Vitest |
 
@@ -150,6 +152,10 @@ Rules:
 Every snapshot fixture has a sibling `<id>.expected.json` containing the full envelope with
 paths scrubbed. Comparison rules:
 
+Ordering: these files are authored in stage 6, once the serializer exists (§14). Until then a
+fixture's contract is a **semantic expectation** — counts, diagnostic codes, spans — not a golden
+document, and no golden is produced by accepting whatever the parser emitted.
+
 | Rule | Detail |
 |---|---|
 | Path normalisation | Any absolute path is replaced by `<tmp>` before comparison |
@@ -165,24 +171,33 @@ edit, so the diff is the review.
 ### 3.7 Authoring rules
 
 - Synthetic only. No fixture may be derived from a real export, a customer schema, or a
-  confidential diagram (`parser-evaluation.md` §6 fixture gate).
+  confidential diagram (see §3.8).
 - Names are obviously fake: `users`, `orders`, `ユーザー`, `注文`. No real project or person.
 - Every fixture states, in a leading comment or in its `.ts` docstring, **what construct it
   exists to exercise** and which P/§14 row it serves.
 - A fixture that does not contain the construct under test is rejected in review (L4).
 
-### 3.8 Real-export validation — local only, never committed
+### 3.8 Real exports — local verification, never an entry gate
 
-The parser is not "validated" on synthetic fixtures alone: `parser-evaluation.md` §6 makes 2–3
-anonymised real exports a gate. Because those files are exactly what `.gitignore` protects, they
-must never enter the repository or CI. Mechanics:
+Policy:
+
+- Implementation **starts** from spec-derived synthetic fixtures (§4). Real exports never gate
+  Phase 2 entry.
+- A real export is used **only** for local verification, after confidentiality is confirmed, and
+  is **never** committed — the `*.a5er` ignore rule exists for exactly that reason.
+- Compatibility with real exports is a **pre-release quality gate**, checked with the same
+  expectations the synthetic fixtures use.
+- If no real export is available, the gap is stated explicitly in the release notes and full
+  compatibility is **not** claimed.
+
+Mechanics:
 
 - A test module discovers real fixtures through `A5ER_REAL_FIXTURES=/path/to/dir` and is
   skipped entirely (`describe.skipIf`) when the variable is unset — so CI on a clean checkout
   stays green, and the skip is honest rather than silent.
 - The directory is read **in place**, copied only into the per-test temp dir, and never named in
   an expected-output file.
-- Running with the variable set is a **release and stage-gate checklist item**, not a CI job:
+- Running with the variable set is a **pre-release checklist item**, not a CI job:
   `A5ER_REAL_FIXTURES=… pnpm test -- --mode real`.
 - Failures are reported with the fixture's sha256 and a redacted excerpt (line number and code
   only, never schema text), so a maintainer can act without pasting confidential content into
@@ -321,19 +336,20 @@ Cases from P1–P13 that the 16 rows above do not already pin down.
 |---|---|---|
 | T1 | Every test asserts a **parsed value** or an **exact diagnostic set** | Review; banned patterns below |
 | T2 | Diagnostic assertions compare the **complete code multiset**, not "contains" | `assertCodes(envelope, [...])` helper, which fails on extras and on missing |
-| T3 | `completeness.dropped === 0` is asserted for every fixture that is not `failed` | Global hook in `tests/fixtures.test.ts`, so new fixtures inherit it |
+| T3 | `completeness` reconciles and `dropped === 0` for every fixture that is not `failed` | Global hook in `tests/fixtures.test.ts`, so new fixtures inherit it |
 | T4 | Status is asserted, but **never used as evidence of health**: a fixture with only `info` diagnostics is `ok` yet still has diagnostics | `assertStatus` plus `assertCodes` in every fixture test |
 | T5 | Every span is real: `startLine ≤ keyLine ≤ endLine`, all ≥ 1, `sectionIndex` within range (0 = header) | Property loop over the whole envelope in `contract.test.ts` |
 | T6 | `origin !== "declared"` nodes have `span === null` and, when inferred, a non-empty `derivedFrom` | Same property loop |
 | T7 | Text from the file never appears in `code` or `message`; `details` values are ≤ 200 chars | `hst-04` plus a contract test scanning every diagnostic in every expected envelope |
-| T8 | No test asserts only "did not throw", "exit code 0", or a snapshot count | Review; the fuzz floor is the single documented exception, and it also asserts a bounded runtime and `dropped === 0` |
+| T8 | No test asserts only "did not throw", "exit code 0", or a snapshot count | Review; the fuzz floor is the single documented exception, and it also asserts a bounded runtime and reconciled completeness |
+| T9 | "Lossless" is asserted as **source coverage** — every source line accounted for, unknown constructs present as `unsupported`/`RawEntry` with spans — never as byte equality with the input (EOL and BOM normalisation are expected) | `architecture.md` §4.8; staging copies bytes, so a byte-equality test would be testing the fixture |
 
 Banned in tests: `test.skip` without a `TODO(PHASE2-<id>)` marker; `expect(true)`; unconditional
 `try { … } catch { /* ignore */ }`; asserting `warnings.length > 0` instead of the codes.
 
 ---
 
-## 8. Status derivation, and one inconsistency to fix in the architecture doc
+## 8. Status derivation (inconsistency resolved in U-F2)
 
 Status is derived mechanically from severities:
 
@@ -343,12 +359,9 @@ degraded if any error or warning
 ok       otherwise        // ok may still carry info diagnostics
 ```
 
-**Finding (report, do not edit here):** `architecture.md` §14 rows 2 and 9 say "status
-degraded" for fixtures whose only diagnostics are `info` (`D_BOM_MISSING`,
-`S_UNKNOWN_SECTION`/`S_UNKNOWN_KEY`). That contradicts §11 (both are `info`) and §12 rule 1
-("`ok` = nothing above `info`"). This strategy treats §11 + §12 as authoritative, so rows 2 and
-9 expect `ok`. The two `§14` assertion cells need a one-word correction in Phase 2; editing
-`architecture.md` is out of scope for this unit.
+**Resolved (U-F2):** the §14 inconsistency this section used to flag is fixed — rows 2 and 9 now
+expect `ok`. The rule above is unchanged: `failed` on any fatal, `degraded` on any `error` or
+`warning`, `ok` otherwise, with `info`-only diagnostics allowed to ride along.
 
 ---
 
@@ -376,7 +389,7 @@ v1 — it is reported, because a percentage would let an untested branch hide be
 
 | Gate | Check | Where |
 |---|---|---|
-| G-1 | `completeness.dropped === 0` on every non-failed fixture | `fixtures.test.ts` global hook |
+| G-1 | `completeness` **reconciles** on every non-failed fixture (`sections.total` and `keys.total` equal structured + raw-preserved + unsupported, with that fixture's concrete counts) and the remainder `dropped` is 0 — never a bare `dropped === 0` | `fixtures.test.ts` global hook, using each expected envelope's counts |
 | G-2 | Exact diagnostic code multiset matches each expected envelope | `assertCodes` |
 | G-3 | **Every** non-fatal code in the taxonomy is produced by at least one fixture | `catalog.test.ts` cross-check of codes in expected files vs `DiagnosticCode` |
 | G-4 | No `any` in `src/` | `tsc --noEmit` plus a guard test scanning for `: any`, `as any`, `<any>` |
@@ -426,19 +439,20 @@ fields. It is not a correctness oracle, so it must not assert a specific shape.
 
 ## 13. CI mapping
 
-Proposed jobs (no CI file exists yet; `package.json` scripts are Phase 2 work):
+Jobs already exist in `.github/workflows/ci.yml`; this table names the suites they run:
 
 | Job | Runner | Command | Notes |
 |---|---|---|---|
-| `typecheck` | ubuntu, node 22 + 24 | `pnpm typecheck` (`tsc --noEmit`) | `strict` + `noUncheckedIndexedAccess` |
-| `test` | ubuntu, node 22 + 24 | `pnpm test` (`vitest run`) | All levels; ~60 s budget |
+| `typecheck` | ubuntu, node 24 + 26 | `pnpm typecheck` (`tsc --noEmit`) | `strict` + `noUncheckedIndexedAccess` |
+| `test` | ubuntu, node 24 + 26 | `pnpm test` (`vitest run`) | All levels; ~60 s budget |
 | `test-windows` | windows, node 24 | `vitest run immutability fixtures` | Line endings, mtime granularity, path handling |
 | `build` | ubuntu, node 24 | `pnpm build` | Proves the package compiles as ESM |
 | `fixture-policy` | ubuntu | `git ls-files '*.a5er'` must be empty; `git check-ignore` on every `*.a5er.txt` must report nothing | Guards the confidentiality rule (G-8, G-9) |
 | `no-update` | ubuntu | `git diff --exit-code` after `vitest run` | Fails if anything rewrote an expected file |
 
-Node 22 is the floor from `architecture.md` §15; node 24 is the local development version and is
-included to catch runtime drift early. macOS is not a CI target in v1 (`TBD-T3`).
+Node 24 is the floor (`architecture.md` §15 and `engines` in `package.json`); node 26 is included
+to catch runtime drift early. pnpm is pinned to 11.28.12 through `packageManager`, which
+`pnpm/action-setup` reads. macOS is not a CI target in v1 (`TBD-T3`).
 
 ---
 
@@ -449,16 +463,17 @@ means the gates in §10, not just "the suite ran".
 
 | Stage | Exit criteria |
 |---|---|
-| 1 · Fixtures | Catalog complete: every ID in §4 exists, is tracked, has a documented purpose; `fmt-01` and `fmt-02` carry `IndexInfo` and legacy `Index` respectively; G-8/G-9 pass; expected envelopes exist for all snapshot fixtures; the local real-export run (§3.8) passes and its output is recorded in the stage notes |
+| 1 · Fixtures | Catalog complete: every ID in §4 exists, is tracked, has a documented purpose; `fmt-01` and `fmt-02` carry `IndexInfo` and legacy `Index` respectively; G-8/G-9 pass; every fixture has a semantic expectation (counts, codes, spans). JSON goldens follow in stage 6; real exports are pre-release, not entry (§3.8) |
 | 2 · `io` + `decode` | §5 rows 1–4, 11, 12, 14, 15, 16 green, plus `enc-05`, `hst-05`, `res-01`–`res-03`; immutability passes on POSIX and Windows |
-| 3 · `syntax` + `schema` | §5 rows 5–10 green, plus every P3/P4/P7/P8 row in §6; `dropped === 0` on all parsed fixtures; L1 splitter suite covers the full escape table |
+| 3 · `syntax` + `schema` | §5 rows 5–10 green, plus every P3/P4/P7/P8 row in §6; completeness reconciles on all parsed fixtures; L1 splitter suite covers the full escape table |
 | 4 · `model` + `resolve` | §5 rows 6–8, 13 green, plus `val-06`, `val-09`, `sem-02`, `sem-03`, `sem-05`–`sem-07`, `sem-11`; T5/T6 span properties pass on every envelope |
 | 5 · `validate` | Row 13 emits exactly the three `V_DANGLING_*` codes; `sem-08`, `sem-09` exit 3 under `validate` and 0 under `inspect`; G-2 holds everywhere |
-| 6 · `json` | Envelope frozen at `contractVersion 0.1.0`: all expected files regenerated once and reviewed; §7 T7 passes; G-3 shows every non-fatal code exercised |
+| 6 · `json` | Envelope frozen at `contractVersion 0.1.0`: expected envelopes authored from the stage 1–5 expectations and reviewed, never generated by accepting parser output; §7 T7 passes; G-3 shows every non-fatal code exercised |
 | 7 · `cli` | `inspect` end-to-end on `fmt-01`; stdout is JSON only, stderr carries prose; exit codes 0/1/2/3 asserted; `imm-01` covers every shipped command |
 
-Stage 1 gates all others (`parser-evaluation.md` §6 blocker). No stage may pass its fixtures by
-adding a temporary silent skip — G-1 is precisely the check that would catch it.
+Stage 1 gates the others only in the sense that the fixtures must exist; real exports do not gate
+entry (§3.8). No stage may pass its fixtures by adding a temporary silent skip — G-1 is precisely
+the check that would catch it.
 
 ---
 

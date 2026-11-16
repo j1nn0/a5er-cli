@@ -1,9 +1,11 @@
 # Architecture — spec-based `.a5er` parser + CLI (option C)
 
-Phase 1 design output. **Nothing in this document is implemented:** no `package.json`, no
-`src/`, no tests exist in this repository as of this unit. This file fixes the module
-boundaries, the data model, the error taxonomy, and the initial JSON contract so that Phase 2
-can be built against a contract instead of invented incrementally.
+Phase 1 design output. **Scaffold in place, features not:** `package.json`, `src/cli.ts`,
+`src/index.ts`, `tests/`, CI, `oxlint` + `oxfmt`, Node >= 24 and pnpm 11.28.12 (pinned through
+`packageManager`) exist and build, and the CLI exposes exactly `--help` and `--version`. The
+`.a5er` parser and every analysis command remain unimplemented (Phase 2). This file fixes the
+module boundaries, the data model, the error taxonomy, and the initial JSON contract so that
+Phase 2 can be built against a contract instead of invented incrementally.
 
 Companion documents, both committed: `docs/format-coverage.md` (what v2.21 says, item by item)
 and `docs/parser-evaluation.md` (why option C). This document assumes both and cites them.
@@ -320,6 +322,20 @@ export interface ResolvedIndex {
 names) **without resolving it to a SQL type** (P12). That is a resolver decision, not a decoder
 one, and it preserves what the file says.
 
+### 4.8 What "lossless" covers
+
+Lossless here is a statement about *source coverage*, not about bytes:
+
+- **Covered:** every source line is represented — comments, blank lines (positionally), unknown
+  sections and keys as `RawEntry` with spans, and the raw text of every value kept beside its
+  interpretation (§4.2, §4.3).
+- **Not covered:** byte-exact reproduction of the input file (EOL normalisation and BOM handling
+  belong to the decoder, §8), semantic interpretation of constructs the spec does not define, and
+  rendering fidelity for presentation fields (F9).
+
+So "lossless" means nothing read from the file disappears without a record. It does not mean the
+output can be byte-diffed against the input, and it does not promise understanding.
+
 ---
 
 ## 5. Section-scoped schema registry (F1)
@@ -496,7 +512,7 @@ Verified locally on Node v24.22.3 (ICU 78.3): `new TextDecoder('shift_jis')` dec
 
 At startup the binary probes `new TextDecoder('shift_jis')`. A build without full ICU is
 refused with `E_CODEC_UNAVAILABLE` rather than silently mis-decoding; official Node builds ship
-full ICU, so this should never fire in practice. Node 22+ is required for this and for
+full ICU, so this should never fire in practice. Node >= 24 is required for this and for
 `Array.prototype` behaviours the scanner relies on.
 
 ### 8.4 Declared versus detected
@@ -752,9 +768,11 @@ Contract rules:
 1. **`status`** is `ok` (nothing above `info`), `degraded` (warnings/errors, schema emitted) or
    `failed` (fatal, `schema: null`). A `failed` envelope is still valid JSON — automation
    should never have to distinguish "no output" from "crashed".
-2. **`dropped` is the literal `0`.** It exists as a counted field so that "nothing was
-   discarded" is machine-checkable; a non-zero value is a bug and is asserted against on every
-   fixture (§13). `unsupported` entries are *not* drops — they are retained evidence.
+2. **`dropped` must be `0` by reconciliation, not by assertion.** For every fixture,
+   `sections.total` and `keys.total` must equal structured + raw-preserved + unsupported-reported
+   using that fixture's concrete counts; `dropped` is the arithmetic remainder of the
+   reconciliation and must come out as zero (§13). A bare `dropped === 0` proves nothing on its
+   own. `unsupported` entries are *not* drops — they are retained evidence.
 3. **Span presence**: every node that exists in the file — object, entry, column, index,
    relation, position, diagnostic — carries a `Span`. A node the resolver synthesised has
    `span: null`, `origin` other than `declared`, and cites its inputs in `derivedFrom` instead
@@ -800,12 +818,15 @@ Three counters, computed during parse and resolved output, never estimated:
 |---|---|---|
 | `sections.total` | Every `[…]` header in the file, known or not | equals parsed + preservedRaw |
 | `keys.total` | Every `key=value` line in every section | equals parsed + preservedRaw (decoded legacy keys count as parsed) |
-| `dropped` | Constructs that were read and then discarded | **always 0** |
+| `dropped` | Constructs that were read and then discarded | arithmetic remainder of the two rows above; **must be 0** |
 
-Why this is not bookkeeping theatre: both evaluated parsers fail precisely here
-(`parser-evaluation.md` §4 — "neither reports what it skipped"). A test that asserts
-`dropped === 0` on every fixture will fail the day a code path learns to skip, which is the
-only durable defence against the failure mode this project exists to avoid (D8, L4).
+`dropped` is a reconciliation, not a switch. The guarantee is that every section and key counted
+in `total` is accounted for on the right-hand side with the fixture's concrete numbers, and the
+remainder is asserted to be zero. Asserting `dropped === 0` alone proves nothing — a parser that
+never increments `total` would pass it. A test that reconciles the totals will fail the day a
+code path learns to skip, which is the only durable defence against the failure mode this project
+exists to avoid (D8, L4); both evaluated parsers fail precisely here (`parser-evaluation.md` §4 —
+"neither reports what it skipped").
 
 `unsupported` is separate and expected to be non-empty: `Subtype` membership, unknown
 `ShapeType`, undefined vertex format, multi-line values, unknown keys and sections.
@@ -854,8 +875,8 @@ that document's own §8 rule already reads this way.
 | Decision | Value | Reason |
 |---|---|---|
 | Language | TypeScript, `strict: true` plus `noUncheckedIndexedAccess` | Array index access is pervasive in a tokenizer; the flag is what makes `parts[8]` an honest `T \| undefined` (F4) |
-| Runtime | Node 22+ | `TextDecoder` with `fatal` and full-ICU codecs; native ESM |
-| Package manager | pnpm 11 | Given; workspace-ready if a second package ever appears |
+| Runtime | Node >= 24 | `TextDecoder` with `fatal` and full-ICU codecs; native ESM; matches `engines` in `package.json` |
+| Package manager | pnpm 11.28.12, pinned in `packageManager` | Aligns the local toolchain with CI, which resolves the version from that field |
 | Modules | ESM only (`"type": "module"`, `NodeNext`) | Node-native; no dual-package hazard |
 | Tests | Vitest | Fast, ESM-native, no transform config |
 | Package | `@j1nn0/a5er-cli`, binary `a5er`, `private: true` until release | Given |
@@ -912,7 +933,7 @@ Module responsibilities, one line each, with the invariant that makes the bounda
 | A10 | Whole-file decode, no streaming in v1 | §10.3 | A streaming decoder that still materialises the AST |
 | A11 | Zero runtime dependencies; startup codec probe | §15, §8.3 | `iconv-lite` or a CSV/INI parser dependency |
 | A12 | Closed diagnostic codes; untrusted file content only in `details`, truncated to 200 chars | L2, borrowed warning-split idea | Interpolating values into message strings |
-| A13 | `completeness.dropped` is a literal `0`, asserted per fixture | D1, F6, §13 | Trusting review to notice a skipped branch |
+| A13 | `completeness.dropped` must be 0 *by reconciliation* — totals asserted with concrete per-fixture values, never as a constant | D1, F6, §13 | A `dropped === 0` assertion that counts nothing |
 | A14 | Subtype membership emitted as `unsupported`, entities not guessed | F7, D6, K11 | Inferring membership from position or naming |
 | A15 | Colours stored raw plus best-effort RGB with `channelOrder: 'assumed'` | F8, K10 | Picking one channel order and presenting it as fact |
 | A16 | Presentation and DDL switches are preserved and classified, never interpreted | F9, D7 | Deriving DDL or constraint names from `DefaultPkName` templates |
@@ -958,17 +979,23 @@ not as spec behaviour. None of U1–U15 is presented as settled by these decisio
 This is a pointer, not a plan: the order is fixed by dependencies, and each stage exits only
 when its fixtures pass.
 
-1. **Fixtures first** (§14 matrix, anonymised real exports from `parser-evaluation.md` §6).
-   Exit: every row has a committed file and expected JSON; `IndexInfo`-bearing fixture exists.
+1. **Fixtures first** — synthetic, spec-derived fixtures for the §14 matrix. Implementation does
+   not wait for real exports: those are local-only verification and a pre-release gate (see
+   `docs/test-strategy.md` §3.8). Exit: every row has a committed fixture and a semantic
+   expectation (counts, codes, spans); an `IndexInfo`-bearing fixture exists. JSON goldens are
+   completed in stage 6, once the serializer exists.
 2. **`io` + `decode`** (§8, §10). Exit: rows 1–4, 11, 12, 14, 15, 16 pass; immutability asserted.
-3. **`syntax` + `schema`** (§5–§7). Exit: rows 5–10 pass; `dropped === 0` everywhere.
+3. **`syntax` + `schema`** (§5–§7). Exit: rows 5–10 pass; completeness reconciles on every parsed fixture.
 4. **`model` + `resolve`** (§4, §9). Exit: rows 6–8, 13 pass; spans present on every node.
 5. **`validate`** (§9, §11). Exit: row 13 emits the exact expected codes; severity mapping fixed.
-6. **`json`** (§12–§13). Exit: envelope shape frozen at `contractVersion 0.1.0`.
+6. **`json`** (§12–§13). Exit: envelope shape frozen at `contractVersion 0.1.0`; expected
+   envelopes are then authored from the stage 1–5 semantic expectations and reviewed, never
+   produced by blessing parser output.
 7. **`cli`** (§12, TBD-O7). Exit: one command end-to-end with a real fixture, stdout/stderr separated.
 
-Stages 2–4 are independently testable; stage 1 gates all of them (L5). No stage may ship a
-"temporary" silent skip to pass its fixtures — A13 exists to make that visible.
+Stages 2–4 are independently testable; stage 1 gates them only in the sense that the fixtures
+must exist — real exports are not an entry gate (`docs/test-strategy.md` §3.8). No stage may
+ship a "temporary" silent skip to pass its fixtures — A13 exists to make that visible.
 
 ---
 
