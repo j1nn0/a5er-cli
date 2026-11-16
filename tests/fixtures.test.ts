@@ -20,7 +20,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
+import { join, relative, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { FIXTURES, validateRegistry } from './helpers/fixture-registry.js';
@@ -30,6 +30,7 @@ import {
   GENERATED_DIR,
   SYNTHETIC_DIR,
   SYNTHETIC_SUFFIX,
+  isInsideFixtures,
   listSyntheticFixtures,
   sha256File,
   stage,
@@ -102,6 +103,22 @@ describe('fixture registry', () => {
 });
 
 describe('fixture staging', () => {
+  it('treats a target on a different root as outside the fixtures tree', () => {
+    // The staging directory lives under the OS temp dir, which on Windows is
+    // usually a different drive than the checkout (D: for the repository, C:
+    // for the temp dir). `path.relative()` then returns the absolute target
+    // instead of a `..` path, and that can never mean "inside".
+    const outside = join(tmpdir(), 'a5er-fixture-probe', 'case.a5er');
+    expect(isInsideFixtures(outside)).toBe(false);
+
+    // Same rule, expressed with win32 semantics so it holds on every runner.
+    const crossDrive = win32.relative('D:\\repo\\tests\\fixtures', 'C:\\Temp\\case.a5er');
+    expect(win32.isAbsolute(crossDrive)).toBe(true);
+
+    // A real fixture path is still classified as inside.
+    expect(isInsideFixtures(join(FIXTURES_ROOT, 'synthetic', 'case.a5er.txt'))).toBe(true);
+  });
+
   it('rejects IDs that would escape the fixture directory', () => {
     expect(() => stage('../escape')).toThrow(/unsafe fixture id/);
     expect(() => stage('nested/id')).toThrow(/unsafe fixture id/);

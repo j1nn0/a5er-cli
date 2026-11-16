@@ -24,7 +24,7 @@ import {
   statSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative, sep } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** Absolute path to `tests/fixtures/`. */
@@ -71,6 +71,11 @@ const ID_SAFE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 /** True when `path` is inside the fixtures tree. */
 export function isInsideFixtures(path: string): boolean {
   const rel = relative(FIXTURES_ROOT, path);
+  // On Windows, `relative()` between roots on different drives returns the
+  // absolute target (e.g. `C:\Users\...` while the repository is on `D:`); the
+  // staging directory and the checkout usually sit on different drives there.
+  // An absolute result can never describe a path inside the tree.
+  if (isAbsolute(rel)) return false;
   return (
     rel !== '' && !rel.startsWith('..') && !rel.startsWith(`..${sep}`) && !rel.includes(`..${sep}`)
   );
