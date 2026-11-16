@@ -7,3 +7,6 @@ Field="誕生日","birthday","Date","",,"","",$FFFFFFFF,""
 IndexInfo="users_ix1",1,"user_name,birthday", ""
 IndexInfo="users_ix2",2,"user_name", "UNIQUE"
 Position="Main",10,10
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"

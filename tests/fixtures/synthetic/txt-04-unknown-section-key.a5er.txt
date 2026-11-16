@@ -8,3 +8,6 @@ Position="Main",10,10
 
 [Memo]
 Note="自由メモ"
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"

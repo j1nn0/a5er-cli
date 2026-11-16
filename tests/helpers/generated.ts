@@ -29,8 +29,11 @@ export const MAX_LINE_LENGTH = 4 * 1024 * 1024;
 /** hst-03's single line: 1 MiB, a quarter of the line-length limit. */
 export const SINGLE_LINE_BYTES = 1024 * 1024;
 
-/** res-01's read cap: far below the file size, so a capped read must truncate. */
-export const TRUNCATED_READ_CAP_BYTES = 4 * 1024;
+/**
+ * res-01's read limit: far below the file size, so the reader stops at maxBytes and the
+ * *limit* diagnostic fires. A short read reported by the IO seam is res-02, not this file.
+ */
+export const CAPPED_READ_LIMIT_BYTES = 4 * 1024;
 
 /** fuzz-01: test-strategy §12 fixes the mutant count; the seed is the only knob. */
 export const FUZZ_SEED = 0x5eed_1234;
@@ -74,14 +77,14 @@ export function buildSingleLongLine(): Buffer {
 }
 
 /**
- * res-01 — a document larger than a bounded read cap.
+ * res-01 — a well-formed document larger than the read limit.
  *
- * `readCapped` is what a reader does with `maxBytes`: it stops at the cap, so the
- * caller can see `bytesRead < size` and must report truncation instead of a partial
- * schema. The file itself is well-formed; only the cap makes it short.
+ * A reader applies `maxBytes` and stops there, so the cause is the limit and not a short
+ * read: the fatal diagnostic is `E_LIMIT_BYTES` (test-strategy §5 row 11). `res-02` covers
+ * the other shape — an IO seam that returns fewer bytes than `fstat` promised.
  */
-export function buildTruncatedRead(): Buffer {
-  const padding = TRUNCATED_READ_CAP_BYTES + 4096;
+export function buildCappedRead(): Buffer {
+  const padding = CAPPED_READ_LIMIT_BYTES + 4096;
   const body = [
     '# A5:ER FORMAT:21',
     '',
@@ -144,7 +147,7 @@ export function buildEmptyFamily(): readonly BuiltFile[] {
 export const GENERATED_BUILDERS: Readonly<Record<string, () => readonly BuiltFile[]>> = {
   'hst-03': () => [{ name: 'hst-03-single-long-line.a5er', bytes: buildSingleLongLine() }],
   'hst-06': buildEmptyFamily,
-  'res-01': () => [{ name: 'res-01-capped-read.a5er', bytes: buildTruncatedRead() }],
+  'res-01': () => [{ name: 'res-01-capped-read.a5er', bytes: buildCappedRead() }],
   'res-03': buildLimitBreaches,
 };
 

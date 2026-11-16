@@ -155,7 +155,7 @@ export interface Value<T> {
 | Origin | Meaning | Example |
 |---|---|---|
 | `declared` | The token was present in the file and decoded per the spec's type for that key | `PName="users"` |
-| `defaulted` | The spec supplies a default and the key is absent | `UsingCommonColumns` absent ⇒ `1`, origin `defaulted`, accompanied by an info diagnostic |
+| `defaulted` | The spec supplies a default and the key is absent | `UsingCommonColumns` absent ⇒ `1`, origin `defaulted`; a default carries an info diagnostic only when it changes behaviour the consumer must know about — it does here, because common columns join `effectiveColumns` — otherwise `origin` is the whole record and no diagnostic is invented |
 | `inferred` | This project computed the value from other declared facts | `primaryKey` synthesised from `Field` キー順 ordinals; case-insensitive page match |
 
 The rule that makes this trustworthy: **an `inferred` value is never presented without the

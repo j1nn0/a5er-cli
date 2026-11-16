@@ -22,11 +22,12 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FIXTURES } from './fixture-registry.js';
 
@@ -84,6 +85,36 @@ export function isInsideFixtures(path: string): boolean {
   );
 }
 
+/** True when `path` is `tree` itself or inside it — stricter than `isInsideFixtures`. */
+function isWithinTree(tree: string, path: string): boolean {
+  const rel = relative(tree, path);
+  // A cross-drive `relative()` result is absolute and can never describe a child path.
+  if (isAbsolute(rel)) return false;
+  if (rel === '') return true;
+  return !rel.startsWith('..') && !rel.startsWith(`..${sep}`) && !rel.includes(`..${sep}`);
+}
+
+/**
+ * Refuse a staging root that would put the copy inside the fixtures tree (test-strategy §3.5).
+ *
+ * Checked **before** `mkdtempSync`: copying first and checking the copy would create a
+ * directory and a file inside the repository and only then delete them, so a crash or a full
+ * disk in that window would leave both behind. The root is checked lexically and, when it
+ * exists, through `realpath`, so a symlink from outside the repository that points into
+ * `tests/fixtures/` cannot pass the lexical test.
+ */
+function assertRootIsOutsideFixtures(root: string): void {
+  const fixturesReal = realpathSync(FIXTURES_ROOT);
+  const candidates = [resolve(root)];
+  if (existsSync(root)) candidates.push(realpathSync(root));
+
+  for (const candidate of candidates) {
+    if (isWithinTree(fixturesReal, candidate) || isWithinTree(FIXTURES_ROOT, candidate)) {
+      throw new Error(`refusing to stage inside the fixtures tree: ${candidate}`);
+    }
+  }
+}
+
 /** SHA-256 of a file's bytes, lowercase hex. */
 export function sha256File(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
@@ -125,7 +156,11 @@ function stageFile(sourcePath: string, id: string, options: StageOptions = {}): 
   const sourceBytes = readFileSync(sourcePath);
   const sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
 
-  const directory = mkdtempSync(join(options.root ?? tmpdir(), 'a5er-fixture-'));
+  const root = options.root ?? tmpdir();
+  // R10: the root is validated before `mkdtempSync`, so a rejected root creates nothing.
+  assertRootIsOutsideFixtures(root);
+
+  const directory = mkdtempSync(join(root, 'a5er-fixture-'));
   const target = join(directory, `${id}${STAGED_EXTENSION}`);
 
   try {

@@ -22,6 +22,7 @@ import {
   BOM,
   entityKeyLines,
   evaluateFact,
+  headerName,
   keyAt,
   lineAt,
   parseText,
@@ -200,44 +201,113 @@ describe('fixture content', () => {
         expect(keys.parsed + keys.preservedRaw).toBe(keys.total);
       });
 
-      it('names only declared columns in its index definitions', () => {
-        // R3: an index that references a column no `Field` declares is a dangling
-        // reference in a fixture that claims to be healthy. This asserts name
-        // existence only — resolution and the `V_DANGLING_*` codes belong to the
-        // semantic stage, never to a byte-level content test.
+      it('resolves every reference when no dangling code is expected', () => {
+        // R9: a fixture that reports no V_DANGLING_* must be referentially clean — pages,
+        // relation endpoints and every column a relation or index names. This is name
+        // resolution over text, not the semantic layer: it proves the names exist, and
+        // that is what keeps a "normal" fixture from quietly becoming an abnormal one.
         if (spec.expectation.codes.some((code) => code.startsWith('V_DANGLING'))) return;
         const parsed = readText(path);
-        const declared = new Set(
+
+        /** One `[Entity]` section as the names and columns it declares. */
+        const entities = new Map<string, Set<string>>();
+        for (const [index, header] of parsed.sectionLines.entries()) {
+          if (headerName(parsed, header) !== '[Entity]') continue;
+          const next = parsed.sectionLines[index + 1] ?? parsed.lines.length + 1;
+          const inside = parsed.keyLines.filter((line) => line > header && line < next);
+          const pname = inside
+            .filter((line) => keyAt(parsed, line) === 'PName')
+            .map((line) => unquote(valueAt(parsed, line)))[0];
+          if (pname === undefined) continue;
+          const columns = new Set(
+            inside
+              .filter((line) => keyAt(parsed, line) === 'Field')
+              .map((line) => unquote((splitComplex(valueAt(parsed, line))[1] ?? '').trim())),
+          );
+          entities.set(pname, columns);
+        }
+
+        const declaredPages = new Set(
           parsed.keyLines
-            .filter((line) => keyAt(parsed, line) === 'Field')
-            .map((line) => unquote((splitComplex(valueAt(parsed, line))[1] ?? '').trim())),
+            .filter((line) => keyAt(parsed, line) === 'PageInfo')
+            .map((line) => unquote(valueAt(parsed, line).split(',')[0] ?? '').toLowerCase()),
         );
 
-        const referenced: { column: string; where: string }[] = [];
+        const problems: string[] = [];
+        const checkPage = (page: string, where: string): void => {
+          if (page !== '' && !declaredPages.has(page.toLowerCase())) {
+            problems.push(`${where}: page ${page} is not declared`);
+          }
+        };
+
         for (const line of parsed.keyLines) {
           const key = keyAt(parsed, line);
+          if (key === 'Position') {
+            const page = unquote((splitComplex(valueAt(parsed, line))[0] ?? '').trim());
+            checkPage(page, `Position on line ${String(line)}`);
+          }
           if (key === 'IndexInfo') {
             const columns = unquote((splitComplex(valueAt(parsed, line))[2] ?? '').trim());
             for (const column of columns.split(',')) {
-              referenced.push({
-                column: column.trim(),
-                where: `IndexInfo on line ${String(line)}`,
-              });
+              const name = column.trim();
+              const declared = [...entities.values()].some((set) => set.has(name));
+              if (name !== '' && !declared) {
+                problems.push(`IndexInfo on line ${String(line)}: column ${name} is not declared`);
+              }
             }
           }
           if (key === 'Index') {
             // Legacy payload is `name=flag,columns`; the flag is not a column name.
             const payload = valueAt(parsed, line).split('=').at(-1) ?? '';
             for (const column of payload.split(',').slice(1)) {
-              referenced.push({ column: column.trim(), where: `Index on line ${String(line)}` });
+              const name = column.trim();
+              const declared = [...entities.values()].some((set) => set.has(name));
+              if (name !== '' && !declared) {
+                problems.push(`Index on line ${String(line)}: column ${name} is not declared`);
+              }
             }
           }
         }
 
-        const dangling = referenced.filter(
-          (entry) => entry.column !== '' && !declared.has(entry.column),
-        );
-        expect(dangling.map((entry) => `${entry.where}: ${entry.column}`)).toEqual([]);
+        // Relations: both endpoints must be declared entities, and each column list must
+        // name columns that its own endpoint declares.
+        for (const [index, header] of parsed.sectionLines.entries()) {
+          if (
+            headerName(parsed, header) !== '[Relation]' &&
+            headerName(parsed, header) !== '[Relationship]'
+          )
+            continue;
+          const next = parsed.sectionLines[index + 1] ?? parsed.lines.length + 1;
+          const inside = parsed.keyLines.filter((line) => line > header && line < next);
+          const value = (key: string): string | undefined => {
+            const line = inside.filter((candidate) => keyAt(parsed, candidate) === key)[0];
+            return line === undefined ? undefined : unquote(valueAt(parsed, line));
+          };
+          for (const [side, nameKey] of [
+            ['1', 'Entity1'],
+            ['2', 'Entity2'],
+          ] as const) {
+            const entity = value(nameKey);
+            const columns = value(`Fields${side}`);
+            const declared = entity === undefined ? undefined : entities.get(entity);
+            if (entity !== undefined && declared === undefined) {
+              problems.push(
+                `${nameKey} on line ${String(header)}: entity ${entity} is not declared`,
+              );
+              continue;
+            }
+            for (const column of (columns ?? '').split(',')) {
+              const name = column.trim();
+              if (name !== '' && declared !== undefined && !declared.has(name)) {
+                problems.push(
+                  `Fields${side} on line ${String(header)}: column ${name} is not declared`,
+                );
+              }
+            }
+          }
+        }
+
+        expect(problems).toEqual([]);
       });
 
       it('contains every construct its facts assert', () => {
@@ -264,6 +334,18 @@ describe('fixture content', () => {
         }
         if (codes.includes('D_BOM_MISSING')) {
           expect(parsed.raw.subarray(0, 3).equals(BOM)).toBe(false);
+        }
+        if (codes.includes('V_VIEW_COLUMNS_UNKNOWN')) {
+          // Architecture §9.6: every view whose columns cannot be obtained reports it once,
+          // whether they are merely not stored or named from the query. One view, one code.
+          const views = parsed.sectionLines.filter(
+            (line) => headerName(parsed, line) === '[View]',
+          ).length;
+          expect(views, `${spec.id}: views`).toBeGreaterThan(0);
+          expect(
+            codes.filter((code) => code === 'V_VIEW_COLUMNS_UNKNOWN'),
+            `${spec.id}: one info per view`,
+          ).toHaveLength(views);
         }
         if (codes.includes('S_FIELD_TOO_FEW_ELEMENTS')) {
           const tooFew = entityKeyLines(parsed, 1, 'Field').some(

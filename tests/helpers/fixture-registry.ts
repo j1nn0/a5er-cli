@@ -67,6 +67,23 @@ export interface SemanticFact {
   readonly equals: string | number | boolean | null;
 }
 
+/**
+ * One member of a fixture family: a catalog ID that stands for several files.
+ *
+ * `res-03` (three limit breaches) and `hst-06` (empty, whitespace-only, no sections) are
+ * single IDs over several documents, and each document has its own status, exit code and
+ * diagnostic multiset. Collapsing them into one family-level multiset would let a test
+ * compare a single file against a union it can never produce.
+ */
+export interface FixtureFileExpectation {
+  /** File name the builder writes for this member. */
+  readonly file: string;
+  readonly status: ExpectedStatus;
+  readonly exitCode: number;
+  /** Exact multiset of codes for this file alone, sorted ascending. */
+  readonly codes: readonly string[];
+}
+
 /** Everything a fixture test asserts, except the bytes themselves. */
 export interface FixtureExpectation {
   readonly status: ExpectedStatus;
@@ -80,6 +97,12 @@ export interface FixtureExpectation {
   readonly sourceFacts: readonly SemanticFact[];
   /** Assertions against the envelope; empty until stages 2–5 exist. */
   readonly parseFacts: readonly SemanticFact[];
+  /**
+   * Set when one catalog ID is a family of several files (`res-03`, `hst-06`). A family
+   * declares no codes of its own: `codes` must then be empty and each member in `files`
+   * carries its own status, exit code and multiset.
+   */
+  readonly files?: readonly FixtureFileExpectation[];
 }
 
 /** One catalog entry (test-strategy §4). */
@@ -116,7 +139,8 @@ export const FIXTURES: readonly FixtureSpec[] = [
     expectation: {
       status: 'ok',
       exitCode: 0,
-      codes: [],
+      // One view, no stored columns: §9.6 reports that once per view.
+      codes: ['V_VIEW_COLUMNS_UNKNOWN'],
       counts: {
         sections: { total: 5, parsed: 5, preservedRaw: 0 },
         keys: { total: 25, parsed: 25, preservedRaw: 0 },
@@ -211,11 +235,13 @@ export const FIXTURES: readonly FixtureSpec[] = [
       exitCode: 0,
       codes: ['S_HEADER_UNKNOWN_FORMAT'],
       counts: {
-        sections: { total: 1, parsed: 1, preservedRaw: 0 },
-        keys: { total: 2, parsed: 2, preservedRaw: 0 },
+        sections: { total: 2, parsed: 2, preservedRaw: 0 },
+        keys: { total: 3, parsed: 3, preservedRaw: 0 },
       },
       spans: [{ sectionIndex: 1, startLine: 4, endLine: 4, keyLine: 4 }],
       sourceFacts: [
+        // R9: the entity's Position references this page, so it must be declared.
+        { path: 'page.count', equals: 1 },
         { path: 'header.format', equals: 20 },
         { path: 'line.4.key', equals: 'PName' },
       ],
@@ -358,9 +384,8 @@ export const FIXTURES: readonly FixtureSpec[] = [
     expectation: {
       status: 'ok',
       exitCode: 0,
-      // The plain views' effective columns are unknown; §9.6 reports that as info, not as
-      // a code this row expects. §5 row 6 pins `none`, so nothing else may appear here.
-      codes: [],
+      // §9.6: neither view stores columns, so each one contributes this info code.
+      codes: ['V_VIEW_COLUMNS_UNKNOWN', 'V_VIEW_COLUMNS_UNKNOWN'],
       counts: {
         sections: { total: 7, parsed: 7, preservedRaw: 0 },
         keys: { total: 33, parsed: 33, preservedRaw: 0 },
@@ -459,11 +484,13 @@ export const FIXTURES: readonly FixtureSpec[] = [
       // Two unknown keys are two occurrences of the same code: `codes` is a multiset.
       codes: ['S_UNKNOWN_KEY', 'S_UNKNOWN_KEY', 'S_UNKNOWN_SECTION'],
       counts: {
-        sections: { total: 2, parsed: 1, preservedRaw: 1 },
-        keys: { total: 5, parsed: 2, preservedRaw: 3 },
+        sections: { total: 3, parsed: 2, preservedRaw: 1 },
+        keys: { total: 6, parsed: 3, preservedRaw: 3 },
       },
       spans: [{ sectionIndex: 1, startLine: 5, endLine: 5, keyLine: 5 }],
       sourceFacts: [
+        // R9: the entity's Position references this page, so it must be declared.
+        { path: 'page.count', equals: 1 },
         { path: 'header.format', equals: 21 },
         { path: 'text.contains', equals: 'MysteryKey="value"' },
         { path: 'text.contains', equals: 'SecondMystery="value2"' },
@@ -620,11 +647,13 @@ export const FIXTURES: readonly FixtureSpec[] = [
       exitCode: 0,
       codes: [],
       counts: {
-        sections: { total: 1, parsed: 1, preservedRaw: 0 },
-        keys: { total: 4, parsed: 4, preservedRaw: 0 },
+        sections: { total: 2, parsed: 2, preservedRaw: 0 },
+        keys: { total: 5, parsed: 5, preservedRaw: 0 },
       },
       spans: [{ sectionIndex: 1, startLine: 5, endLine: 5, keyLine: 5 }],
       sourceFacts: [
+        // R9: the entity's Position references this page, so it must be declared.
+        { path: 'page.count', equals: 1 },
         { path: 'escape.sequences', equals: '\\Q,\\\\,\\q,\\t,\\n' },
         { path: 'line.5.key', equals: 'Comment' },
       ],
@@ -644,11 +673,13 @@ export const FIXTURES: readonly FixtureSpec[] = [
       exitCode: 0,
       codes: [],
       counts: {
-        sections: { total: 1, parsed: 1, preservedRaw: 0 },
-        keys: { total: 6, parsed: 6, preservedRaw: 0 },
+        sections: { total: 2, parsed: 2, preservedRaw: 0 },
+        keys: { total: 7, parsed: 7, preservedRaw: 0 },
       },
       spans: [{ sectionIndex: 1, startLine: 7, endLine: 7, keyLine: 7 }],
       sourceFacts: [
+        // R9: the entity's Position references this page, so it must be declared.
+        { path: 'page.count', equals: 1 },
         // Single-column PK: the second Field's キー順 is empty, so the ordinals
         // present are just [0] and no duplicate ordinal can arise.
         { path: 'field.1.keyOrders', equals: '0,' },
@@ -672,11 +703,13 @@ export const FIXTURES: readonly FixtureSpec[] = [
       exitCode: 0,
       codes: [],
       counts: {
-        sections: { total: 1, parsed: 1, preservedRaw: 0 },
-        keys: { total: 3, parsed: 3, preservedRaw: 0 },
+        sections: { total: 2, parsed: 2, preservedRaw: 0 },
+        keys: { total: 4, parsed: 4, preservedRaw: 0 },
       },
       spans: [{ sectionIndex: 1, startLine: 5, endLine: 5, keyLine: 5 }],
       sourceFacts: [
+        // R9: the entity's Position references this page, so it must be declared.
+        { path: 'page.count', equals: 1 },
         { path: 'field.1.1.elements', equals: 9 },
         { path: 'line.5.key', equals: 'Field' },
       ],
@@ -720,11 +753,13 @@ export const FIXTURES: readonly FixtureSpec[] = [
       exitCode: 0,
       codes: ['S_FIELD_TOO_FEW_ELEMENTS', 'V_MISSING_REQUIRED_KEY'],
       counts: {
-        sections: { total: 1, parsed: 1, preservedRaw: 0 },
-        keys: { total: 3, parsed: 3, preservedRaw: 0 },
+        sections: { total: 2, parsed: 2, preservedRaw: 0 },
+        keys: { total: 4, parsed: 4, preservedRaw: 0 },
       },
       spans: [{ sectionIndex: 1, startLine: 5, endLine: 5, keyLine: 5 }],
       sourceFacts: [
+        // R9: the entity's Position references this page, so it must be declared.
+        { path: 'page.count', equals: 1 },
         { path: 'field.1.1.elements', equals: 7 },
         { path: 'line.5.key', equals: 'Field' },
       ],
@@ -743,11 +778,13 @@ export const FIXTURES: readonly FixtureSpec[] = [
       exitCode: 0,
       codes: [],
       counts: {
-        sections: { total: 1, parsed: 1, preservedRaw: 0 },
-        keys: { total: 5, parsed: 5, preservedRaw: 0 },
+        sections: { total: 2, parsed: 2, preservedRaw: 0 },
+        keys: { total: 6, parsed: 6, preservedRaw: 0 },
       },
       spans: [{ sectionIndex: 1, startLine: 6, endLine: 6, keyLine: 6 }],
       sourceFacts: [
+        // R9: the entity's Position references this page, so it must be declared.
+        { path: 'page.count', equals: 1 },
         { path: 'field.1.keyOrders', equals: '0,1,2' },
         { path: 'line.6.key', equals: 'Field' },
       ],
@@ -798,7 +835,8 @@ export const FIXTURES: readonly FixtureSpec[] = [
     expectation: {
       status: 'degraded',
       exitCode: 0,
-      codes: ['S_MALFORMED_LINE'],
+      // The broken Query line does not stop the view from reporting unknown columns.
+      codes: ['S_MALFORMED_LINE', 'V_VIEW_COLUMNS_UNKNOWN'],
       counts: {
         sections: { total: 2, parsed: 2, preservedRaw: 0 },
         keys: { total: 4, parsed: 4, preservedRaw: 0 },
@@ -1055,7 +1093,9 @@ export const FIXTURES: readonly FixtureSpec[] = [
     expectation: {
       status: 'ok',
       exitCode: 0,
-      codes: ['V_VIEW_COLUMNS_UNKNOWN'],
+      // One per view, whatever the reason: LNameByComment=1 names them from the query,
+      // the plain view stores none. Both cannot be obtained from the file.
+      codes: ['V_VIEW_COLUMNS_UNKNOWN', 'V_VIEW_COLUMNS_UNKNOWN'],
       counts: {
         sections: { total: 3, parsed: 3, preservedRaw: 0 },
         keys: { total: 8, parsed: 8, preservedRaw: 0 },
@@ -1119,7 +1159,8 @@ export const FIXTURES: readonly FixtureSpec[] = [
     expectation: {
       status: 'degraded',
       exitCode: 0,
-      codes: ['V_DUPLICATE_OBJECT_NAME'],
+      // The view also cannot supply its columns (§9.6), so it adds its own info code.
+      codes: ['V_DUPLICATE_OBJECT_NAME', 'V_VIEW_COLUMNS_UNKNOWN'],
       counts: {
         sections: { total: 3, parsed: 3, preservedRaw: 0 },
         keys: { total: 7, parsed: 7, preservedRaw: 0 },
@@ -1282,6 +1323,8 @@ export const FIXTURES: readonly FixtureSpec[] = [
       },
       spans: [{ sectionIndex: 2, startLine: 8, endLine: 8, keyLine: 8 }],
       sourceFacts: [
+        // Every Position in this document names a page the file declares.
+        { path: 'page.count', equals: 1 },
         { path: 'generated.fileCount', equals: 1 },
         { path: 'header.format', equals: 21 },
         { path: 'encoding.bom', equals: true },
@@ -1367,8 +1410,8 @@ export const FIXTURES: readonly FixtureSpec[] = [
     expectation: {
       status: 'failed',
       exitCode: 1,
-      // One code per outcome; the family is three files, so §5 row 16 lists both codes.
-      codes: ['E_EMPTY_INPUT', 'E_UNRECOGNIZED_DOCUMENT'],
+      // A family declares no codes of its own: each member names its own outcome.
+      codes: [],
       counts: {
         sections: { total: 0, parsed: 0, preservedRaw: 0 },
         keys: { total: 0, parsed: 0, preservedRaw: 0 },
@@ -1380,6 +1423,18 @@ export const FIXTURES: readonly FixtureSpec[] = [
         { path: 'bytes.length', equals: 0 },
       ],
       parseFacts: [],
+      files: [
+        { file: 'hst-06-empty.a5er', status: 'failed', exitCode: 1, codes: ['E_EMPTY_INPUT'] },
+        // Whitespace-only has no content once trimmed, so it is empty rather than merely
+        // unrecognised: only a file with content and no section header is unrecognised.
+        { file: 'hst-06-whitespace.a5er', status: 'failed', exitCode: 1, codes: ['E_EMPTY_INPUT'] },
+        {
+          file: 'hst-06-no-sections.a5er',
+          status: 'failed',
+          exitCode: 1,
+          codes: ['E_UNRECOGNIZED_DOCUMENT'],
+        },
+      ],
     },
   },
   {
@@ -1387,13 +1442,15 @@ export const FIXTURES: readonly FixtureSpec[] = [
     file: 'res-01-capped-read.a5er',
     fixtureClass: 'generated',
     purpose:
-      'A well-formed document larger than a bounded read cap: the read stops short before any schema exists.',
-    specRefs: ['§14 row 11', 'E_TRUNCATED_INPUT', '§10.2'],
+      'A well-formed document larger than the read cap: the reader stops at maxBytes, so the limit fired.',
+    specRefs: ['§14 row 11', 'E_LIMIT_BYTES', '§10.2'],
     stage: 2,
     expectation: {
       status: 'failed',
       exitCode: 1,
-      codes: ['E_TRUNCATED_INPUT'],
+      // The cap is the cause: the file is larger than maxBytes, so the limit diagnostic fires.
+      // A short read reported by the IO seam is res-02's E_TRUNCATED_INPUT, not this file's.
+      codes: ['E_LIMIT_BYTES'],
       // Fatal: no schema, so no section or key is ever counted.
       counts: {
         sections: { total: 0, parsed: 0, preservedRaw: 0 },
@@ -1401,6 +1458,8 @@ export const FIXTURES: readonly FixtureSpec[] = [
       },
       spans: [],
       sourceFacts: [
+        // Every Position in this document names a page the file declares.
+        { path: 'page.count', equals: 1 },
         { path: 'generated.fileCount', equals: 1 },
         { path: 'header.format', equals: 21 },
         { path: 'encoding.bom', equals: true },
@@ -1442,18 +1501,26 @@ export const FIXTURES: readonly FixtureSpec[] = [
     expectation: {
       status: 'failed',
       exitCode: 1,
-      // One code per file; a single file breaching several limits could not say which fired.
-      codes: ['E_LIMIT_BYTES', 'E_LIMIT_LINES', 'E_LIMIT_LINE_LENGTH'],
+      // A family declares no codes of its own: each member names the limit it breaches.
+      codes: [],
       counts: {
         sections: { total: 0, parsed: 0, preservedRaw: 0 },
         keys: { total: 0, parsed: 0, preservedRaw: 0 },
       },
       spans: [],
-      sourceFacts: [
-        // The family is three documents; the per-file breach is asserted by the builder test.
-        { path: 'generated.fileCount', equals: 3 },
-      ],
+      sourceFacts: [{ path: 'generated.fileCount', equals: 3 }],
       parseFacts: [],
+      // One member, one code: a single file breaching several limits could not say which fired.
+      files: [
+        { file: 'res-03-max-bytes.a5er', status: 'failed', exitCode: 1, codes: ['E_LIMIT_BYTES'] },
+        { file: 'res-03-max-lines.a5er', status: 'failed', exitCode: 1, codes: ['E_LIMIT_LINES'] },
+        {
+          file: 'res-03-max-line-length.a5er',
+          status: 'failed',
+          exitCode: 1,
+          codes: ['E_LIMIT_LINE_LENGTH'],
+        },
+      ],
     },
   },
   {
@@ -1522,6 +1589,46 @@ function duplicateIds(specs: readonly FixtureSpec[]): string[] {
     seen.add(spec.id);
   }
   return duplicates;
+}
+
+/**
+ * Problems specific to a family entry (`res-03`, `hst-06`): per-member validity plus the rule
+ * that a family owns no codes of its own and summarises its members.
+ */
+function familyProblems(spec: FixtureSpec): string[] {
+  const problems: string[] = [];
+  const { files, codes, status } = spec.expectation;
+
+  if (files === undefined) return problems;
+
+  if (files.length < 2) problems.push(`${spec.id}: a family needs at least two files`);
+  if (codes.length > 0) {
+    problems.push(`${spec.id}: a family must declare no codes of its own, only per file`);
+  }
+  if (status !== 'failed' && files.some((file) => file.status === 'failed')) {
+    problems.push(`${spec.id}: a family with a failed member must be failed`);
+  }
+  if (new Set(files.map((file) => file.file)).size !== files.length) {
+    problems.push(`${spec.id}: family file names must be unique`);
+  }
+
+  for (const file of files) {
+    const label = `${spec.id}/${file.file}`;
+    if (!file.file.startsWith(`${spec.id}-`))
+      problems.push(`${label}: file must start with the id`);
+    const sorted = [...file.codes].sort();
+    if (file.codes.some((code, index) => code !== sorted[index])) {
+      problems.push(`${label}: codes must be sorted`);
+    }
+    if (file.status === 'failed' && file.exitCode !== 1) {
+      problems.push(`${label}: failed implies exit 1`);
+    }
+    if (file.status !== 'failed' && file.exitCode !== 0 && file.exitCode !== 3) {
+      problems.push(`${label}: non-failed exit must be 0 (inspect) or 3 (validate)`);
+    }
+  }
+
+  return problems;
 }
 
 /**
@@ -1610,6 +1717,8 @@ export function validateRegistry(specs: readonly FixtureSpec[]): string[] {
         problems.push(`${spec.id}: fact path ${fact.path} is both a source and a parse fact`);
       }
     }
+
+    problems.push(...familyProblems(spec));
   }
 
   return problems;

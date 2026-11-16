@@ -196,21 +196,46 @@ describe('catalog — G-3 diagnostic coverage', () => {
     const nonFatal = readTaxonomy()
       .filter((row) => row.severity !== 'fatal')
       .flatMap((row) => row.codes);
-    const covered = new Set(FIXTURES.flatMap((spec) => spec.expectation.codes));
+    const covered = new Set(
+      FIXTURES.flatMap((spec) => [
+        ...spec.expectation.codes,
+        ...(spec.expectation.files ?? []).flatMap((file) => file.codes),
+      ]),
+    );
     const missing = [...new Set(nonFatal)].filter((code) => !covered.has(code)).sort();
     expect(missing, 'non-fatal codes with no fixture').toEqual([]);
   });
 
-  it('expects one limit code per res-03 file, as a multiset', () => {
-    const spec = FIXTURES.find((candidate) => candidate.id === 'res-03');
-    if (spec === undefined) throw new Error('res-03 is not registered');
-    const files = GENERATED_BUILDERS['res-03']?.() ?? [];
-    expect(files).toHaveLength(3);
-    assertCodes(
-      spec.expectation.codes,
-      ['E_LIMIT_BYTES', 'E_LIMIT_LINES', 'E_LIMIT_LINE_LENGTH'],
-      'res-03',
-    );
+  it('states a family expectation per file, not as one union', () => {
+    // R7: res-03 and hst-06 are one catalog ID over several documents. Each document gets
+    // its own status, exit code and multiset, and the family itself declares no codes —
+    // a union here would be a shape no single file can produce.
+    for (const id of ['res-03', 'hst-06']) {
+      const spec = FIXTURES.find((candidate) => candidate.id === id);
+      if (spec === undefined) throw new Error(`${id} is not registered`);
+      const members = spec.expectation.files;
+      if (members === undefined) throw new Error(`${id} declares no per-file expectation`);
+
+      assertCodes(spec.expectation.codes, [], id);
+      const built = GENERATED_BUILDERS[id]?.() ?? [];
+      expect(members.map((member) => member.file).sort()).toEqual(
+        built.map((file) => file.name).sort(),
+      );
+      for (const member of members) {
+        expect(member.codes.length, `${id}/${member.file}`).toBeGreaterThan(0);
+      }
+    }
+
+    // One limit code per file, matched by name: the mapping is the expectation.
+    const res03 = FIXTURES.find((candidate) => candidate.id === 'res-03');
+    const expected = new Map([
+      ['res-03-max-bytes.a5er', ['E_LIMIT_BYTES']],
+      ['res-03-max-lines.a5er', ['E_LIMIT_LINES']],
+      ['res-03-max-line-length.a5er', ['E_LIMIT_LINE_LENGTH']],
+    ]);
+    for (const member of res03?.expectation.files ?? []) {
+      assertCodes(member.codes, expected.get(member.file) ?? [], `res-03/${member.file}`);
+    }
   });
 
   it('fails assertCodes when one occurrence is missing or extra', () => {

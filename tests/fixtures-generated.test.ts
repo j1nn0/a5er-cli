@@ -28,7 +28,7 @@ import {
   MAX_LINE_LENGTH,
   MAX_LINES,
   SINGLE_LINE_BYTES,
-  TRUNCATED_READ_CAP_BYTES,
+  CAPPED_READ_LIMIT_BYTES,
   buildFuzzMutants,
 } from './helpers/generated.js';
 import { stage } from './helpers/stage.js';
@@ -140,18 +140,22 @@ describe('hst-03 — one long line', () => {
   });
 });
 
-describe('res-01 — a capped read', () => {
-  it('is larger than the cap, so a capped read must come back short', () => {
+describe('res-01 — a read stopped by the limit', () => {
+  it('is larger than maxBytes, so the limit fires rather than a short read', () => {
     const files = GENERATED_BUILDERS['res-01']?.() ?? [];
     const first = files[0];
     if (first === undefined) throw new Error('res-01 built no file');
-    expect(first.bytes.byteLength).toBeGreaterThan(TRUNCATED_READ_CAP_BYTES);
+    // `E_LIMIT_BYTES` is real only if the file is bigger than the limit the reader applies.
+    expect(first.bytes.byteLength).toBeGreaterThan(CAPPED_READ_LIMIT_BYTES);
 
-    // The observable that makes the expectation `E_TRUNCATED_INPUT` real: a reader that
-    // stops at the cap sees fewer bytes than the file has.
-    const capped = first.bytes.subarray(0, TRUNCATED_READ_CAP_BYTES);
-    expect(capped.byteLength).toBe(TRUNCATED_READ_CAP_BYTES);
+    const capped = first.bytes.subarray(0, CAPPED_READ_LIMIT_BYTES);
+    expect(capped.byteLength).toBe(CAPPED_READ_LIMIT_BYTES);
     expect(capped.byteLength).toBeLessThan(first.bytes.byteLength);
+
+    // The fixture has no seam, so it can never be the short-read case: that is res-02,
+    // whose expectation is `E_TRUNCATED_INPUT` and whose bytes do not exist.
+    expect(specFor('res-01').expectation.codes).toEqual(['E_LIMIT_BYTES']);
+    expect(specFor('res-02').expectation.codes).toEqual(['E_TRUNCATED_INPUT']);
   });
 });
 

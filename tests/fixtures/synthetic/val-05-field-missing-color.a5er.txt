@@ -4,3 +4,6 @@
 PName="no_color"
 Field="論理名","phys_name","varchar(10)","NOT NULL",0,"","コメント"
 Position="Main",10,10
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"

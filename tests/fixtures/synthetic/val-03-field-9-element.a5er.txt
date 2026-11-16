@@ -4,3 +4,6 @@
 PName="legacy_shape"
 Field="ユーザーID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,""
 Position="Main",10,10
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"

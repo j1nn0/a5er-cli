@@ -3,3 +3,6 @@
 [Entity]
 PName="hole"
 Position="Main",10,10
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"

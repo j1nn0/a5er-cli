@@ -15,12 +15,14 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join, win32 } from 'node:path';
+import { basename, join, resolve, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { FIXTURES, codesMatch, validateRegistry } from './helpers/fixture-registry.js';
@@ -61,6 +63,24 @@ function gitLines(args: readonly string[]): string[] {
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
+}
+
+/** Run one staging attempt and return the error message it threw. */
+function stagingRejection(root: string): string {
+  try {
+    stage('fmt-01', { root });
+  } catch (error: unknown) {
+    if (error instanceof Error) return error.message;
+    throw error;
+  }
+  throw new Error(`staging with root ${root} did not throw`);
+}
+
+/** Sorted recursive listing of a directory, for before/after comparisons. */
+function listing(directory: string): string[] {
+  return readdirSync(directory, { recursive: true })
+    .map((entry) => String(entry))
+    .sort();
 }
 
 /** A buffer that exercises every byte hazard staging must survive. */
@@ -130,6 +150,19 @@ describe('fixture registry', () => {
     }
   });
 
+  it('rejects a family entry that repeats a union as its own codes', () => {
+    // R7: a family owns no codes; each member carries its own. Collapsing them back into
+    // one multiset is the shape the per-file expectation exists to prevent.
+    const base = FIXTURES.find((spec) => spec.id === 'res-03');
+    if (base === undefined) throw new Error('res-03 is not registered');
+    if (base.expectation.files === undefined) throw new Error('res-03 is not a family');
+
+    const problems = validateRegistry([
+      { ...base, expectation: { ...base.expectation, codes: ['E_LIMIT_BYTES'] } },
+    ]);
+
+    expect(problems).toContain('res-03: a family must declare no codes of its own, only per file');
+  });
   it('rejects a spec that declares the same path as a source and a parse fact', () => {
     const base = FIXTURES.find((spec) => spec.id === 'fmt-01');
     if (base === undefined) throw new Error('fmt-01 is not registered');
@@ -212,6 +245,48 @@ describe('fixture staging', () => {
       /unsafe fixture id/,
     );
   });
+
+  it('refuses a staging root inside the fixtures tree before creating anything', () => {
+    // R10: the root is validated before `mkdtempSync`. Two observables prove it: the tree is
+    // byte-listing identical afterwards, and the error names the *root* that was refused
+    // rather than a copy under a staging directory that would have existed by then.
+    const before = listing(FIXTURES_ROOT);
+    for (const root of [SYNTHETIC_DIR, FIXTURES_ROOT, join(FIXTURES_ROOT, 'generated')]) {
+      expect(stagingRejection(root)).toBe(
+        `refusing to stage inside the fixtures tree: ${resolve(root)}`,
+      );
+    }
+    expect(listing(FIXTURES_ROOT)).toEqual(before);
+
+    // A root outside the tree still stages normally, so the guard is not simply a refusal.
+    const staged = stage('fmt-01');
+    try {
+      expect(isInsideFixtures(staged.path)).toBe(false);
+    } finally {
+      staged.cleanup();
+    }
+  });
+
+  // A directory symlink needs a privilege Windows test runners do not have by default; the
+  // lexical half of the same guard runs on every platform above.
+  it.skipIf(process.platform === 'win32')(
+    'refuses a staging root that is a symlink into the fixtures tree',
+    () => {
+      const outside = mkdtempSync(join(tmpdir(), 'a5er-symlink-'));
+      try {
+        const link = join(outside, 'fixtures-link');
+        symlinkSync(SYNTHETIC_DIR, link, 'dir');
+        const before = listing(FIXTURES_ROOT);
+        // The lexical path is outside the tree; only `realpath` reveals the target.
+        expect(stagingRejection(link)).toBe(
+          `refusing to stage inside the fixtures tree: ${realpathSync(SYNTHETIC_DIR)}`,
+        );
+        expect(listing(FIXTURES_ROOT)).toEqual(before);
+      } finally {
+        rmSync(outside, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('preserves bytes exactly, including BOM, CRLF, Japanese text and invalid UTF-8', () => {
     const dir = mkdtempSync(join(tmpdir(), 'a5er-src-'));
