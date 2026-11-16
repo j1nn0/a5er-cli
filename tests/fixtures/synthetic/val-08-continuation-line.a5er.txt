@@ -1,0 +1,10 @@
+﻿# A5:ER FORMAT:21
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"
+
+[View]
+PName="split_query"
+Query="SELECT id
+FROM users WHERE id > 0"
+Position="Main",10,10

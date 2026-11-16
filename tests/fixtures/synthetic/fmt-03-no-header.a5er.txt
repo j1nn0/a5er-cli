@@ -1,0 +1,13 @@
+﻿# A5:ER ENCODING:UTF8
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"
+
+[Entity]
+PName="no_header"
+Field="ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,"",""
+IndexInfo="no_header_ix1",1,"id", ""
+Page="1"
+Left="10"
+Top="10"
+Position="Main",10,10

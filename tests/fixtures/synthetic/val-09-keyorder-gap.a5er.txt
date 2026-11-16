@@ -1,0 +1,10 @@
+﻿# A5:ER FORMAT:21
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"
+
+[Entity]
+PName="gap_pk"
+Field="第一","first_col","Integer","NOT NULL",0,"","",$FFFFFFFF,"",""
+Field="第三","third_col","Integer","NOT NULL",2,"","",$FFFFFFFF,"",""
+Position="Main",10,10

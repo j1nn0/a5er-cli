@@ -1,0 +1,37 @@
+﻿# A5:ER FORMAT:21
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"
+
+[Entity]
+PName="parent_t"
+Field="親ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,"",""
+Position="Main",100,100
+
+[Entity]
+PName="child_t"
+Field="子ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,"",""
+Field="親ID","parent_id","Integer","NOT NULL",1,"","",$FFFFFFFF,"",""
+Position="Main",300,100
+
+[Relation]
+Entity1="parent_t"
+Entity2="child_t"
+Fields1="id"
+Fields2="parent_id"
+RelationType1=2
+RelationType2=4
+Cardinarity1="P"
+Cardinarity2="Z"
+Position="Main",0,400,400,400,R,R,""
+
+[Relationship]
+Entity1="parent_t"
+Entity2="child_t"
+Fields1="id"
+Fields2="parent_id"
+RelationType1=2
+RelationType2=4
+Cardinarity1="P"
+Cardinarity2="Z"
+Position="Main",0,600,600,600,R,R,""

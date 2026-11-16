@@ -1,0 +1,13 @@
+﻿# A5:ER FORMAT:21
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"
+
+[Entity]
+PName="colours"
+Color="$FFFFFFFF"
+BkColor="$80FF0000"
+Field="既定色","default_color","varchar(10)","",0,"","",$FFFFFFFF,"",""
+Field="六桁","six_digit","varchar(10)","",,"","",$0000FF,"",""
+Field="曖昧","ambiguous_length","varchar(10)","",,"","",$1234567,"",""
+Position="Main",10,10

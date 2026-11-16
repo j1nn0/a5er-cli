@@ -1,0 +1,11 @@
+﻿# A5:ER FORMAT:21
+
+[Manager]
+ProjectName="first_project"
+PageInfo="Main",3,"A4Landscape","$FFFFFF"
+ProjectName="second_project"
+
+[Entity]
+PName="dup_scalar"
+Field="ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,"",""
+Position="Main",10,10

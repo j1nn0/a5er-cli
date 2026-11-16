@@ -160,6 +160,38 @@ export const FIXTURES: readonly FixtureSpec[] = [
     },
   },
   {
+    id: 'fmt-03',
+    file: 'fmt-03-no-header.a5er.txt',
+    fixtureClass: 'synthetic',
+    purpose:
+      'No FORMAT line at all: the version is unknown, so canonical and legacy decoders stay active.',
+    specRefs: ['P1', 'U1', 'D2'],
+    stage: 3,
+    expectation: {
+      status: 'degraded',
+      exitCode: 0,
+      codes: ['S_HEADER_UNKNOWN_FORMAT'],
+      counts: {
+        sections: { total: 2, parsed: 2, preservedRaw: 0 },
+        keys: { total: 8, parsed: 8, preservedRaw: 0 },
+      },
+      spans: [
+        // Canonical decoder active with no FORMAT evidence.
+        { sectionIndex: 2, startLine: 9, endLine: 9, keyLine: 9 },
+        // Legacy geometry keys decoded under the same profile (F1).
+        { sectionIndex: 2, startLine: 10, endLine: 10, keyLine: 10 },
+      ],
+      sourceFacts: [
+        { path: 'header.absent', equals: true },
+        { path: 'encoding.bom', equals: true },
+        { path: 'encoding.declared', equals: 'UTF8' },
+        { path: 'line.9.key', equals: 'IndexInfo' },
+        { path: 'line.10.key', equals: 'Page' },
+      ],
+      parseFacts: [],
+    },
+  },
+  {
     id: 'fmt-04',
     file: 'fmt-04-format20.a5er.txt',
     fixtureClass: 'synthetic',
@@ -178,6 +210,35 @@ export const FIXTURES: readonly FixtureSpec[] = [
       sourceFacts: [
         { path: 'header.format', equals: 20 },
         { path: 'line.4.key', equals: 'PName' },
+      ],
+      parseFacts: [],
+    },
+  },
+  {
+    id: 'fmt-05',
+    file: 'fmt-05-format99.a5er.txt',
+    fixtureClass: 'synthetic',
+    purpose: 'FORMAT:99, above every documented version: the absent-FORMAT policy applies.',
+    specRefs: ['P1', 'U1'],
+    stage: 3,
+    expectation: {
+      status: 'degraded',
+      exitCode: 0,
+      codes: ['S_HEADER_UNKNOWN_FORMAT'],
+      counts: {
+        sections: { total: 2, parsed: 2, preservedRaw: 0 },
+        keys: { total: 8, parsed: 8, preservedRaw: 0 },
+      },
+      spans: [
+        // Canonical keys are still decoded under an unknown FORMAT.
+        { sectionIndex: 2, startLine: 10, endLine: 10, keyLine: 10 },
+      ],
+      sourceFacts: [
+        { path: 'header.format', equals: 99 },
+        { path: 'encoding.bom', equals: true },
+        { path: 'line.10.key', equals: 'IndexInfo' },
+        // Legacy geometry keys are decoded under the same profile (F1).
+        { path: 'line.11.key', equals: 'Page' },
       ],
       parseFacts: [],
     },
@@ -278,6 +339,104 @@ export const FIXTURES: readonly FixtureSpec[] = [
       parseFacts: [],
     },
   },
+  {
+    id: 'txt-01',
+    file: 'txt-01-multi-table-view.a5er.txt',
+    fixtureClass: 'synthetic',
+    purpose:
+      'Three entities (one with zero Field), two views, two pages and one relation across two pages.',
+    specRefs: ['§14 row 6', 'P6', 'P9', 'P11'],
+    stage: 3,
+    expectation: {
+      status: 'ok',
+      exitCode: 0,
+      // The plain views' effective columns are unknown; §9.6 reports that as info, not as
+      // a code this row expects. §5 row 6 pins `none`, so nothing else may appear here.
+      codes: [],
+      counts: {
+        sections: { total: 7, parsed: 7, preservedRaw: 0 },
+        keys: { total: 33, parsed: 33, preservedRaw: 0 },
+      },
+      spans: [
+        // The zero-Field entity is legal: it still has its position.
+        { sectionIndex: 4, startLine: 28, endLine: 28, keyLine: 28 },
+        { sectionIndex: 5, startLine: 32, endLine: 32, keyLine: 32 },
+        { sectionIndex: 7, startLine: 41, endLine: 41, keyLine: 41 },
+      ],
+      sourceFacts: [
+        { path: 'entity.count', equals: 3 },
+        { path: 'view.count', equals: 2 },
+        { path: 'page.count', equals: 2 },
+        { path: 'relation.count', equals: 1 },
+        // P6: PName is unique per diagram, across entities and views.
+        { path: 'pname.unique', equals: true },
+        // Zero fields on the third entity is legal, not missing data.
+        { path: 'field.3.count', equals: 0 },
+        { path: 'text.contains', equals: 'PName="audit_log"' },
+        {
+          path: 'text.contains',
+          equals: 'Query="SELECT user_id, COUNT(*) FROM orders GROUP BY user_id"',
+        },
+      ],
+      parseFacts: [],
+    },
+  },
+  {
+    id: 'txt-02',
+    file: 'txt-02-relationship-alias.a5er.txt',
+    fixtureClass: 'synthetic',
+    purpose:
+      '[Relationship] is one section for [Relation], so two sections mean two relations, not four.',
+    specRefs: ['P3', 'P9', 'F4'],
+    stage: 3,
+    expectation: {
+      status: 'ok',
+      exitCode: 0,
+      codes: [],
+      counts: {
+        sections: { total: 5, parsed: 5, preservedRaw: 0 },
+        keys: { total: 26, parsed: 26, preservedRaw: 0 },
+      },
+      spans: [
+        { sectionIndex: 4, startLine: 18, endLine: 18, keyLine: 18 },
+        // The alias spelling survives in header.raw.
+        { sectionIndex: 5, startLine: 28, endLine: 28, keyLine: 28 },
+      ],
+      sourceFacts: [
+        { path: 'relation.count', equals: 2 },
+        { path: 'section.5.header', equals: '[Relationship]' },
+        { path: 'line.18.key', equals: 'Entity1' },
+        { path: 'text.contains', equals: 'Fields2="parent_id"' },
+      ],
+      parseFacts: [],
+    },
+  },
+  {
+    id: 'txt-03',
+    file: 'txt-03-relation-composite.a5er.txt',
+    fixtureClass: 'synthetic',
+    purpose: 'Composite foreign key: Fields1 and Fields2 each carry two columns in one value.',
+    specRefs: ['§14 row 8', 'P9'],
+    stage: 3,
+    expectation: {
+      status: 'ok',
+      exitCode: 0,
+      codes: [],
+      counts: {
+        sections: { total: 4, parsed: 4, preservedRaw: 0 },
+        keys: { total: 18, parsed: 18, preservedRaw: 0 },
+      },
+      spans: [{ sectionIndex: 4, startLine: 21, endLine: 21, keyLine: 21 }],
+      sourceFacts: [
+        { path: 'entity.count', equals: 2 },
+        { path: 'relation.count', equals: 1 },
+        { path: 'text.contains', equals: 'Fields1="a,b"' },
+        { path: 'text.contains', equals: 'Fields2="x,y"' },
+        { path: 'line.21.key', equals: 'Fields1' },
+      ],
+      parseFacts: [],
+    },
+  },
   // ── structure ──────────────────────────────────────────────────────────
   {
     id: 'txt-04',
@@ -303,6 +462,139 @@ export const FIXTURES: readonly FixtureSpec[] = [
         { path: 'text.contains', equals: '[Memo]' },
         { path: 'line.5.key', equals: 'MysteryKey' },
         { path: 'line.6.key', equals: 'SecondMystery' },
+      ],
+      parseFacts: [],
+    },
+  },
+  {
+    id: 'txt-05',
+    file: 'txt-05-duplicate-scalar.a5er.txt',
+    fixtureClass: 'synthetic',
+    purpose:
+      'ProjectName appears twice with different values: last occurrence wins, both spans are kept.',
+    specRefs: ['§14 row 10', 'U6', 'P4'],
+    stage: 3,
+    expectation: {
+      status: 'degraded',
+      exitCode: 0,
+      codes: ['S_DUPLICATE_KEY'],
+      counts: {
+        sections: { total: 2, parsed: 2, preservedRaw: 0 },
+        keys: { total: 6, parsed: 6, preservedRaw: 0 },
+      },
+      spans: [
+        { sectionIndex: 1, startLine: 4, endLine: 4, keyLine: 4 },
+        { sectionIndex: 1, startLine: 6, endLine: 6, keyLine: 6 },
+      ],
+      sourceFacts: [
+        { path: 'text.contains', equals: 'ProjectName="first_project"' },
+        { path: 'text.contains', equals: 'ProjectName="second_project"' },
+        { path: 'line.4.key', equals: 'ProjectName' },
+        { path: 'line.6.key', equals: 'ProjectName' },
+      ],
+      parseFacts: [],
+    },
+  },
+  {
+    id: 'txt-06',
+    file: 'txt-06-duplicate-manager.a5er.txt',
+    fixtureClass: 'synthetic',
+    purpose:
+      'Two [Manager] sections: both stay in the AST, both spans are reported, scalars resolve last-wins.',
+    specRefs: ['P3', 'U5'],
+    stage: 3,
+    expectation: {
+      status: 'degraded',
+      exitCode: 0,
+      codes: ['S_DUPLICATE_KEY'],
+      counts: {
+        sections: { total: 3, parsed: 3, preservedRaw: 0 },
+        keys: { total: 7, parsed: 7, preservedRaw: 0 },
+      },
+      spans: [
+        { sectionIndex: 1, startLine: 3, endLine: 3, keyLine: 3 },
+        { sectionIndex: 3, startLine: 12, endLine: 12, keyLine: 12 },
+      ],
+      sourceFacts: [
+        { path: 'section.1.header', equals: '[Manager]' },
+        { path: 'section.3.header', equals: '[Manager]' },
+        { path: 'text.contains', equals: 'ProjectName="first_manager"' },
+        { path: 'text.contains', equals: 'ProjectName="second_manager"' },
+      ],
+      parseFacts: [],
+    },
+  },
+  {
+    id: 'txt-07',
+    file: 'txt-07-lowercase-section.a5er.txt',
+    fixtureClass: 'synthetic',
+    purpose:
+      '[entity] in lower case is an unknown section, preserved raw and never parsed as [Entity].',
+    specRefs: ['P3', 'F6'],
+    stage: 3,
+    expectation: {
+      status: 'ok',
+      exitCode: 0,
+      codes: ['S_UNKNOWN_SECTION'],
+      counts: {
+        sections: { total: 3, parsed: 2, preservedRaw: 1 },
+        keys: { total: 7, parsed: 4, preservedRaw: 3 },
+      },
+      spans: [{ sectionIndex: 3, startLine: 11, endLine: 11, keyLine: 11 }],
+      sourceFacts: [
+        { path: 'section.3.header', equals: '[entity]' },
+        // One [Entity] section: the lower-case header was not folded into it.
+        { path: 'entity.count', equals: 1 },
+        { path: 'text.contains', equals: 'PName="lowercase_stays_unknown"' },
+      ],
+      parseFacts: [],
+    },
+  },
+  {
+    id: 'txt-08',
+    file: 'txt-08-header-whitespace.a5er.txt',
+    fixtureClass: 'synthetic',
+    purpose:
+      'Whitespace around a section header is trimmed for recognition and kept in header.raw.',
+    specRefs: ['P3'],
+    stage: 3,
+    expectation: {
+      status: 'ok',
+      exitCode: 0,
+      codes: [],
+      counts: {
+        sections: { total: 2, parsed: 2, preservedRaw: 0 },
+        keys: { total: 4, parsed: 4, preservedRaw: 0 },
+      },
+      spans: [{ sectionIndex: 2, startLine: 6, endLine: 6, keyLine: 6 }],
+      sourceFacts: [
+        { path: 'section.2.header', equals: '  [Entity] ' },
+        { path: 'entity.count', equals: 1 },
+        { path: 'line.7.key', equals: 'PName' },
+      ],
+      parseFacts: [],
+    },
+  },
+  {
+    id: 'txt-09',
+    file: 'txt-09-empty-section.a5er.txt',
+    fixtureClass: 'synthetic',
+    purpose:
+      'A known section with zero entries stays in the AST and is missing required keys, not dropped.',
+    specRefs: ['P3', 'P9'],
+    stage: 3,
+    expectation: {
+      status: 'degraded',
+      exitCode: 0,
+      codes: ['V_MISSING_REQUIRED_KEY'],
+      counts: {
+        sections: { total: 3, parsed: 3, preservedRaw: 0 },
+        keys: { total: 4, parsed: 4, preservedRaw: 0 },
+      },
+      spans: [{ sectionIndex: 3, startLine: 11, endLine: 11, keyLine: 11 }],
+      sourceFacts: [
+        { path: 'section.3.header', equals: '[Relation]' },
+        { path: 'text.contains', equals: '[Relation]' },
       ],
       parseFacts: [],
     },
@@ -384,6 +676,31 @@ export const FIXTURES: readonly FixtureSpec[] = [
     },
   },
   {
+    id: 'val-04',
+    file: 'val-04-field-11-element.a5er.txt',
+    fixtureClass: 'synthetic',
+    purpose:
+      'Field row with 11 elements: the tail beyond 追加オプション is kept raw, the row is kept.',
+    specRefs: ['P7', 'F4'],
+    stage: 3,
+    expectation: {
+      status: 'degraded',
+      exitCode: 0,
+      codes: ['S_FIELD_TOO_MANY_ELEMENTS'],
+      counts: {
+        sections: { total: 2, parsed: 2, preservedRaw: 0 },
+        keys: { total: 4, parsed: 4, preservedRaw: 0 },
+      },
+      spans: [{ sectionIndex: 2, startLine: 8, endLine: 8, keyLine: 8 }],
+      sourceFacts: [
+        { path: 'field.1.1.elements', equals: 11 },
+        { path: 'line.8.key', equals: 'Field' },
+        { path: 'text.contains', equals: '"オプション","追加事項"' },
+      ],
+      parseFacts: [],
+    },
+  },
+  {
     id: 'val-05',
     file: 'val-05-field-missing-color.a5er.txt',
     fixtureClass: 'synthetic',
@@ -425,6 +742,95 @@ export const FIXTURES: readonly FixtureSpec[] = [
       sourceFacts: [
         { path: 'field.1.keyOrders', equals: '0,1,2' },
         { path: 'line.6.key', equals: 'Field' },
+      ],
+      parseFacts: [],
+    },
+  },
+  {
+    id: 'val-07',
+    file: 'val-07-color-tokens.a5er.txt',
+    fixtureClass: 'synthetic',
+    purpose:
+      'Colour tokens: $FFFFFFFF default, 8-hex $AABBGGRR, 6-hex $BBGGRR and a length that fits neither.',
+    specRefs: ['P5', 'F8', 'K10'],
+    stage: 4,
+    expectation: {
+      status: 'ok',
+      exitCode: 0,
+      // F8/K10: a colour is never authoritative, so no diagnostic exists for an odd length;
+      // the token is preserved raw and channelOrder records the assumption.
+      codes: [],
+      counts: {
+        sections: { total: 2, parsed: 2, preservedRaw: 0 },
+        keys: { total: 8, parsed: 8, preservedRaw: 0 },
+      },
+      spans: [
+        { sectionIndex: 2, startLine: 8, endLine: 8, keyLine: 8 },
+        { sectionIndex: 2, startLine: 12, endLine: 12, keyLine: 12 },
+      ],
+      sourceFacts: [
+        { path: 'text.contains', equals: 'Color="$FFFFFFFF"' },
+        { path: 'text.contains', equals: 'BkColor="$80FF0000"' },
+        { path: 'text.contains', equals: ',$0000FF,' },
+        { path: 'text.contains', equals: ',$1234567,' },
+        // 10 elements: colour and option populated, 追加オプション present but empty.
+        { path: 'field.1.1.elements', equals: 10 },
+      ],
+      parseFacts: [],
+    },
+  },
+  {
+    id: 'val-08',
+    file: 'val-08-continuation-line.a5er.txt',
+    fixtureClass: 'synthetic',
+    purpose:
+      'A Query value broken across two physical lines: the rest is one malformed line, never joined.',
+    specRefs: ['P13', 'U12'],
+    stage: 3,
+    expectation: {
+      status: 'degraded',
+      exitCode: 0,
+      codes: ['S_MALFORMED_LINE'],
+      counts: {
+        sections: { total: 2, parsed: 2, preservedRaw: 0 },
+        keys: { total: 4, parsed: 4, preservedRaw: 0 },
+      },
+      // The warning sits on the key whose value did not finish on its line.
+      spans: [{ sectionIndex: 2, startLine: 8, endLine: 8, keyLine: 8 }],
+      sourceFacts: [
+        { path: 'view.count', equals: 1 },
+        { path: 'text.contains', equals: 'Query="SELECT id' },
+        // The continuation is a physical line of its own, not part of a closed value.
+        { path: 'text.contains', equals: 'FROM users WHERE id > 0"' },
+        { path: 'line.8.key', equals: 'Query' },
+      ],
+      parseFacts: [],
+    },
+  },
+  {
+    id: 'val-09',
+    file: 'val-09-keyorder-gap.a5er.txt',
+    fixtureClass: 'synthetic',
+    purpose: 'キー順 is 0 and 2: a gap, so the inferred primary key is reported as a conflict.',
+    specRefs: ['P8'],
+    stage: 4,
+    expectation: {
+      status: 'degraded',
+      exitCode: 0,
+      codes: ['V_PK_ORDER_CONFLICT'],
+      counts: {
+        sections: { total: 2, parsed: 2, preservedRaw: 0 },
+        keys: { total: 5, parsed: 5, preservedRaw: 0 },
+      },
+      // Both contributing key lines are real and keep their declared ordinals.
+      spans: [
+        { sectionIndex: 2, startLine: 8, endLine: 8, keyLine: 8 },
+        { sectionIndex: 2, startLine: 9, endLine: 9, keyLine: 9 },
+      ],
+      sourceFacts: [
+        { path: 'field.1.keyOrders', equals: '0,2' },
+        { path: 'line.8.key', equals: 'Field' },
+        { path: 'line.9.key', equals: 'Field' },
       ],
       parseFacts: [],
     },

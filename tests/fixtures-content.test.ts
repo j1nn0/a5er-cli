@@ -61,7 +61,8 @@ function parseText(raw: Buffer, decoded?: string): ParsedText {
   const sectionLines: number[] = [];
   const keyLines: number[] = [];
   for (const [index, line] of lines.entries()) {
-    if (/^\[[^\]]+\]$/.test(line)) {
+    // P3: whitespace around a header is trimmed for recognition; the raw line keeps it.
+    if (/^\s*\[[^\]]+\]\s*$/.test(line)) {
       sectionLines.push(index + 1);
       continue;
     }
@@ -117,9 +118,14 @@ function valueAt(parsed: ParsedText, line: number): string {
   return value.slice(equals + 1);
 }
 
+/** Section header text with surrounding whitespace trimmed; the raw line keeps it. */
+function headerName(parsed: ParsedText, line: number): string {
+  return lineAt(parsed, line).trim();
+}
+
 /** Line numbers of the `key` occurrences inside the n-th `[Entity]` section. */
 function entityKeyLines(parsed: ParsedText, entity: number, key: string): number[] {
-  const headers = parsed.sectionLines.filter((line) => lineAt(parsed, line) === '[Entity]');
+  const headers = parsed.sectionLines.filter((line) => headerName(parsed, line) === '[Entity]');
   const start = headers[entity - 1];
   if (start === undefined) throw new Error(`entity ${String(entity)} does not exist`);
   const next = parsed.sectionLines.find((line) => line > start) ?? parsed.lines.length + 1;
@@ -166,6 +172,7 @@ function factValue(path: string, parsed: ParsedText | null, bytes: Uint8Array | 
     if (match?.[1] === undefined) throw new Error('no FORMAT header');
     return Number(match[1]);
   }
+  if (path === 'header.absent') return /^# A5:ER FORMAT:/m.test(parsed.text) === false;
   if (path === 'encoding.bom') return parsed.raw.subarray(0, 3).equals(BOM);
   if (path === 'encoding.crlf') return parsed.text.includes('\r\n');
   if (path === 'encoding.declared') {
@@ -179,11 +186,28 @@ function factValue(path: string, parsed: ParsedText | null, bytes: Uint8Array | 
       : 'missing';
   }
   if (path === 'entity.count')
-    return parsed.sectionLines.filter((l) => lineAt(parsed, l) === '[Entity]').length;
+    return parsed.sectionLines.filter((l) => headerName(parsed, l) === '[Entity]').length;
   if (path === 'view.count')
-    return parsed.sectionLines.filter((l) => lineAt(parsed, l) === '[View]').length;
+    return parsed.sectionLines.filter((l) => headerName(parsed, l) === '[View]').length;
   if (path === 'relation.count') {
-    return parsed.sectionLines.filter((l) => lineAt(parsed, l) === '[Relation]').length;
+    // P3: `[Relationship]` is the alias of `[Relation]`, so both spellings count as a relation.
+    return parsed.sectionLines.filter((l) =>
+      ['[Relation]', '[Relationship]'].includes(headerName(parsed, l)),
+    ).length;
+  }
+  if (path === 'page.count') {
+    return parsed.keyLines.filter((line) => keyAt(parsed, line) === 'PageInfo').length;
+  }
+  if (path === 'pname.unique') {
+    // P6: PName is the identity and must be unique across every object in the diagram.
+    const names = parsed.keyLines
+      .filter((line) => keyAt(parsed, line) === 'PName')
+      .map((line) => unquote(valueAt(parsed, line)));
+    return new Set(names).size === names.length;
+  }
+  const fieldCount = /^field\.(\d+)\.count$/.exec(path);
+  if (fieldCount?.[1] !== undefined) {
+    return entityKeyLines(parsed, Number(fieldCount[1]), 'Field').length;
   }
   if (path === 'field.1.keyOrders') {
     return entityKeyLines(parsed, 1, 'Field')
@@ -256,22 +280,36 @@ function isKnownToGit(relativePath: string): boolean {
 }
 
 describe('fixture content', () => {
-  it('registers exactly the 14 initial fixtures', () => {
-    expect(FIXTURES).toHaveLength(14);
+  it('registers exactly the 28 catalog fixtures', () => {
+    expect(FIXTURES).toHaveLength(28);
     expect(FIXTURES.map((spec) => spec.id)).toEqual([
       'fmt-01',
       'fmt-02',
+      'fmt-03',
       'fmt-04',
+      'fmt-05',
       'enc-02',
       'enc-03',
       'enc-04',
       'enc-05',
+      'txt-01',
+      'txt-02',
+      'txt-03',
       'txt-04',
+      'txt-05',
+      'txt-06',
+      'txt-07',
+      'txt-08',
+      'txt-09',
       'val-01',
       'val-02',
       'val-03',
+      'val-04',
       'val-05',
       'val-06',
+      'val-07',
+      'val-08',
+      'val-09',
       'sem-01',
     ]);
   });
@@ -294,7 +332,7 @@ describe('fixture content', () => {
           expect(lineCount).toBeGreaterThanOrEqual(span.endLine);
           // A span must point at a key line or at a section header.
           const line = lineAt(parsed, span.keyLine);
-          expect(/^\[[^\]]+\]$/.test(line) || line.includes('=')).toBe(true);
+          expect(/^\s*\[[^\]]+\]\s*$/.test(line) || line.includes('=')).toBe(true);
         }
       });
 
@@ -396,7 +434,10 @@ describe('fixture content', () => {
           expect(parsed.text).not.toMatch(/^IndexInfo=/m);
         }
         if (codes.includes('S_HEADER_UNKNOWN_FORMAT')) {
-          expect(parsed.text).toMatch(/^# A5:ER FORMAT:(20|9\d+)$/m);
+          // The code covers three cases: no header at all, FORMAT:20 (the documented
+          // hole) and FORMAT above 21. A known version here would contradict the code.
+          const declared = /^# A5:ER FORMAT:(.+)$/m.exec(parsed.text)?.[1];
+          expect(declared === undefined || declared === '20' || Number(declared) > 21).toBe(true);
         }
         if (codes.includes('D_BOM_MISSING')) {
           expect(parsed.raw.subarray(0, 3).equals(BOM)).toBe(false);

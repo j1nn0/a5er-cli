@@ -283,7 +283,7 @@ it differs, per TBD-O7).
 | 6 | Multi-table, multi-view | `txt-01` | ok | 0 | none | 3 objects, 2 views, 2 pages; `[View]` objects report `effectiveColumns.status === "unknown"` |
 | 7 | Composite PK | `val-06` | ok | 0 | none | `primaryKey.origin === "inferred"`; column order `0,1,2`; `derivedFrom` cites three key lines |
 | 8 | Multi-column relation and index | `txt-03`, `val-02` | ok | 0 | none | `Fields1` → `["a","b"]`; index columns `["user_name","birthday"]` (not three fragments); order preserved |
-| 9 | Unknown section and key | `txt-04` | ok | 0 | `S_UNKNOWN_SECTION`, `S_UNKNOWN_KEY` (info) | `unsupported` has 2 entries with spans; `completeness.dropped === 0`; raw lines preserved verbatim |
+| 9 | Unknown section and key | `txt-04` | ok | 0 | `S_UNKNOWN_SECTION`, `S_UNKNOWN_KEY` (info) | `unsupported` has 3 entries with spans; `completeness.dropped === 0`; raw lines preserved verbatim |
 | 10 | Duplicate scalar, missing identity | `txt-05`, `sem-08` | degraded | 0 | `S_DUPLICATE_KEY` (warning); `V_DUPLICATE_OBJECT_NAME` (error) | last occurrence wins; both spans retained; both objects still emitted; `validate` on `sem-08` exits 3 |
 | 11 | Truncated read | `res-01`, `res-02` | failed | 1 | `E_LIMIT_BYTES`; `E_TRUNCATED_INPUT` | `schema` absent in both; `limits.truncated === true` for `res-01`; no stdout JSON is a "shorter schema" |
 | 12 | Above `maxBytes` | `res-03` | failed | 1 | `E_LIMIT_BYTES` | fatal before allocation; stderr carries the diagnostic; stdout envelope still valid JSON |

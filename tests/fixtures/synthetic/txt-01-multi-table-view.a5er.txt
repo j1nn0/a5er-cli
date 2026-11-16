@@ -1,0 +1,49 @@
+﻿# A5:ER FORMAT:21
+# A5:ER ENCODING:UTF8
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"
+PageInfo="Detail",3,"A4Landscape","$FFFFFF"
+
+[Entity]
+PName="users"
+LName="ユーザー"
+Field="ユーザーID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,"",""
+Field="メール","email","varchar(255)","",,"","",$FFFFFFFF,"",""
+Field="ページ番号","page_no","Integer","",1,"","",$FFFFFFFF,"",""
+IndexInfo="users_ix1",0,"id", ""
+Position="Main",100,100
+
+[Entity]
+PName="orders"
+LName="注文"
+Field="注文ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,"",""
+Field="ユーザーID","user_id","Integer","NOT NULL",1,"","",$FFFFFFFF,"",""
+IndexInfo="orders_ix1",0,"id", ""
+Position="Main",300,100
+
+[Entity]
+PName="audit_log"
+LName="監査ログ"
+Position="Detail",100,300
+
+[View]
+PName="active_users"
+Query="SELECT * FROM users WHERE email IS NOT NULL"
+Position="Main",500,100
+
+[View]
+PName="order_summary"
+Query="SELECT user_id, COUNT(*) FROM orders GROUP BY user_id"
+Position="Detail",500,300
+
+[Relation]
+Entity1="users"
+Entity2="orders"
+Fields1="id"
+Fields2="user_id"
+RelationType1=2
+RelationType2=4
+Cardinarity1="P"
+Cardinarity2="Z"
+Position="Main",0,500,500,500,R,R,""

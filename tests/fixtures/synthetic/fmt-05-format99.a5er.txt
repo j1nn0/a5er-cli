@@ -1,0 +1,14 @@
+﻿# A5:ER FORMAT:99
+# A5:ER ENCODING:UTF8
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"
+
+[Entity]
+PName="future_format"
+Field="ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,"",""
+IndexInfo="future_format_ix1",0,"id", ""
+Page="1"
+Left="20"
+Top="20"
+Position="Main",20,20

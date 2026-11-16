@@ -1,0 +1,11 @@
+﻿# A5:ER FORMAT:21
+
+[Manager]
+PageInfo="Main",3,"A4Landscape","$FFFFFF"
+
+[Entity]
+PName="with_empty_relation"
+Field="ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,"",""
+Position="Main",10,10
+
+[Relation]
