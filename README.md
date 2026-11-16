@@ -2,7 +2,11 @@
 
 A command-line tool for parsing, inspecting, validating, and querying A5:SQL Mk-2 ER diagram (`.a5er`) files.
 
-> **Status:** Planning / Early development. The CLI is not yet available.
+> **Status:** Phase 1 complete — format investigation, parser evaluation, architecture, test
+> strategy and the TypeScript/ESM development scaffold are in place. The current build exposes
+> **only** `--help` and `--version`; the `.a5er` parser and every analysis command (`inspect`,
+> `tables`, `relations`, `search`, `validate`, `export`) are **not yet implemented** and are
+> planned for Phase 2.
 
 ## Overview
 
@@ -41,6 +45,13 @@ These commands are proposals and are not yet implemented.
 - **Traceability:** Make parsed definitions traceable to their source.
 - **Machine-readable:** Provide predictable output for automated consumers.
 - **Portability:** Avoid dependencies on specific AI agent environments.
+
+## Phase 1 documents
+
+- [Format coverage](docs/format-coverage.md) — what the v2.21 specification defines, item by item, and what remains unconfirmed.
+- [Parser evaluation](docs/parser-evaluation.md) — why the parser is built from the specification instead of depending on an existing one.
+- [Architecture](docs/architecture.md) — modules, data model, diagnostics and the initial JSON contract.
+- [Test strategy](docs/test-strategy.md) — test levels, fixture policy and the gates a change must pass.
 
 ## Documentation
 
