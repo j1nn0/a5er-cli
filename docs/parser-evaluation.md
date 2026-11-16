@@ -372,11 +372,15 @@ repository currently contains no parser. If any code is ever copied from `a5sql-
 requires preserving `Copyright (c) 2026 takuyaw-w` and the permission text, and noting the
 modification. Nothing in this Phase 1 unit does so.
 
-**Blocker before implementation starts — not after:** obtain **2–3 real, anonymised**
-A5:SQL Mk-2 exports (ideally across FORMAT versions, one Shift_JIS, one carrying
-`[Subtype]`/`[Shape]`), plus a golden-output fixture set. Without them "accurate parsing" is
-unverifiable and the `Index` vs `IndexInfo` question in §5 U1 stays open. This gates parser
-work; it does not follow it.
+**Real exports are a pre-release gate, not an entry condition.** Implementation starts from
+spec-derived synthetic fixtures (`docs/test-strategy.md` §3.8). When **2–3 real, anonymised**
+A5:SQL Mk-2 exports are available — ideally across FORMAT versions, one Shift_JIS, one carrying
+`[Subtype]`/`[Shape]` — they are used for **local verification only**, after confidentiality is
+confirmed, and are never committed. Compatibility with them is a **pre-release quality gate**;
+without one the gap is stated and full compatibility is not claimed. The `Index` vs `IndexInfo`
+question in §5 U1 is settled by that local verification whenever a file makes it observable.
+Golden-output fixtures are authored after the serializer exists (§14 stage 6 of the test
+strategy), so they cannot gate the start of parser work either.
 
 ---
 
@@ -391,7 +395,7 @@ B.
 | L2 | **No ignored errors.** Every unsupported section, unsupported key, undecodable byte sequence, malformed row and truncated element produces a diagnostic record that appears in output. No bare catch, no silently dropped branch. | B's diagnostic-free `switch` default and A's `[Memo]`-yields-nothing policy. |
 | L3 | **No lossy decoding.** The chain is strict at every step — `utf-8` → `shift_jis` → `utf-16le`, each with `fatal: true` and U+FFFD rejection; no lossy step exists, and an undecodable file is fatal (`E_UNDECODABLE`). Numbers are never re-coerced: raw text is always retained beside any typed value. | A's 0.9.9 `17777777777777777777` → `…79000` and `0012.50` → `12.5`, both silent. |
 | L4 | **No illusory tests.** A test must assert a *value parsed from a fixture that actually contains the construct*. Count-only or "did not throw" assertions are not accepted as coverage. A fixture without an `IndexInfo` line cannot support any claim of index support. | A has no `IndexInfo` assertion at all; B has no assertions at all; both fixtures lack the canonical index key, so a green suite would have proven nothing. |
-| L5 | **Fixtures are gated on real exports.** Two to three anonymised real files are required before parser work is considered validated; synthetic fixtures alone are insufficient. | Both targets validated only against synthetic, non-conformant samples. |
+| L5 | **Synthetic-first; real exports are local verification only** (pre-release gate, never committed, never entry). | Both targets validated only against synthetic, non-conformant samples. |
 | L6 | **Legacy keys warn.** When `Index` / `IndexOption` are the only index evidence under an older `FORMAT`, the reader still returns them, labelled legacy, with a warning. | The v2.21 "ignore legacy" instruction being read as permission to discard index data. |
 | L7 | **Unsupported is a first-class output, not an omission.** `[Subtype]` membership, unknown `ShapeType`, and undefined vertex formats are reported as unsupported with their source locations. | A's silent `Subtype`/`Shape`/`Line`/`Comment` skip; B's silent everything. |
 | L8 | **Copying carries the notice.** Any future code reuse from A must ship the MIT notice and a modification statement; reimplementation is preferred so the question does not arise. | Unattributed vendoring under a permissive licence. |
@@ -421,5 +425,5 @@ tests. **Neither reports what it skipped** — which is the one behaviour this p
 provide differently.
 
 Chosen: **C**, a spec-based original parser, with two ideas reimplemented from A (trusted-code
-/ untrusted-details warning split, and a diagnostic-emitting encoding fallback chain), gated
-on 2–3 anonymised real exports.
+/ untrusted-details warning split, and a diagnostic-emitting encoding fallback chain), with
+real-export compatibility as a pre-release gate (local-only, never committed).
