@@ -9,9 +9,9 @@
  * 2. **No silent branch.** A path that decides not to model something emits a record — a
  *    `Diagnostic` or a `RawEntry` — never nothing.
  *
- * Only the codes emitted before the syntax stage have a fixed message and severity here. The
- * rest of the enum is declared so the taxonomy is closed, and gains its message when the stage
- * that raises it lands; `emit` therefore accepts only the codes this layer can raise.
+ * A code gains its fixed message and severity when the stage that raises it lands, and each
+ * stage gets its own narrow entry point: `emit` for the fatal/decode families, `emitSyntax` for
+ * the syntax layer (§7), so a call site can never raise a code its stage cannot justify.
  */
 
 import type { Span } from '../model/span.js';
@@ -85,6 +85,20 @@ export type SourceStageCode =
   | 'D_BOM_MISSING'
   | 'D_ENCODING_ASSUMED'
   | 'D_ENCODING_MISMATCH';
+
+/**
+ * A code the syntax stage can raise (§7).
+ *
+ * Only the codes a line scan can justify are here. `S_UNKNOWN_KEY`, `S_LEGACY_KEY`,
+ * `S_DUPLICATE_KEY` and `S_FIELD_TOO_FEW_ELEMENTS`/`S_FIELD_TOO_MANY_ELEMENTS` need the
+ * section-scoped key registry (§5, §7.2), so they join this list when that stage lands rather
+ * than being emitted from a place that cannot know whether a key exists.
+ */
+export type SyntaxStageCode =
+  | 'S_HEADER_UNKNOWN_FORMAT'
+  | 'S_UNKNOWN_SECTION'
+  | 'S_MALFORMED_LINE'
+  | 'S_COMPLEX_UNTERMINATED_QUOTE';
 
 /**
  * Detail values, per `architecture.md` §11.
@@ -171,6 +185,33 @@ const DEFINITIONS: Readonly<Record<SourceStageCode, Definition>> = {
   },
 };
 
+/**
+ * Syntax-stage definitions (§11's table, §7's rules).
+ *
+ * The two messages §12 prints are used verbatim; the other two say what §11's table says in its
+ * "Meaning" column. Both `S_HEADER_UNKNOWN_FORMAT` and `S_MALFORMED_LINE` are warnings, and
+ * `S_UNKNOWN_SECTION` is info — which is why txt-04 is `ok` with an unknown section while
+ * val-08 is `degraded` with a broken line (§14's status derivation).
+ */
+const SYNTAX_DEFINITIONS: Readonly<Record<SyntaxStageCode, Definition>> = {
+  S_HEADER_UNKNOWN_FORMAT: {
+    severity: 'warning',
+    message: 'The file declares no FORMAT, or one this tool does not know',
+  },
+  S_UNKNOWN_SECTION: {
+    severity: 'info',
+    message: 'A section this tool does not model was preserved verbatim',
+  },
+  S_MALFORMED_LINE: {
+    severity: 'warning',
+    message: 'A line is not a section header, a key, a comment, or blank',
+  },
+  S_COMPLEX_UNTERMINATED_QUOTE: {
+    severity: 'warning',
+    message: 'A Complex value ends inside a quote that is never closed',
+  },
+};
+
 export interface EmitOptions {
   /** Untrusted values; strings are bounded here, not at the call site. */
   readonly details?: Readonly<Record<string, DiagnosticDetail>>;
@@ -197,6 +238,22 @@ export function messageOf(code: SourceStageCode): string {
  * the table, so a call site cannot pick a friendlier severity for a fatal code.
  */
 export function emit(code: SourceStageCode, options: EmitOptions = {}): Diagnostic {
+  return build(code, DEFINITIONS[code], options);
+}
+
+/**
+ * Build a `Diagnostic` for a code the syntax stage can raise (§7).
+ *
+ * Same contract as `emit`: the code and the message are trusted, file text may only reach
+ * `details`, and the severity comes from the table. A separate entry point keeps `emit`'s
+ * accepted codes exactly as narrow as the stage that owns them.
+ */
+export function emitSyntax(code: SyntaxStageCode, options: EmitOptions = {}): Diagnostic {
+  return build(code, SYNTAX_DEFINITIONS[code], options);
+}
+
+/** Shared body of `emit`/`emitSyntax`; the definition is already resolved by the caller. */
+function build(code: DiagnosticCode, definition: Definition, options: EmitOptions): Diagnostic {
   const details: Record<string, DiagnosticDetail> = {};
   for (const [key, value] of Object.entries(options.details ?? {})) {
     details[key] = typeof value === 'string' ? boundedDetail(value) : value;
@@ -204,8 +261,8 @@ export function emit(code: SourceStageCode, options: EmitOptions = {}): Diagnost
 
   return {
     code,
-    severity: DEFINITIONS[code].severity,
-    message: DEFINITIONS[code].message,
+    severity: definition.severity,
+    message: definition.message,
     details,
     span: options.span ?? null,
     construct: options.construct ?? null,

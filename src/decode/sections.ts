@@ -5,9 +5,11 @@
  * nine known headers is `E_UNRECOGNIZED_DOCUMENT` — the guard against reporting an arbitrary
  * JSON or PowerShell file as an empty-but-healthy ER diagram.
  *
- * Temporary home: the full section scan (order, spans, aliases, unknown sections) belongs to
- * `src/syntax/` in stage 3. What lives here is the *detection* the io/decode stage needs, and
- * nothing more — it recognises headers and returns them; it does not model them.
+ * This module is the **single** definition of two things: what a header line is, and which
+ * names the project models. `src/syntax/` scans the same headers line by line (order, spans,
+ * kind) and imports `headerNameOf` and `RECOGNISED_SECTIONS` from here, so the scanner and the
+ * document guard can never drift apart. `scanSectionHeaders`/`hasRecognisedSection` stay as the
+ * thin detection helpers `decode/load.ts` needs; they do not model anything.
  */
 
 /** The nine section names of §10.4, case-sensitive (the file format defines no case rule). */
@@ -35,6 +37,23 @@ export type RecognisedSection = (typeof RECOGNISED_SECTIONS)[number];
 const HEADER_PATTERN = /^\s*\[(.+)\]\s*$/;
 
 /**
+ * The name of one header line, or `null` when the line is not a header.
+ *
+ * The name is returned verbatim: `[Memo]` and `[entity]` are headers too, they are simply not
+ * recognised. The caller decides what an unknown name means. This is the one place the pattern
+ * is applied, so the syntax scanner cannot read a header differently from the guard.
+ */
+export function headerNameOf(line: string): string | null {
+  const match = HEADER_PATTERN.exec(line);
+  return match?.[1] ?? null;
+}
+
+/** True when `name` is one of the nine headers this project models (§10.4). */
+export function isRecognisedSection(name: string): boolean {
+  return (RECOGNISED_SECTIONS as readonly string[]).includes(name);
+}
+
+/**
  * Every header-looking line, trimmed, in file order.
  *
  * Names are returned verbatim: `[Memo]` and `[entity]` are headers too, they are simply not
@@ -43,15 +62,13 @@ const HEADER_PATTERN = /^\s*\[(.+)\]\s*$/;
 export function scanSectionHeaders(text: string): string[] {
   const headers: string[] = [];
   for (const line of text.split(/\r\n|\n|\r/)) {
-    const match = HEADER_PATTERN.exec(line);
-    if (match?.[1] !== undefined) headers.push(match[1]);
+    const name = headerNameOf(line);
+    if (name !== null) headers.push(name);
   }
   return headers;
 }
 
 /** True when at least one header names a section this project models (§10.4). */
 export function hasRecognisedSection(text: string): boolean {
-  return scanSectionHeaders(text).some((name) =>
-    (RECOGNISED_SECTIONS as readonly string[]).includes(name),
-  );
+  return scanSectionHeaders(text).some((name) => isRecognisedSection(name));
 }

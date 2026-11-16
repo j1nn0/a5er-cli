@@ -488,10 +488,14 @@ bytes
      └─ fails → fixed list (shift_jis, utf-16le, utf-16be), first strict success wins
 ```
 
-Header peek happens **before** the full decode but is only a hint: the first 8 KiB are scanned
-as ASCII for `^#\s*A5:ER\s*(FORMAT|ENCODING)\s*:\s*(\S+)$`, then re-parsed from the decoded
-text as authoritative. This resolves the chicken-and-egg problem without trusting undecoded
-bytes.
+The header is read from the **decoded** text: `parseHeader` runs
+`^#\s*A5:ER\s*(FORMAT|ENCODING)\s*:\s*(\S+)$` over the decoded string, and that reading is
+the authoritative one. `peekHeader` — the same pattern over the first 8 KiB of the raw bytes,
+read through `latin1` so one byte is one code point — exists as a helper but is **not** part of
+the pipeline: with the candidate order fixed (a BOM pins the codec, otherwise UTF-8 first) and
+the declaration explicitly not allowed to order candidates (R11, next paragraph), a pre-decode
+reading has nothing left to decide. The chicken-and-egg problem is avoided by not asking the
+bytes a question the decoded text answers better.
 
 The declaration does **not** order the candidates (R11). `ENCODING:SJIS` says what the writer
 believed, not what the bytes are, and the UTF-8 bytes of `ユーザー` are also valid Shift_JIS —
