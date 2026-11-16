@@ -53,7 +53,8 @@ jobs:
         run: pnpm typecheck
 
       - name: Lint
-        run: pnpm lint
+        # Bypasses a pnpm-11 `run lint` resolution flake; same oxlint binary and .oxlintrc.json.
+        run: pnpm exec oxlint
 
       - name: Format check
         run: pnpm format:check
