@@ -1064,8 +1064,9 @@ would lose evidence (§12 rule 7).
 
 ## 14. Adversarial inputs (Phase 2 fixture matrix)
 
-Every row is a required fixture plus an assertion. "Fatal" means `status: "failed"` **and** no
-schema key — never a partial diagram.
+Every row is a required fixture plus an assertion. "Fatal" means `status: "failed"` with
+`source`, `schema` and `completeness` **present as `null`** — never a partial diagram, and never a
+missing key: a consumer may read `envelope.schema` and get `null`, not `undefined`.
 
 | # | Input | Expected behaviour | Assertion |
 |---|---|---|---|
@@ -1080,7 +1081,7 @@ schema key — never a partial diagram.
 | 9 | Unknown section and unknown key | preserved + diagnosed (info) | `unsupported` non-empty, `dropped === 0`, status ok |
 | 10 | Duplicate scalar key, missing required key | last wins + warning; missing → error/warning | both spans present; no crash |
 | 11 | Mid-file short read (the OS returns fewer bytes than `fstat` declared) | fatal, no partial schema | `status: "failed"`, `source`/`schema`/`completeness` **present as `null`** (the keys are there), `E_TRUNCATED_INPUT`, `limits.truncated === true` |
-| 12 | File above `maxBytes` (or a line/length limit breach) | fatal before allocation | `E_LIMIT_BYTES`/`E_LIMIT_LINES`/`E_LIMIT_LINE_LENGTH`, constant memory, `limits.truncated === false` — the whole file was refused, nothing was truncated |
+| 12 | A file above `maxBytes`, a line past `maxLines`, or a line longer than `maxLineLength` | fatal, nothing partial | `maxBytes` is judged from `fstat` **before** any buffer is allocated (constant memory); the two text limits are judged on the decoded text during/after strict decode and before any consumer sees it, so the file is already held in memory and the refusal is total rather than partial. `E_LIMIT_BYTES`/`E_LIMIT_LINES`/`E_LIMIT_LINE_LENGTH`, `schema: null`, `limits.truncated === false` |
 | 13 | Schema-valid but referentially broken (dangling entity, column, page) | parses fully, warns | all three `V_DANGLING_*` codes; status degraded |
 | 14 | Input immutability | file unchanged after every command | mtime and sha256 identical before/after |
 | 15 | Hostile bytes: NUL-laden, CR/LF/CRLF mixed, no trailing newline, BOM mid-file, 1 MB single line | no crash, no mojibake, correct line spans | binary → fatal; others parse with diagnostics |

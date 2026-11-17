@@ -488,7 +488,7 @@ assertion until Phase 2 owns the decision.
 | G1 | Defaulted values (`UsingCommonColumns`) are supposed to emit an `info` diagnostic (`architecture.md` §4.2) but no code exists for it | `sem-07` | Assert `origin === "defaulted"` and value `1`; no code assertion |
 | G2 | Case-insensitive uniqueness of page, domain and common-column names has no code (`V_DUPLICATE_OBJECT_NAME` is `PName`-only) | none yet | Deferred; add a fixture once a code exists |
 | G3 | Mixed line endings have no code, and the format defines none (U4) | `hst-05` | Assert **no** diagnostic; a new code would be a taxonomy change |
-| G4 | `E_TRUNCATED_INPUT` requires an IO seam (injectable reader) to test without racing; `architecture.md` does not define one | `res-02` | Requires the seam; if the seam is rejected, the fixture is deleted and the code becomes untestable-by-design |
+| G4 | **Closed (stage 6):** `E_TRUNCATED_INPUT` needed an injectable reader; the seam now exists — `FileSystem`/`SourceHandle` in `src/io/fs.ts`, injected through `ReadOptions.fileSystem` and `LoadOptions.fileSystem` | `res-02` | The mechanism is tested twice: `tests/io.test.ts` "reports a short read as E_TRUNCATED_INPUT, the code res-02 expects" (fake handle, checked against the `res-02` catalog row) and `tests/json-contract.test.ts` "reports `truncated` only for a physical short read" (envelope-level). `res-02` itself stays `injected` because a short read has no committed bytes to stage, not because the seam is hypothetical |
 
 | TBD | Point | Effect on tests |
 |---|---|---|

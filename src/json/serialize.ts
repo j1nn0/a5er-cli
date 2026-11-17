@@ -318,9 +318,11 @@ function occurrencesOf(section: ClassifiedSection, key: string): KeyOccurrence[]
  * `JsonValue` slot, a `JsonUsingCommonColumns`, a `JsonLNameByComment`, a `JsonSubtypeScalar`, a
  * `JsonRelationEndpoint` and a `JsonRelationColumnList` alike.
  *
- * What is still not modelled is not a retention gap and is recorded for later units: page and
- * domain element coverage, the FORMAT gate and `enc-05`'s key count, the `limits` family, and the
- * §12/§13 wording. A rename of `scalars` itself would be a contract bump and is not this unit's.
+ * What is still not modelled is not a retention gap: page and domain **element** coverage — the
+ * records carry `elementsSeen`, `shape` and `rawElements`, and no audit has yet decided whether a
+ * consumer needs more. Everything else this note used to defer was settled by stage 6-B units 4–5:
+ * the FORMAT gate, `enc-05`'s key count, the `limits` family and the §12/§13 wording. A rename of
+ * `scalars` itself would be a contract bump and is not this unit's.
  */
 function declaredOf<T extends DecodedValue>(
   section: ClassifiedSection,
