@@ -46,19 +46,42 @@ export const SYSTEM_DOMAINS: readonly string[] = [
   '@BOOLEAN',
 ];
 
-/** How a `Field`'s データ型 relates to the documented domain kinds — no SQL type is inferred. */
+/**
+ * How a `Field`'s データ型 relates to the documented domain kinds — no SQL type is inferred.
+ *
+ * The `user` arm is a **discriminated** pair, because "this names a domain" and "this names which
+ * domain" are different answers and a single shape cannot tell them apart: the previous shape put
+ * `resolvedDomain: matches[0].name` on an ambiguous reference too, which published the first
+ * declaration as if the file had chosen it. Neither arm carries the other's field — a consumer must
+ * narrow on `status` before it can read a target, so "ambiguous" cannot be read as "resolved to
+ * something".
+ */
 export type TypeClassification =
   /** A token that names no declared domain: a plain type, as far as this stage can tell (P7). */
   | { readonly kind: 'plain' }
   /** `@`-prefixed: a system domain. `known` is false for one outside the documented ten. */
   | { readonly kind: 'system'; readonly name: string; readonly known: boolean }
-  /** A name that matches a declared user domain, case-insensitively. */
+  /** One declaration matched case-insensitively: the only case where a target exists. */
   | {
       readonly kind: 'user';
+      readonly status: 'resolved';
+      /** The type exactly as the `Field` wrote it — never rewritten to the declared spelling. */
       readonly name: string;
-      readonly status: 'resolved' | 'ambiguous';
-      /** The declared spelling of the domain. */
+      /** The declared spelling of the one domain this names (P12: names are unique without case). */
       readonly resolvedDomain: string;
+    }
+  /**
+   * Two or more declarations share this name case-insensitively. The format forbids it, so the
+   * reference has **no** target: every candidate is kept, none is selected, and no `resolvedDomain`
+   * field exists to be read by mistake.
+   */
+  | {
+      readonly kind: 'user';
+      readonly status: 'ambiguous';
+      /** The type exactly as the `Field` wrote it. */
+      readonly name: string;
+      /** Every declaration that matched, in file order, each with its own spelling and span. */
+      readonly candidates: readonly DomainDeclaration[];
     };
 
 /** The shape of a *domain declaration's* own データ型 — deliberately not resolved (see above). */
@@ -115,7 +138,14 @@ export function domainTypeKindOf(dataType: string): DomainTypeKind {
   return dataType.startsWith('@') ? 'system' : 'name';
 }
 
-/** Classify one `Field` type against the document's domain names (§P7, P12). */
+/**
+ * Classify one `Field` type against the document's domain names (§P7, P12).
+ *
+ * `name` is always the type text as the `Field` wrote it, so the reference keeps its own spelling;
+ * the resolved spelling is reported *beside* it, never instead of it. Ambiguity returns every
+ * candidate and no target (R29) — there is no §11 code for a duplicated domain name, so nothing is
+ * diagnosed here and the records are the whole report.
+ */
 export function classifyType(
   dataType: string,
   domains: Map<string, readonly DomainDeclaration[]>,
@@ -127,12 +157,9 @@ export function classifyType(
   const matches = domains.get(dataType.toLowerCase()) ?? [];
   const first = matches[0];
   if (first === undefined) return { kind: 'plain' };
-  return {
-    kind: 'user',
-    name: dataType,
-    status: matches.length > 1 ? 'ambiguous' : 'resolved',
-    resolvedDomain: first.name,
-  };
+  if (matches.length > 1)
+    return { kind: 'user', status: 'ambiguous', name: dataType, candidates: matches };
+  return { kind: 'user', status: 'resolved', name: dataType, resolvedDomain: first.name };
 }
 
 /** One element of a `DomainInfo` as written. */

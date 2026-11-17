@@ -34,6 +34,15 @@ const NOT_NULL_LITERAL = 'NotNull';
 /** How the `NOT NULL` slot of a common column was written. */
 export type CommonNotNullToken = 'not-null' | 'nullable' | 'unrecognised';
 
+/**
+ * How the キー順 slot of a common column was written.
+ *
+ * The same three answers `schema/field.ts` publishes (`KeyOrderToken`), deliberately not re-spelled:
+ * one ordinal rule for the whole format, so a consumer does not have to learn two vocabularies for
+ * "empty" and "unreadable".
+ */
+export type KeyOrderToken = 'ordinal' | 'empty' | 'unrecognised';
+
 /** One `CommonField` declaration. */
 export interface CommonColumnDeclaration {
   /** 共通列論理名, escapes applied. */
@@ -45,8 +54,21 @@ export interface CommonColumnDeclaration {
   /** The literal `NotNull`, an empty slot, or an unrecognised token — never coerced. */
   readonly notNull: boolean | null;
   readonly notNullToken: CommonNotNullToken;
-  /** キー順, when it is a usable integer (the same rule as `Field`, R19). */
+  /**
+   * キー順, or `null`. A `0`-based ordinal, a `null` value and an unusable token are three different
+   * answers: the value is only set for a nonnegative **safe** integer (the same rule as `Field`,
+   * R19/R30), and `keyOrderToken`/`keyOrderRaw` say which of the other two this is.
+   */
   readonly keyOrder: number | null;
+  /** How キー順 was written, so "empty" is never confused with "unreadable" (R30). */
+  readonly keyOrderToken: KeyOrderToken;
+  /**
+   * The キー順 element exactly as written, quotes included; `null` only when the slot is absent.
+   *
+   * キー順 is an element of an eight-element line, so its span is the declaration's own `span`
+   * (§7.2's "one key line, one span"): there is no second line for it to point at.
+   */
+  readonly keyOrderRaw: string | null;
   /** デフォルト値, never evaluated. */
   readonly defaultValue: string;
   /** コメント, escapes applied. */
@@ -140,6 +162,33 @@ function readNotNull(raw: string): { value: boolean | null; token: CommonNotNull
   return { value: null, token: 'unrecognised' };
 }
 
+/**
+ * The キー順 slot: a `0`-based ordinal, empty, or an unrecognised token — never rounded, never
+ * negated into an ordinal (R30, the same rule as `schema/field.ts`'s `readKeyOrder`, R19).
+ *
+ * The slot is read positionally through `elementAt`, so "the writer stopped before this element"
+ * (`null` raw) stays distinguishable from "the slot is there and empty" (raw `''`). Both are
+ * `empty` because the format draws no distinction between them — but the raw does.
+ *
+ * `decodeInteger` is the only number path: `Number('+1')` is `1`, `Number('1.5')` is `1.5` and
+ * `Number('9007199254740993')` rounds to a number the file never contained, so a naive read would
+ * publish an ordinal. A negative token is a valid integer but not a `0`-based ordinal, so it is
+ * unrecognised too. Nothing here makes a column part of a primary key: キー順 is carried, and
+ * `primary-key.ts` reads key membership from `Field` lines only.
+ */
+function readKeyOrder(part: ComplexPart | undefined): {
+  value: number | null;
+  token: KeyOrderToken;
+  raw: string | null;
+} {
+  if (part === undefined) return { value: null, token: 'empty', raw: null };
+  const raw = partRaw(part);
+  if (part.value === '') return { value: null, token: 'empty', raw };
+  const decoded = decodeInteger(part.value);
+  if (decoded.ok && decoded.value >= 0) return { value: decoded.value, token: 'ordinal', raw };
+  return { value: null, token: 'unrecognised', raw };
+}
+
 /** Every `CommonField` of the document, in file order. */
 function declarationsOf(classification: Classification): CommonColumnDeclaration[] {
   const declarations: CommonColumnDeclaration[] = [];
@@ -155,10 +204,8 @@ function declarationsOf(classification: Classification): CommonColumnDeclaration
       if (typeof value !== 'object') continue;
 
       const parts = value.parts;
-      const notNullRaw = element(parts, 3);
-      const notNull = readNotNull(notNullRaw);
-      const keyOrderText = element(parts, 4);
-      const keyOrder = keyOrderText === '' ? null : decodeInteger(keyOrderText);
+      const notNull = readNotNull(element(parts, 3));
+      const keyOrder = readKeyOrder(parts[4]);
 
       declarations.push({
         logicalName: element(parts, 0),
@@ -166,7 +213,9 @@ function declarationsOf(classification: Classification): CommonColumnDeclaration
         dataType: element(parts, 2),
         notNull: notNull.value,
         notNullToken: notNull.token,
-        keyOrder: keyOrder !== null && keyOrder.ok ? keyOrder.value : null,
+        keyOrder: keyOrder.value,
+        keyOrderToken: keyOrder.token,
+        keyOrderRaw: keyOrder.raw,
         defaultValue: element(parts, 5),
         comment: element(parts, 6),
         color: element(parts, 7),

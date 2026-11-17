@@ -14,6 +14,8 @@
  * | a relation endpoint or column does not resolve | `V_DANGLING_ENTITY`, `V_DANGLING_COLUMN` | P9, U8 |
  * | the two sides of a relation map different counts | `V_FIELD_COUNT_MISMATCH` | U8 |
  * | a placement names no declared page | `V_DANGLING_PAGE` | P9, P11, F5 |
+ * | a view has no stored columns | `V_VIEW_COLUMNS_UNKNOWN` | P6, P10, §9.6 |
+ * | a subtype has no membership key | `V_UNSUPPORTED_SUBTYPE_MEMBERSHIP` | F7, D6, K11, §9.6 |
  *
  * Domains and common columns are resolved too (§9.4, P12), but nothing about them has a closed
  * diagnostic code in §11, so they are reported in the model only — a dangling domain name, an
@@ -21,11 +23,14 @@
  * none of them invents a code.
  *
  * **This is not a resolved schema, and it does not claim to be.** `PartialSemantics` is named for
- * the boundary: everything §9 lists and this unit does not do is in `unresolved`, so a consumer can
- * see what is missing instead of assuming an absent field means "nothing there". Relations and
- * pages are resolved here — endpoints against `[Entity]` names, page references against
- * `[Manager].PageInfo` — while domains, common columns, view columns and subtype membership remain
- * open (`§9.4`–`9.6`, `§17`).
+ * the boundary: everything §9 lists and this unit does not do belongs in `unresolved`, so a consumer
+ * can see what is missing instead of assuming an absent field means "nothing there".
+ *
+ * **An empty `unresolved` is not a finished product.** The list is now empty because every area it
+ * ever named has an explicit per-object model — domains and common columns in their records, view
+ * columns as `effectiveColumns: { status: 'unknown' }`, subtype membership as `membership: {
+ * status: 'unsupported' }`. It says nothing about the JSON envelope, the serializer or the CLI, which
+ * are later units, and nothing about format features outside §9 (`§17`).
  *
  * Pure: every rule reads the classification and allocates its own findings; nothing in the
  * classification is mutated, so a caller can derive twice and compare.
@@ -57,27 +62,37 @@ import type {
   EntityColumns,
 } from './common-columns.js';
 import { commonColumnsOf } from './common-columns.js';
+import type { ViewDeclaration } from './views.js';
+import { viewsOf } from './views.js';
+import type { SubtypeDeclaration } from './subtypes.js';
+import { subtypesOf } from './subtypes.js';
 import type { MissingRequiredKeys } from './required.js';
 import { missingRequiredKeysOf } from './required.js';
 
 /**
  * The parts of §9 this stage deliberately leaves open.
  *
- * Named so that "no finding" can never be read as "nothing wrong": a consumer that wants these
- * must wait for the resolution unit, and a reader of `PartialSemantics` can see the list.
+ * Empty: both areas this list ever named now have an explicit per-object model, so "nothing
+ * reported" can no longer mean "nothing checked" for them — every `[View]` carries
+ * `effectiveColumns.status === 'unknown'` and one `V_VIEW_COLUMNS_UNKNOWN`, and every `[Subtype]`
+ * carries `membership.status === 'unsupported'` and one `V_UNSUPPORTED_SUBTYPE_MEMBERSHIP`.
+ *
+ * The type keeps the vocabulary instead of collapsing to `never`, so a future unit can name an area
+ * again rather than invent a second reporting channel.
  */
 export type UnresolvedArea = 'view-columns' | 'subtype-membership';
 
 /**
  * What the resolution unit still owes, in one place (§9.4–§9.6, §17).
  *
- * Two areas left this list when they were implemented: `relation-endpoints` (endpoints and their
- * columns resolve against `[Entity]` names in `relations.ts`) and `page-resolution` (`Position`
- * references resolve case-insensitively against `PageInfo` in `pages.ts`).
+ * Areas left this list as they were implemented: `relation-endpoints` and `page-resolution`
+ * (`relations.ts`, `pages.ts`), then `domain-resolution` and `common-columns` (`domains.ts`,
+ * `common-columns.ts`), and finally `view-columns` and `subtype-membership`, which are answered by
+ * declaring the columns unknown and the membership unsupported (`views.ts`, `subtypes.ts`).
  */
-export const UNRESOLVED_AREAS: readonly UnresolvedArea[] = ['view-columns', 'subtype-membership'];
+export const UNRESOLVED_AREAS: readonly UnresolvedArea[] = [];
 
-/** The bounded semantic result: four findings, their diagnostics, and the open boundary. */
+/** The bounded semantic result: every finding, its diagnostics, and the boundary. */
 export interface PartialSemantics {
   /** Every object, duplicates included (§9.1). */
   readonly identities: readonly ObjectIdentity[];
@@ -110,9 +125,18 @@ export interface PartialSemantics {
   readonly entityColumns: readonly EntityColumns[];
   /** Entities whose `UsingCommonColumns` could not be decided, so `effective` is not final. */
   readonly indeterminateColumnLists: readonly EntityColumns[];
+  /** Every `[View]`, each with `effectiveColumns: { status: 'unknown' }` (§9.6, P10). */
+  readonly views: readonly ViewDeclaration[];
+  /** Views whose `LNameByComment` did not decode, so even the reason is indeterminate (P10). */
+  readonly indeterminateViewNames: readonly ViewDeclaration[];
+  /** Every `[Subtype]`, each with `membership: { status: 'unsupported' }` (§9.6, F7). */
+  readonly subtypes: readonly SubtypeDeclaration[];
   /** Ordered by line (§12 rule 7). */
   readonly diagnostics: readonly Diagnostic[];
-  /** The §9 work this stage does not do. Never empty, by design. */
+  /**
+   * The §9 work this stage does not do. Empty now — see the header: an empty list is not a finished
+   * product.
+   */
   readonly unresolved: readonly UnresolvedArea[];
 }
 
@@ -127,7 +151,12 @@ export interface PartialSemantics {
  *   names, so an empty section is one finding and not a burst of them (txt-09);
  * - **one `V_PK_ORDER_CONFLICT` per conflicted object**, pointing at the first contributing `Field`
  *   line (val-09), with the declared ordinals quoted in the details;
- * - **one `V_INDEX_LEGACY_ONLY` per object** whose only index evidence is legacy (fmt-02, sem-04).
+ * - **one `V_INDEX_LEGACY_ONLY` per object** whose only index evidence is legacy (fmt-02, sem-04);
+ * - **one `V_VIEW_COLUMNS_UNKNOWN` per `[View]`** and **one `V_UNSUPPORTED_SUBTYPE_MEMBERSHIP` per
+ *   `[Subtype]`**, pointing at the object's `PName` line (§9.6, P10, F7). Both are `info` and
+ *   unconditional: every view and every subtype carries one, because the fact they state is true of
+ *   every view and every subtype in v2.21 and a reader must be able to count them. Emitting them
+ *   here — once per object, from the object's own record — is what keeps the count honest.
  */
 export function derivePartialSemantics(classification: Classification): PartialSemantics {
   const identity = identitiesOf(classification);
@@ -138,6 +167,8 @@ export function derivePartialSemantics(classification: Classification): PartialS
   const pages = pagesOf(classification);
   const domains = domainsOf(classification);
   const columns = commonColumnsOf(classification);
+  const views = viewsOf(classification);
+  const subtypes = subtypesOf(classification);
 
   const diagnostics: Diagnostic[] = [];
 
@@ -240,6 +271,30 @@ export function derivePartialSemantics(classification: Classification): PartialS
     );
   }
 
+  // One finding per view, whatever made its columns unavailable (§9.6, P10). The reason travels in
+  // `details`: two views with the same reason are two findings, ordered by line like every other.
+  for (const view of views.views) {
+    diagnostics.push(
+      emitSemantic('V_VIEW_COLUMNS_UNKNOWN', {
+        details: { view: view.pname ?? '', reason: view.effectiveColumns.reason },
+        span: view.span,
+        construct: 'View',
+      }),
+    );
+  }
+
+  // One finding per subtype: membership has no key in v2.21 (F7, K11), so the finding is a fact
+  // about the format rather than about this file, and it is emitted for every subtype alike.
+  for (const subtype of subtypes.subtypes) {
+    diagnostics.push(
+      emitSemantic('V_UNSUPPORTED_SUBTYPE_MEMBERSHIP', {
+        details: { subtype: subtype.pname ?? '', reason: subtype.membership.reason },
+        span: subtype.span,
+        construct: 'Subtype',
+      }),
+    );
+  }
+
   diagnostics.sort((left, right) => (left.span?.startLine ?? 0) - (right.span?.startLine ?? 0));
 
   return {
@@ -265,6 +320,9 @@ export function derivePartialSemantics(classification: Classification): PartialS
     duplicateCommonFields: columns.duplicates,
     entityColumns: columns.entities,
     indeterminateColumnLists: columns.indeterminate,
+    views: views.views,
+    indeterminateViewNames: views.views.filter((view) => view.lnameByComment.origin === 'invalid'),
+    subtypes: subtypes.subtypes,
     diagnostics,
     unresolved: UNRESOLVED_AREAS,
   };

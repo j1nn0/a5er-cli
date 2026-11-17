@@ -107,7 +107,11 @@ describe('page references resolve case-insensitively, verbatim (P9, F5)', () => 
     expect(semantics.pages.map((page) => page.name)).toEqual(['Main', 'Detail']);
     expect(semantics.pageReferences).toHaveLength(6);
     expect(semantics.pageReferences.every((entry) => entry.status === 'resolved')).toBe(true);
-    expect(semantics.diagnostics).toEqual([]);
+    // Every reference resolves, so page resolution itself has nothing to report. The document's
+    // info findings are about its views (§9.6), which this file does not judge.
+    expect(
+      semantics.diagnostics.filter((diagnostic) => diagnostic.code === 'V_DANGLING_PAGE'),
+    ).toEqual([]);
   });
 
   it('treats a case-variant duplicate as ambiguous rather than binding one of them', () => {

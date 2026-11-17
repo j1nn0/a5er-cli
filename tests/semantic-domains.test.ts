@@ -84,10 +84,11 @@ describe('DomainInfo is the documented four elements (P12)', () => {
     expect(result.domains).toHaveLength(2);
     expect(result.duplicates).toHaveLength(1);
     expect(result.duplicates[0]?.declarations.map((domain) => domain.name)).toEqual(['d', 'D']);
-    expect(result.references[0]?.classification).toMatchObject({
+    expect(result.references[0]?.classification).toEqual({
       kind: 'user',
       status: 'ambiguous',
-      resolvedDomain: 'd',
+      name: 'd',
+      candidates: result.domains,
     });
   });
 });
@@ -160,6 +161,126 @@ describe('field types are classified, never resolved (P7, P12)', () => {
     // The kind is a shape, not a resolved target: `outer` is not reported as standing for INTEGER.
     expect(domainTypeKindOf('@INT')).toBe('system');
     expect(domainTypeKindOf('')).toBe('empty');
+  });
+});
+
+/**
+ * R29: the `user` arm is discriminated, so "this names a domain" and "this names *which* domain"
+ * cannot be confused.
+ *
+ * Before the fix an ambiguous reference still carried `resolvedDomain: matches[0].name`, which
+ * published the first declaration as if the file had chosen it. The four cases below are exactly the
+ * four answers the format permits: one match, a case variant of one match, more than one match, and
+ * no match at all.
+ */
+describe('a domain reference resolves or is ambiguous, never half of each (R29)', () => {
+  it('reports the declared spelling beside a unique match, and no candidate list', () => {
+    const result = domainsOfText(
+      `${MANAGER}DomainInfo="int_domain","INTEGER","",""\n` +
+        '[Entity]\nPName="e"\nField="L","c","int_domain","",,"","",$FFFFFFFF,""\nPosition="M",1,1\n',
+    );
+    const classification = result.references[0]?.classification;
+
+    expect(classification).toEqual({
+      kind: 'user',
+      status: 'resolved',
+      name: 'int_domain',
+      resolvedDomain: 'int_domain',
+    });
+    // A resolved reference has no `candidates` member at all — there is nothing to choose between.
+    expect(classification === undefined ? null : 'candidates' in classification).toBe(false);
+  });
+
+  it('resolves a case variant to the declaration and keeps both spellings', () => {
+    const result = domainsOfText(
+      `${MANAGER}DomainInfo="Main","INTEGER","",""\n` +
+        '[Entity]\nPName="e"\n' +
+        'Field="L","a","MAIN","",,"","",$FFFFFFFF,""\n' +
+        'Field="L","b","Main","",,"","",$FFFFFFFF,""\n' +
+        'Field="L","c","mAiN","",,"","",$FFFFFFFF,""\n' +
+        'Position="M",1,1\n',
+    );
+
+    expect(result.references.map((reference) => reference.dataType)).toEqual([
+      'MAIN',
+      'Main',
+      'mAiN',
+    ]);
+    // The reference keeps the file's spelling; the declaration's spelling is reported beside it.
+    expect(
+      result.references.map((reference) =>
+        reference.classification.kind === 'user'
+          ? [reference.classification.name, reference.classification.status]
+          : null,
+      ),
+    ).toEqual([
+      ['MAIN', 'resolved'],
+      ['Main', 'resolved'],
+      ['mAiN', 'resolved'],
+    ]);
+    expect(
+      result.references.map((reference) =>
+        reference.classification.kind === 'user' ? reference.classification.status : null,
+      ),
+    ).toEqual(['resolved', 'resolved', 'resolved']);
+    for (const reference of result.references) {
+      const { classification } = reference;
+      if (classification.kind !== 'user' || classification.status !== 'resolved') continue;
+      expect(classification.resolvedDomain).toBe('Main');
+    }
+  });
+
+  it('keeps every candidate with its span and selects none when the name is duplicated', () => {
+    const result = domainsOfText(
+      `${MANAGER}DomainInfo="d","INTEGER","one",""\nDomainInfo="D","TEXT","two",""\n` +
+        '[Entity]\nPName="e"\nField="L","c","D","",,"","",$FFFFFFFF,""\nPosition="M",1,1\n',
+    );
+    const classification = result.references[0]?.classification;
+
+    // Two declarations, two spellings: the reference's own spelling is `D`, the declaration it most
+    // resembles is `D`, and neither may be published as *the* target.
+    expect(classification?.kind).toBe('user');
+    expect(classification).toMatchObject({ kind: 'user', status: 'ambiguous', name: 'D' });
+    expect(classification === undefined ? null : 'resolvedDomain' in classification).toBe(false);
+    expect(
+      classification?.kind === 'user' && classification.status === 'ambiguous'
+        ? classification.candidates.map((candidate) => [candidate.name, candidate.span.keyLine])
+        : null,
+    ).toEqual([
+      ['d', 3],
+      ['D', 4],
+    ]);
+    // The reference is also listed as ambiguous, and no code is invented for it (§11 has none).
+    expect(result.ambiguous.map((reference) => reference.column)).toEqual(['c']);
+    expect(
+      derivePartialSemantics(
+        classify(
+          scanSource({
+            text:
+              `${MANAGER}DomainInfo="d","INTEGER","one",""\nDomainInfo="D","TEXT","two",""\n` +
+              '[Entity]\nPName="e"\nField="L","c","D","",,"","",$FFFFFFFF,""\nPosition="M",1,1\n',
+            format: 21,
+          }),
+        ),
+      ).diagnostics,
+    ).toEqual([]);
+  });
+
+  it('calls an unmatched type plain, not dangling', () => {
+    const result = domainsOfText(
+      `${MANAGER}DomainInfo="known","INTEGER","",""\n` +
+        '[Entity]\nPName="e"\n' +
+        'Field="L","a","Integer","",,"","",$FFFFFFFF,""\n' +
+        'Field="L","b","unknown_domain","",,"","",$FFFFFFFF,""\n' +
+        'Position="M",1,1\n',
+    );
+
+    // Neither token produced a `user` reference: P7's token shape carries no marker, so calling one
+    // of them a dangling domain would be a guess dressed as a finding.
+    expect(result.references).toEqual([]);
+    expect(result.ambiguous).toEqual([]);
+    expect(classifyType('unknown_domain', new Map())).toEqual({ kind: 'plain' });
+    expect(classifyType('Integer', new Map())).toEqual({ kind: 'plain' });
   });
 });
 
@@ -319,5 +440,140 @@ describe('effective columns compose by opt-in, never by override (P6, §9.4)', (
     expect(semantics.indeterminateColumnLists).toEqual([]);
     // No diagnostic code exists for a domain or a common column, so none is invented.
     expect(semantics.diagnostics).toEqual([]);
+  });
+});
+
+/**
+ * R30: `CommonField`'s キー順 obeys the rule `schema/field.ts` already applies (R19).
+ *
+ * The old read was `keyOrderText === '' ? null : decodeInteger(...)` and then `keyOrder.ok ? value :
+ * null`, which collapsed three different answers into one `null`: an empty slot, a token that is not
+ * an integer, and a token that is an integer but not a `0`-based ordinal. It also published nothing
+ * about which of them it was, so "no ordinal" and "unreadable ordinal" were the same record.
+ *
+ * The parity test at the end is the point: one ordinal rule for the whole format, checked by giving
+ * a `Field` and a `CommonField` the same token and requiring the same answer.
+ */
+describe('CommonField キー順 uses the Field ordinal rule (R30)', () => {
+  /** The single `CommonField` of a one-line document, with キー順 set to `token`. */
+  function commonWith(token: string) {
+    return columnsOfText(`${MANAGER}CommonField="L","c","Integer",,${token},"","",$FFFFFFFF\n`)
+      .commonFields[0];
+  }
+
+  /** The single `Field` of a one-line document, with キー順 set to `token`. */
+  function fieldWith(token: string) {
+    const classification = classify(
+      scanSource({
+        text: `${MANAGER}[Entity]\nPName="e"\nField="L","c","Integer","",${token},"","",$FFFFFFFF,""\nPosition="M",1,1\n`,
+        format: 21,
+      }),
+    );
+    return classification.sections[1]?.decoded.fields[0];
+  }
+
+  it('reads an empty slot as empty, not as an invalid token', () => {
+    expect(commonWith('')).toMatchObject({
+      keyOrder: null,
+      keyOrderToken: 'empty',
+      keyOrderRaw: '',
+    });
+  });
+
+  it('reads a slot the writer never emitted as empty, with no raw text', () => {
+    // Four elements and nothing more: `キー順` has no position at all (§7.1: absent ≠ empty).
+    const declaration = columnsOfText(`${MANAGER}CommonField="L","c","Integer","NotNull"\n`)
+      .commonFields[0];
+
+    expect(declaration).toMatchObject({
+      keyOrder: null,
+      keyOrderToken: 'empty',
+      keyOrderRaw: null,
+      elementsSeen: 4,
+      shape: 'unexpected-element-count',
+    });
+  });
+
+  it('accepts 0 and 1 as zero-based ordinals', () => {
+    expect(commonWith('0')).toMatchObject({ keyOrder: 0, keyOrderToken: 'ordinal' });
+    expect(commonWith('1')).toMatchObject({ keyOrder: 1, keyOrderToken: 'ordinal' });
+  });
+
+  it('accepts MAX_SAFE_INTEGER and rejects one past it', () => {
+    expect(commonWith('9007199254740991')).toMatchObject({
+      keyOrder: 9007199254740991,
+      keyOrderToken: 'ordinal',
+      keyOrderRaw: '9007199254740991',
+    });
+    // `Number('9007199254740992')` is exactly representable but not a safe integer, and a 19-digit
+    // token would round: the ordinal is withheld and the text kept.
+    expect(commonWith('9007199254740992')).toMatchObject({
+      keyOrder: null,
+      keyOrderToken: 'unrecognised',
+      keyOrderRaw: '9007199254740992',
+    });
+  });
+
+  it('keeps the token for a negative ordinal and refuses to make it a key column', () => {
+    // `-1` is a valid integer but not a `0`-based ordinal, so it is unrecognised rather than `-1`.
+    expect(commonWith('-1')).toMatchObject({
+      keyOrder: null,
+      keyOrderToken: 'unrecognised',
+      keyOrderRaw: '-1',
+    });
+  });
+
+  it('keeps the token for every malformed spelling', () => {
+    for (const token of ['+1', '1.5', '0x10', 'abc', '01', '1e3']) {
+      expect(commonWith(token), token).toMatchObject({
+        keyOrder: null,
+        keyOrderToken: 'unrecognised',
+        keyOrderRaw: token,
+      });
+    }
+  });
+
+  it('agrees with `Field` on every token the audit named', () => {
+    const tokens = [
+      '',
+      '0',
+      '1',
+      '-1',
+      '+1',
+      '1.5',
+      '0x10',
+      'abc',
+      '9007199254740991',
+      '9007199254740992',
+    ];
+    for (const token of tokens) {
+      const common = commonWith(token);
+      const field = fieldWith(token);
+      expect(
+        [common?.keyOrder, common?.keyOrderToken, common?.keyOrderRaw],
+        `CommonField キー順=${token}`,
+      ).toEqual([field?.keyOrder?.value ?? null, field?.keyOrderToken, field?.keyOrderRaw]);
+    }
+  });
+
+  it('does not make a common column part of a primary key (matcher only)', () => {
+    const semantics = derivePartialSemantics(
+      classify(
+        scanSource({
+          text:
+            `${MANAGER}CommonField="共通ID","common_id","Integer","NotNull",0,"","",$FFFFFFFF\n` +
+            '[Entity]\nPName="e"\nField="ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,""\nPosition="M",1,1\n',
+          format: 21,
+        }),
+      ),
+    );
+
+    // The composed column is in the effective list, with its ordinal carried...
+    const entity = semantics.entityColumns[0];
+    expect(entity?.effective.map((column) => column.pname)).toEqual(['id', 'common_id']);
+    // ...but the key is inferred from `Field` lines only: one column, and it is not the common one.
+    expect(semantics.primaryKeys).toHaveLength(1);
+    expect(semantics.primaryKeys[0]?.columns.map((column) => column.pname)).toEqual(['id']);
+    expect(semantics.pkConflicts).toEqual([]);
   });
 });

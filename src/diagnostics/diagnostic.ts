@@ -113,9 +113,10 @@ export type RegistryStageCode = 'S_UNKNOWN_KEY' | 'S_LEGACY_KEY' | 'S_DUPLICATE_
 /**
  * A code the semantic stage can raise (§9, §11).
  *
- * Only the four findings this unit derives: object identity, required keys, key order and legacy-only
- * index data. The remaining `V_` codes (dangling references, field counts, view columns, subtype
- * membership) belong to the resolution work that is still open, and are not raised from anywhere yet.
+ * Every `V_` code `architecture.md` §11 lists. The stage raises all eight semantic findings: object
+ * identity, required keys, key order, legacy-only index data, dangling references, field counts, view
+ * columns and subtype membership. The last two are `info` and unconditional (§9.6): they state what
+ * the format does not carry, so they are facts about the file rather than defects in it.
  */
 export type SemanticStageCode =
   | 'V_DUPLICATE_OBJECT_NAME'
@@ -125,7 +126,9 @@ export type SemanticStageCode =
   | 'V_DANGLING_ENTITY'
   | 'V_DANGLING_COLUMN'
   | 'V_DANGLING_PAGE'
-  | 'V_FIELD_COUNT_MISMATCH';
+  | 'V_FIELD_COUNT_MISMATCH'
+  | 'V_UNSUPPORTED_SUBTYPE_MEMBERSHIP'
+  | 'V_VIEW_COLUMNS_UNKNOWN';
 
 /**
  * Detail values, per `architecture.md` §11.
@@ -308,6 +311,17 @@ const SEMANTIC_DEFINITIONS: Readonly<Record<SemanticStageCode, Definition>> = {
   V_FIELD_COUNT_MISMATCH: {
     severity: 'warning',
     message: 'The two sides of a relation map a different number of columns',
+  },
+  // §9.6: the two findings that report what the format does **not** carry. Both are unconditional
+  // facts about an object rather than defects, so they are `info` and their messages are fixed —
+  // the object's name and the reason travel in `details` (§11 rule 1).
+  V_UNSUPPORTED_SUBTYPE_MEMBERSHIP: {
+    severity: 'info',
+    message: 'A subtype cannot declare which entities belong to it',
+  },
+  V_VIEW_COLUMNS_UNKNOWN: {
+    severity: 'info',
+    message: 'A view does not store its columns',
   },
 };
 

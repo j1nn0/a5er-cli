@@ -591,11 +591,13 @@ mutates the AST.
 
 The layer lands in increments. The current one produces a **`PartialSemantics`** — object identities,
 duplicate names, absent required keys, inferred primary keys, legacy-only index data, resolved
-relations and resolved page references — together with an explicit list of the areas it does **not**
-model: domain resolution, common columns, view columns and subtype membership. The name is part of
-the contract: a consumer that reads an absent finding must also read that list, because "nothing
-reported" means "nothing checked" for everything on it. The list shrank when relations and pages
-landed; it is the record of what is still owed, not a description of the stage.
+relations and page references, domains, common columns, view column state and subtype membership —
+together with the list of areas it does **not** model. The name is part of the contract: a consumer
+that reads an absent finding must also read that list, because "nothing reported" means "nothing
+checked" for everything on it. The list shrank as relations, pages, domains, common columns, view
+columns and subtype membership landed, and is now **empty**: the last two areas left it because they
+are answered per object rather than deferred (§9.6), so "no finding" is no longer ambiguous for them.
+An empty list says nothing about the JSON envelope, the serializer or the CLI, which are later units.
 
 ### 9.1 Object identity
 
@@ -675,14 +677,21 @@ brief.
 ### 9.4 Domains, common fields, pages
 
 - **Domains**: `DomainInfo` names are resolved case-insensitively; a `Field` data type matching
-  a domain name becomes `kind: 'user-domain'` with `domain` set; `@…` tokens become
-  `kind: 'system-domain'`. Neither resolves to a SQL type (P12). `DecodeDomain` is parsed as an
-  integer despite its `Boolean` type in the spec (K8).
+  a domain name becomes `kind: 'user'`; `@…` tokens become `kind: 'system'`. Neither resolves to a
+  SQL type (P12). `DecodeDomain` is parsed as an integer despite its `Boolean` type in the spec (K8).
+  The `user` arm is **discriminated** on `status` (R29): `resolved` carries the one declaration's
+  spelling as `resolvedDomain`, and `ambiguous` — two or more declarations sharing the name
+  case-insensitively, which P12 forbids — carries **every** candidate with its span and has no
+  `resolvedDomain` field at all, so the first declaration can never be published as the target.
+  Either way `name` is the type text as the file wrote it.
 - **Common fields**: `effectiveColumns` = declared `Field`s, plus applicable `CommonField`s when
   `UsingCommonColumns` is 1 — which it is by default when absent, as `origin: 'defaulted'` (P12;
   §11 defines no code for the default, so `origin` is what reports it). Common columns are marked `source: 'common'` so a consumer can tell
   them from declared ones. `NotNull` is the CommonField spelling of NOT NULL and is normalised
-  to the same boolean (P5).
+  to the same boolean (P5). `CommonField` キー順 follows the same ordinal rule as `Field` キー順 —
+  a nonnegative safe integer, with `empty` and `unrecognised` kept apart from each other and from a
+  value, the token preserved (R30) — and **never** joins the inferred key: `primaryKey` is read from
+  `Field` ordinals only.
   Three boundary rules, all recorded rather than guessed: a `UsingCommonColumns` token that does not
   decode leaves the composition **undecided** (`indeterminate`) instead of falling back to the
   default, because §4.2's default is for an *absent* key; a physical name that arrives from both
@@ -708,11 +717,19 @@ admits more than one reading. `$FFFFFFFF` is reported as the default colour, not
 
 - **Views** have no `Field` (P6), so `effectiveColumns.status` is `unknown` with
   `view-columns-not-stored`; when `LNameByComment=1`, `view-columns-named-from-query` (P10).
-  `Query` is retained verbatim as a `String` and never split, trimmed, or re-escaped.
+  `Query` is retained verbatim as a `String` and never split, trimmed, or re-escaped. The unknown
+  arm carries no `columns` member, so `columns: []` is unrepresentable, and `Position` count never
+  changes the reason. v2.21 states **no default** for `LNameByComment`, so an absent key stays
+  absent (`origin: 'absent'`) and an unusable token is `indeterminate` with its text kept — neither
+  is read as `0`. One `V_VIEW_COLUMNS_UNKNOWN` (info) per view.
 - **Subtypes** are emitted with `membership: { status: 'unsupported', reason: 'no-membership-key-in-v2.21' }`
   (F7, D6, K11). The object's own keys (`SharedMode`, `CompleteCategory`, `Position`, `ZOrder`)
   are parsed normally; only the relationship to entities is declared unknown, with an
-  `unsupported` entry per subtype.
+  `unsupported` entry per subtype. The membership record has no member list, so no entity can be
+  read out of it, and nothing is inferred from naming or position (A14). `SharedMode` and
+  `CompleteCategory` are untyped in the specification and stay text; a token that does not decode
+  keeps its raw text and span, so it cannot pass for an absent key. One
+  `V_UNSUPPORTED_SUBTYPE_MEMBERSHIP` (info) per subtype.
 
 ---
 
