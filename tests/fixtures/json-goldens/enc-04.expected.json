@@ -1,0 +1,31 @@
+{
+  "contractVersion": "0.1.0",
+  "tool": {
+    "name": "@j1nn0/a5er-cli",
+    "version": "0.1.0"
+  },
+  "command": "inspect",
+  "status": "failed",
+  "source": null,
+  "limits": {
+    "maxBytes": 67108864,
+    "truncated": false
+  },
+  "schema": null,
+  "unsupported": [],
+  "diagnostics": [
+    {
+      "code": "E_UNDECODABLE",
+      "severity": "fatal",
+      "message": "No supported encoding decodes the input without loss",
+      "details": {
+        "sizeBytes": 39,
+        "tried": "utf-8,shift_jis,utf-16le,utf-16be",
+        "bom": false
+      },
+      "span": null,
+      "construct": "Source"
+    }
+  ],
+  "completeness": null
+}

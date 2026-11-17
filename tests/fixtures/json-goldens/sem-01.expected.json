@@ -1,0 +1,942 @@
+{
+  "contractVersion": "0.1.0",
+  "tool": {
+    "name": "@j1nn0/a5er-cli",
+    "version": "0.1.0"
+  },
+  "command": "inspect",
+  "status": "degraded",
+  "source": {
+    "path": "<tmp>/sem-01.a5er",
+    "sizeBytes": 462,
+    "sha256": "b55e483aca3a9e1f69f29baa14a2d79631ef9d2b51dabac41ef7d2ba05a4a9d0",
+    "encoding": {
+      "detected": "utf-8",
+      "bom": true,
+      "declared": null,
+      "mismatch": false
+    },
+    "format": {
+      "declared": 21,
+      "effective": 21,
+      "known": true
+    }
+  },
+  "limits": {
+    "maxBytes": 67108864,
+    "truncated": false
+  },
+  "schema": {
+    "objects": [
+      {
+        "kind": "entity",
+        "sectionIndex": 2,
+        "sectionHeader": "[Entity]",
+        "span": {
+          "sectionIndex": 2,
+          "startLine": 7,
+          "endLine": 7,
+          "keyLine": 7
+        },
+        "pname": {
+          "value": "orders",
+          "origin": "declared",
+          "raw": "\"orders\"",
+          "span": {
+            "sectionIndex": 2,
+            "startLine": 7,
+            "endLine": 7,
+            "keyLine": 7
+          }
+        },
+        "lname": null,
+        "comment": null,
+        "fields": [
+          {
+            "elementsSeen": 9,
+            "logicalName": {
+              "value": "注文ID",
+              "origin": "declared",
+              "raw": "\"注文ID\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 8,
+                "endLine": 8,
+                "keyLine": 8
+              }
+            },
+            "physicalName": {
+              "value": "id",
+              "origin": "declared",
+              "raw": "\"id\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 8,
+                "endLine": 8,
+                "keyLine": 8
+              }
+            },
+            "dataType": {
+              "value": "Serial",
+              "origin": "declared",
+              "raw": "\"Serial\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 8,
+                "endLine": 8,
+                "keyLine": 8
+              }
+            },
+            "notNull": {
+              "value": true,
+              "origin": "declared",
+              "raw": "\"NOT NULL\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 8,
+                "endLine": 8,
+                "keyLine": 8
+              }
+            },
+            "notNullToken": "not-null",
+            "notNullRaw": "\"NOT NULL\"",
+            "keyOrder": {
+              "value": 0,
+              "origin": "declared",
+              "raw": "0",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 8,
+                "endLine": 8,
+                "keyLine": 8
+              }
+            },
+            "keyOrderToken": "ordinal",
+            "keyOrderRaw": "0",
+            "defaultValue": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 8,
+                "endLine": 8,
+                "keyLine": 8
+              }
+            },
+            "comment": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 8,
+                "endLine": 8,
+                "keyLine": 8
+              }
+            },
+            "color": {
+              "value": "$FFFFFFFF",
+              "origin": "declared",
+              "raw": "$FFFFFFFF",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 8,
+                "endLine": 8,
+                "keyLine": 8
+              }
+            },
+            "option": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 8,
+                "endLine": 8,
+                "keyLine": 8
+              }
+            },
+            "additionalOption": {
+              "value": "",
+              "origin": "defaulted",
+              "raw": "",
+              "span": null
+            },
+            "raw": "\"注文ID\",\"id\",\"Serial\",\"NOT NULL\",0,\"\",\"\",$FFFFFFFF,\"\"",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 8,
+              "endLine": 8,
+              "keyLine": 8
+            }
+          },
+          {
+            "elementsSeen": 9,
+            "logicalName": {
+              "value": "ユーザーID",
+              "origin": "declared",
+              "raw": "\"ユーザーID\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 9,
+                "endLine": 9,
+                "keyLine": 9
+              }
+            },
+            "physicalName": {
+              "value": "user_id",
+              "origin": "declared",
+              "raw": "\"user_id\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 9,
+                "endLine": 9,
+                "keyLine": 9
+              }
+            },
+            "dataType": {
+              "value": "Integer",
+              "origin": "declared",
+              "raw": "\"Integer\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 9,
+                "endLine": 9,
+                "keyLine": 9
+              }
+            },
+            "notNull": {
+              "value": true,
+              "origin": "declared",
+              "raw": "\"NOT NULL\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 9,
+                "endLine": 9,
+                "keyLine": 9
+              }
+            },
+            "notNullToken": "not-null",
+            "notNullRaw": "\"NOT NULL\"",
+            "keyOrder": {
+              "value": 1,
+              "origin": "declared",
+              "raw": "1",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 9,
+                "endLine": 9,
+                "keyLine": 9
+              }
+            },
+            "keyOrderToken": "ordinal",
+            "keyOrderRaw": "1",
+            "defaultValue": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 9,
+                "endLine": 9,
+                "keyLine": 9
+              }
+            },
+            "comment": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 9,
+                "endLine": 9,
+                "keyLine": 9
+              }
+            },
+            "color": {
+              "value": "$FFFFFFFF",
+              "origin": "declared",
+              "raw": "$FFFFFFFF",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 9,
+                "endLine": 9,
+                "keyLine": 9
+              }
+            },
+            "option": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 9,
+                "endLine": 9,
+                "keyLine": 9
+              }
+            },
+            "additionalOption": {
+              "value": "",
+              "origin": "defaulted",
+              "raw": "",
+              "span": null
+            },
+            "raw": "\"ユーザーID\",\"user_id\",\"Integer\",\"NOT NULL\",1,\"\",\"\",$FFFFFFFF,\"\"",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 9,
+              "endLine": 9,
+              "keyLine": 9
+            }
+          }
+        ],
+        "indexes": {
+          "canonical": [],
+          "legacy": [],
+          "legacyOptions": [],
+          "primarySource": "canonical"
+        },
+        "primaryKey": {
+          "status": "inferred",
+          "value": ["id", "user_id"],
+          "origin": "inferred",
+          "span": null,
+          "derivedFrom": [
+            {
+              "sectionIndex": 2,
+              "startLine": 8,
+              "endLine": 8,
+              "keyLine": 8
+            },
+            {
+              "sectionIndex": 2,
+              "startLine": 9,
+              "endLine": 9,
+              "keyLine": 9
+            }
+          ],
+          "columns": [
+            {
+              "pname": "id",
+              "ordinal": 0,
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 8,
+                "endLine": 8,
+                "keyLine": 8
+              }
+            },
+            {
+              "pname": "user_id",
+              "ordinal": 1,
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 9,
+                "endLine": 9,
+                "keyLine": 9
+              }
+            }
+          ]
+        },
+        "positions": [
+          {
+            "kind": "object",
+            "page": {
+              "value": "Main",
+              "origin": "declared",
+              "raw": "\"Main\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 10,
+                "endLine": 10,
+                "keyLine": 10
+              }
+            },
+            "x": {
+              "value": 10,
+              "origin": "declared",
+              "raw": "10",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 10,
+                "endLine": 10,
+                "keyLine": 10
+              }
+            },
+            "y": {
+              "value": 10,
+              "origin": "declared",
+              "raw": "10",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 10,
+                "endLine": 10,
+                "keyLine": 10
+              }
+            },
+            "width": null,
+            "height": null,
+            "rawElements": [
+              {
+                "index": 0,
+                "raw": "\"Main\"",
+                "quoted": true
+              },
+              {
+                "index": 1,
+                "raw": "10",
+                "quoted": false
+              },
+              {
+                "index": 2,
+                "raw": "10",
+                "quoted": false
+              }
+            ],
+            "elementsSeen": 3,
+            "raw": "\"Main\",10,10",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 10,
+              "endLine": 10,
+              "keyLine": 10
+            }
+          }
+        ],
+        "effectiveColumns": {
+          "status": "complete",
+          "columns": [
+            {
+              "pname": "id",
+              "logicalName": "注文ID",
+              "source": "declared",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 8,
+                "endLine": 8,
+                "keyLine": 8
+              },
+              "collision": false
+            },
+            {
+              "pname": "user_id",
+              "logicalName": "ユーザーID",
+              "source": "declared",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 9,
+                "endLine": 9,
+                "keyLine": 9
+              },
+              "collision": false
+            }
+          ],
+          "declared": [
+            {
+              "pname": "id",
+              "logicalName": "注文ID",
+              "source": "declared",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 8,
+                "endLine": 8,
+                "keyLine": 8
+              },
+              "collision": false
+            },
+            {
+              "pname": "user_id",
+              "logicalName": "ユーザーID",
+              "source": "declared",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 9,
+                "endLine": 9,
+                "keyLine": 9
+              },
+              "collision": false
+            }
+          ],
+          "common": [],
+          "collisions": [],
+          "usingCommonColumns": {
+            "value": 1,
+            "origin": "defaulted",
+            "raw": "",
+            "span": null,
+            "token": "absent"
+          }
+        },
+        "attributes": []
+      }
+    ],
+    "relations": [
+      {
+        "sectionIndex": 3,
+        "sectionHeader": "[Relation]",
+        "span": {
+          "sectionIndex": 3,
+          "startLine": 12,
+          "endLine": 12,
+          "keyLine": 12
+        },
+        "pname": null,
+        "from": {
+          "key": "Entity1",
+          "declared": "orders",
+          "raw": "\"orders\"",
+          "span": {
+            "sectionIndex": 3,
+            "startLine": 13,
+            "endLine": 13,
+            "keyLine": 13
+          },
+          "status": "resolved",
+          "resolvedEntity": "orders",
+          "candidates": 1
+        },
+        "to": {
+          "key": "Entity2",
+          "declared": "ghost_table",
+          "raw": "\"ghost_table\"",
+          "span": {
+            "sectionIndex": 3,
+            "startLine": 14,
+            "endLine": 14,
+            "keyLine": 14
+          },
+          "status": "dangling",
+          "resolvedEntity": null,
+          "candidates": 0
+        },
+        "fromColumns": {
+          "key": "Fields1",
+          "raw": "\"user_id\"",
+          "span": {
+            "sectionIndex": 3,
+            "startLine": 15,
+            "endLine": 15,
+            "keyLine": 15
+          },
+          "columns": [
+            {
+              "pname": "user_id",
+              "raw": "\"user_id\"",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 15,
+                "endLine": 15,
+                "keyLine": 15
+              },
+              "index": 0,
+              "empty": false
+            }
+          ]
+        },
+        "toColumns": {
+          "key": "Fields2",
+          "raw": "\"ghost_column\"",
+          "span": {
+            "sectionIndex": 3,
+            "startLine": 16,
+            "endLine": 16,
+            "keyLine": 16
+          },
+          "columns": [
+            {
+              "pname": "ghost_column",
+              "raw": "\"ghost_column\"",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 16,
+                "endLine": 16,
+                "keyLine": 16
+              },
+              "index": 0,
+              "empty": false
+            }
+          ]
+        },
+        "relationType1": {
+          "value": 1,
+          "origin": "declared",
+          "raw": "1",
+          "span": {
+            "sectionIndex": 3,
+            "startLine": 17,
+            "endLine": 17,
+            "keyLine": 17
+          }
+        },
+        "relationType2": {
+          "value": 3,
+          "origin": "declared",
+          "raw": "3",
+          "span": {
+            "sectionIndex": 3,
+            "startLine": 18,
+            "endLine": 18,
+            "keyLine": 18
+          }
+        },
+        "cardinarity1": {
+          "value": "Z",
+          "origin": "declared",
+          "raw": "\"Z\"",
+          "span": {
+            "sectionIndex": 3,
+            "startLine": 19,
+            "endLine": 19,
+            "keyLine": 19
+          }
+        },
+        "cardinarity2": {
+          "value": "P",
+          "origin": "declared",
+          "raw": "\"P\"",
+          "span": {
+            "sectionIndex": 3,
+            "startLine": 20,
+            "endLine": 20,
+            "keyLine": 20
+          }
+        },
+        "scalars": [
+          {
+            "key": "RelationType1",
+            "keyRaw": "RelationType1",
+            "origin": "declared",
+            "raw": "1",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 17,
+              "endLine": 17,
+              "keyLine": 17
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "integer",
+              "value": 1
+            }
+          },
+          {
+            "key": "RelationType2",
+            "keyRaw": "RelationType2",
+            "origin": "declared",
+            "raw": "3",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 18,
+              "endLine": 18,
+              "keyLine": 18
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "integer",
+              "value": 3
+            }
+          },
+          {
+            "key": "Cardinarity1",
+            "keyRaw": "Cardinarity1",
+            "origin": "declared",
+            "raw": "\"Z\"",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 19,
+              "endLine": 19,
+              "keyLine": 19
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "Z"
+            }
+          },
+          {
+            "key": "Cardinarity2",
+            "keyRaw": "Cardinarity2",
+            "origin": "declared",
+            "raw": "\"P\"",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 20,
+              "endLine": 20,
+              "keyLine": 20
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "P"
+            }
+          }
+        ],
+        "columnsAligned": true,
+        "positions": [
+          {
+            "kind": "relation",
+            "page": {
+              "value": "GhostPage",
+              "origin": "declared",
+              "raw": "\"GhostPage\"",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 21,
+                "endLine": 21,
+                "keyLine": 21
+              }
+            },
+            "lineMode": {
+              "value": 0,
+              "origin": "declared",
+              "raw": "0",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 21,
+                "endLine": 21,
+                "keyLine": 21
+              }
+            },
+            "linePositions": [
+              {
+                "value": 5000,
+                "origin": "declared",
+                "raw": "5000",
+                "span": {
+                  "sectionIndex": 3,
+                  "startLine": 21,
+                  "endLine": 21,
+                  "keyLine": 21
+                }
+              },
+              {
+                "value": 5000,
+                "origin": "declared",
+                "raw": "5000",
+                "span": {
+                  "sectionIndex": 3,
+                  "startLine": 21,
+                  "endLine": 21,
+                  "keyLine": 21
+                }
+              },
+              {
+                "value": 5000,
+                "origin": "declared",
+                "raw": "5000",
+                "span": {
+                  "sectionIndex": 3,
+                  "startLine": 21,
+                  "endLine": 21,
+                  "keyLine": 21
+                }
+              }
+            ],
+            "terminals": [
+              {
+                "value": "R",
+                "origin": "declared",
+                "raw": "R",
+                "span": {
+                  "sectionIndex": 3,
+                  "startLine": 21,
+                  "endLine": 21,
+                  "keyLine": 21
+                }
+              },
+              {
+                "value": "R",
+                "origin": "declared",
+                "raw": "R",
+                "span": {
+                  "sectionIndex": 3,
+                  "startLine": 21,
+                  "endLine": 21,
+                  "keyLine": 21
+                }
+              }
+            ],
+            "vertices": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 21,
+                "endLine": 21,
+                "keyLine": 21
+              }
+            },
+            "rawElements": [
+              {
+                "index": 0,
+                "raw": "\"GhostPage\"",
+                "quoted": true
+              },
+              {
+                "index": 1,
+                "raw": "0",
+                "quoted": false
+              },
+              {
+                "index": 2,
+                "raw": "5000",
+                "quoted": false
+              },
+              {
+                "index": 3,
+                "raw": "5000",
+                "quoted": false
+              },
+              {
+                "index": 4,
+                "raw": "5000",
+                "quoted": false
+              },
+              {
+                "index": 5,
+                "raw": "R",
+                "quoted": false
+              },
+              {
+                "index": 6,
+                "raw": "R",
+                "quoted": false
+              },
+              {
+                "index": 7,
+                "raw": "\"\"",
+                "quoted": true
+              }
+            ],
+            "elementsSeen": 8,
+            "raw": "\"GhostPage\",0,5000,5000,5000,R,R,\"\"",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 21,
+              "endLine": 21,
+              "keyLine": 21
+            }
+          }
+        ],
+        "attributes": []
+      }
+    ],
+    "pages": [
+      {
+        "name": "Main",
+        "raw": "\"Main\",3,\"A4Landscape\",\"$FFFFFF\"",
+        "span": {
+          "sectionIndex": 1,
+          "startLine": 4,
+          "endLine": 4,
+          "keyLine": 4
+        },
+        "displayMode": 3,
+        "paperSize": "A4Landscape",
+        "background": "$FFFFFF",
+        "elementsSeen": 4,
+        "shape": "documented",
+        "rawElements": [
+          {
+            "index": 0,
+            "raw": "\"Main\"",
+            "quoted": true
+          },
+          {
+            "index": 1,
+            "raw": "3",
+            "quoted": false
+          },
+          {
+            "index": 2,
+            "raw": "\"A4Landscape\"",
+            "quoted": true
+          },
+          {
+            "index": 3,
+            "raw": "\"$FFFFFF\"",
+            "quoted": true
+          }
+        ]
+      }
+    ],
+    "domains": [],
+    "commonFields": [],
+    "manager": {
+      "attributes": []
+    }
+  },
+  "unsupported": [],
+  "diagnostics": [
+    {
+      "code": "V_DANGLING_ENTITY",
+      "severity": "warning",
+      "message": "A relation names an entity the document does not declare",
+      "details": {
+        "endpoint": "Entity2",
+        "declared": "ghost_table"
+      },
+      "span": {
+        "sectionIndex": 3,
+        "startLine": 14,
+        "endLine": 14,
+        "keyLine": 14
+      },
+      "construct": "Relation"
+    },
+    {
+      "code": "V_DANGLING_COLUMN",
+      "severity": "warning",
+      "message": "A relation maps a column the resolved entity does not declare",
+      "details": {
+        "endpoint": "Entity2",
+        "column": "ghost_column",
+        "entity": null
+      },
+      "span": {
+        "sectionIndex": 3,
+        "startLine": 16,
+        "endLine": 16,
+        "keyLine": 16
+      },
+      "construct": "Relation"
+    },
+    {
+      "code": "V_DANGLING_PAGE",
+      "severity": "warning",
+      "message": "A placement names a page the document does not declare",
+      "details": {
+        "page": "GhostPage",
+        "section": "Relation"
+      },
+      "span": {
+        "sectionIndex": 3,
+        "startLine": 21,
+        "endLine": 21,
+        "keyLine": 21
+      },
+      "construct": "Position"
+    }
+  ],
+  "completeness": {
+    "sections": {
+      "total": 3,
+      "parsed": 3,
+      "preservedRaw": 0,
+      "unknown": 0
+    },
+    "keys": {
+      "total": 14,
+      "parsed": 14,
+      "preservedRaw": 0
+    },
+    "lines": {
+      "total": 21,
+      "accounted": 21,
+      "dropped": 0
+    },
+    "dropped": 0
+  }
+}

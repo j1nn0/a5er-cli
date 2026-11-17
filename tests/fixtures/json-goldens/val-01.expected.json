@@ -1,0 +1,392 @@
+{
+  "contractVersion": "0.1.0",
+  "tool": {
+    "name": "@j1nn0/a5er-cli",
+    "version": "0.1.0"
+  },
+  "command": "inspect",
+  "status": "ok",
+  "source": {
+    "path": "<tmp>/val-01.a5er",
+    "sizeBytes": 255,
+    "sha256": "ffc3dfff8a712df211acf762eacdc908a3b72d01a48ea650d70adf65c2b4a257",
+    "encoding": {
+      "detected": "utf-8",
+      "bom": true,
+      "declared": null,
+      "mismatch": false
+    },
+    "format": {
+      "declared": 21,
+      "effective": 21,
+      "known": true
+    }
+  },
+  "limits": {
+    "maxBytes": 67108864,
+    "truncated": false
+  },
+  "schema": {
+    "objects": [
+      {
+        "kind": "entity",
+        "sectionIndex": 1,
+        "sectionHeader": "[Entity]",
+        "span": {
+          "sectionIndex": 1,
+          "startLine": 4,
+          "endLine": 4,
+          "keyLine": 4
+        },
+        "pname": {
+          "value": "escapes",
+          "origin": "declared",
+          "raw": "\"escapes\"",
+          "span": {
+            "sectionIndex": 1,
+            "startLine": 4,
+            "endLine": 4,
+            "keyLine": 4
+          }
+        },
+        "lname": null,
+        "comment": {
+          "value": "引用\"と\\と'と\tと\nです",
+          "origin": "declared",
+          "raw": "\"引用\\Qと\\\\と\\qと\\tと\\nです\"",
+          "span": {
+            "sectionIndex": 1,
+            "startLine": 5,
+            "endLine": 5,
+            "keyLine": 5
+          }
+        },
+        "fields": [
+          {
+            "elementsSeen": 9,
+            "logicalName": {
+              "value": "論理",
+              "origin": "declared",
+              "raw": "\"論理\"",
+              "span": {
+                "sectionIndex": 1,
+                "startLine": 6,
+                "endLine": 6,
+                "keyLine": 6
+              }
+            },
+            "physicalName": {
+              "value": "phys",
+              "origin": "declared",
+              "raw": "\"phys\"",
+              "span": {
+                "sectionIndex": 1,
+                "startLine": 6,
+                "endLine": 6,
+                "keyLine": 6
+              }
+            },
+            "dataType": {
+              "value": "varchar(10)",
+              "origin": "declared",
+              "raw": "\"varchar(10)\"",
+              "span": {
+                "sectionIndex": 1,
+                "startLine": 6,
+                "endLine": 6,
+                "keyLine": 6
+              }
+            },
+            "notNull": {
+              "value": true,
+              "origin": "declared",
+              "raw": "\"NOT NULL\"",
+              "span": {
+                "sectionIndex": 1,
+                "startLine": 6,
+                "endLine": 6,
+                "keyLine": 6
+              }
+            },
+            "notNullToken": "not-null",
+            "notNullRaw": "\"NOT NULL\"",
+            "keyOrder": {
+              "value": 0,
+              "origin": "declared",
+              "raw": "0",
+              "span": {
+                "sectionIndex": 1,
+                "startLine": 6,
+                "endLine": 6,
+                "keyLine": 6
+              }
+            },
+            "keyOrderToken": "ordinal",
+            "keyOrderRaw": "0",
+            "defaultValue": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 1,
+                "startLine": 6,
+                "endLine": 6,
+                "keyLine": 6
+              }
+            },
+            "comment": {
+              "value": "コメント\"付き",
+              "origin": "declared",
+              "raw": "\"コメント\\Q付き\"",
+              "span": {
+                "sectionIndex": 1,
+                "startLine": 6,
+                "endLine": 6,
+                "keyLine": 6
+              }
+            },
+            "color": {
+              "value": "$FFFFFFFF",
+              "origin": "declared",
+              "raw": "$FFFFFFFF",
+              "span": {
+                "sectionIndex": 1,
+                "startLine": 6,
+                "endLine": 6,
+                "keyLine": 6
+              }
+            },
+            "option": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 1,
+                "startLine": 6,
+                "endLine": 6,
+                "keyLine": 6
+              }
+            },
+            "additionalOption": {
+              "value": "",
+              "origin": "defaulted",
+              "raw": "",
+              "span": null
+            },
+            "raw": "\"論理\",\"phys\",\"varchar(10)\",\"NOT NULL\",0,\"\",\"コメント\\Q付き\",$FFFFFFFF,\"\"",
+            "span": {
+              "sectionIndex": 1,
+              "startLine": 6,
+              "endLine": 6,
+              "keyLine": 6
+            }
+          }
+        ],
+        "indexes": {
+          "canonical": [],
+          "legacy": [],
+          "legacyOptions": [],
+          "primarySource": "canonical"
+        },
+        "primaryKey": {
+          "status": "inferred",
+          "value": ["phys"],
+          "origin": "inferred",
+          "span": null,
+          "derivedFrom": [
+            {
+              "sectionIndex": 1,
+              "startLine": 6,
+              "endLine": 6,
+              "keyLine": 6
+            }
+          ],
+          "columns": [
+            {
+              "pname": "phys",
+              "ordinal": 0,
+              "span": {
+                "sectionIndex": 1,
+                "startLine": 6,
+                "endLine": 6,
+                "keyLine": 6
+              }
+            }
+          ]
+        },
+        "positions": [
+          {
+            "kind": "object",
+            "page": {
+              "value": "Main",
+              "origin": "declared",
+              "raw": "\"Main\"",
+              "span": {
+                "sectionIndex": 1,
+                "startLine": 7,
+                "endLine": 7,
+                "keyLine": 7
+              }
+            },
+            "x": {
+              "value": 10,
+              "origin": "declared",
+              "raw": "10",
+              "span": {
+                "sectionIndex": 1,
+                "startLine": 7,
+                "endLine": 7,
+                "keyLine": 7
+              }
+            },
+            "y": {
+              "value": 10,
+              "origin": "declared",
+              "raw": "10",
+              "span": {
+                "sectionIndex": 1,
+                "startLine": 7,
+                "endLine": 7,
+                "keyLine": 7
+              }
+            },
+            "width": null,
+            "height": null,
+            "rawElements": [
+              {
+                "index": 0,
+                "raw": "\"Main\"",
+                "quoted": true
+              },
+              {
+                "index": 1,
+                "raw": "10",
+                "quoted": false
+              },
+              {
+                "index": 2,
+                "raw": "10",
+                "quoted": false
+              }
+            ],
+            "elementsSeen": 3,
+            "raw": "\"Main\",10,10",
+            "span": {
+              "sectionIndex": 1,
+              "startLine": 7,
+              "endLine": 7,
+              "keyLine": 7
+            }
+          }
+        ],
+        "effectiveColumns": {
+          "status": "complete",
+          "columns": [
+            {
+              "pname": "phys",
+              "logicalName": "論理",
+              "source": "declared",
+              "span": {
+                "sectionIndex": 1,
+                "startLine": 6,
+                "endLine": 6,
+                "keyLine": 6
+              },
+              "collision": false
+            }
+          ],
+          "declared": [
+            {
+              "pname": "phys",
+              "logicalName": "論理",
+              "source": "declared",
+              "span": {
+                "sectionIndex": 1,
+                "startLine": 6,
+                "endLine": 6,
+                "keyLine": 6
+              },
+              "collision": false
+            }
+          ],
+          "common": [],
+          "collisions": [],
+          "usingCommonColumns": {
+            "value": 1,
+            "origin": "defaulted",
+            "raw": "",
+            "span": null,
+            "token": "absent"
+          }
+        },
+        "attributes": []
+      }
+    ],
+    "relations": [],
+    "pages": [
+      {
+        "name": "Main",
+        "raw": "\"Main\",3,\"A4Landscape\",\"$FFFFFF\"",
+        "span": {
+          "sectionIndex": 2,
+          "startLine": 10,
+          "endLine": 10,
+          "keyLine": 10
+        },
+        "displayMode": 3,
+        "paperSize": "A4Landscape",
+        "background": "$FFFFFF",
+        "elementsSeen": 4,
+        "shape": "documented",
+        "rawElements": [
+          {
+            "index": 0,
+            "raw": "\"Main\"",
+            "quoted": true
+          },
+          {
+            "index": 1,
+            "raw": "3",
+            "quoted": false
+          },
+          {
+            "index": 2,
+            "raw": "\"A4Landscape\"",
+            "quoted": true
+          },
+          {
+            "index": 3,
+            "raw": "\"$FFFFFF\"",
+            "quoted": true
+          }
+        ]
+      }
+    ],
+    "domains": [],
+    "commonFields": [],
+    "manager": {
+      "attributes": []
+    }
+  },
+  "unsupported": [],
+  "diagnostics": [],
+  "completeness": {
+    "sections": {
+      "total": 2,
+      "parsed": 2,
+      "preservedRaw": 0,
+      "unknown": 0
+    },
+    "keys": {
+      "total": 5,
+      "parsed": 5,
+      "preservedRaw": 0
+    },
+    "lines": {
+      "total": 10,
+      "accounted": 10,
+      "dropped": 0
+    },
+    "dropped": 0
+  }
+}

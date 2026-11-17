@@ -1,0 +1,98 @@
+{
+  "contractVersion": "0.1.0",
+  "tool": {
+    "name": "@j1nn0/a5er-cli",
+    "version": "0.1.0"
+  },
+  "command": "inspect",
+  "status": "degraded",
+  "source": {
+    "path": "<tmp>/sem-09.a5er",
+    "sizeBytes": 55,
+    "sha256": "1e6a90c8d2f7908d9aa46f6d64105ea87b91ffe3b75c2f51df9134338316abf9",
+    "encoding": {
+      "detected": "utf-8",
+      "bom": true,
+      "declared": null,
+      "mismatch": false
+    },
+    "format": {
+      "declared": 21,
+      "effective": 21,
+      "known": true
+    }
+  },
+  "limits": {
+    "maxBytes": 67108864,
+    "truncated": false
+  },
+  "schema": {
+    "objects": [],
+    "relations": [],
+    "pages": [],
+    "domains": [],
+    "commonFields": [],
+    "manager": {
+      "attributes": [
+        {
+          "key": "ProjectName",
+          "keyRaw": "ProjectName",
+          "disposition": "structured",
+          "origin": "declared",
+          "raw": "\"no_pages\"",
+          "span": {
+            "sectionIndex": 1,
+            "startLine": 4,
+            "endLine": 4,
+            "keyLine": 4
+          },
+          "value": {
+            "status": "decoded",
+            "kind": "string",
+            "value": "no_pages"
+          }
+        }
+      ]
+    }
+  },
+  "unsupported": [],
+  "diagnostics": [
+    {
+      "code": "V_MISSING_REQUIRED_KEY",
+      "severity": "error",
+      "message": "A key the specification requires is absent",
+      "details": {
+        "keys": "PageInfo",
+        "subject": "section",
+        "section": "Manager",
+        "column": null
+      },
+      "span": {
+        "sectionIndex": 1,
+        "startLine": 3,
+        "endLine": 3,
+        "keyLine": 3
+      },
+      "construct": "Section"
+    }
+  ],
+  "completeness": {
+    "sections": {
+      "total": 1,
+      "parsed": 1,
+      "preservedRaw": 0,
+      "unknown": 0
+    },
+    "keys": {
+      "total": 1,
+      "parsed": 1,
+      "preservedRaw": 0
+    },
+    "lines": {
+      "total": 4,
+      "accounted": 4,
+      "dropped": 0
+    },
+    "dropped": 0
+  }
+}

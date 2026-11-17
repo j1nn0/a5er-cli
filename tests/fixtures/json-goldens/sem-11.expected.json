@@ -1,0 +1,213 @@
+{
+  "contractVersion": "0.1.0",
+  "tool": {
+    "name": "@j1nn0/a5er-cli",
+    "version": "0.1.0"
+  },
+  "command": "inspect",
+  "status": "ok",
+  "source": {
+    "path": "<tmp>/sem-11.a5er",
+    "sizeBytes": 124,
+    "sha256": "7de5a2318c0867acb6d6f2977c3034188265ac3f83fa73f721664d0d535b658f",
+    "encoding": {
+      "detected": "utf-8",
+      "bom": true,
+      "declared": null,
+      "mismatch": false
+    },
+    "format": {
+      "declared": 21,
+      "effective": 21,
+      "known": true
+    }
+  },
+  "limits": {
+    "maxBytes": 67108864,
+    "truncated": false
+  },
+  "schema": {
+    "objects": [
+      {
+        "kind": "entity",
+        "sectionIndex": 2,
+        "sectionHeader": "[Entity]",
+        "span": {
+          "sectionIndex": 2,
+          "startLine": 7,
+          "endLine": 7,
+          "keyLine": 7
+        },
+        "pname": {
+          "value": "no_fields",
+          "origin": "declared",
+          "raw": "\"no_fields\"",
+          "span": {
+            "sectionIndex": 2,
+            "startLine": 7,
+            "endLine": 7,
+            "keyLine": 7
+          }
+        },
+        "lname": null,
+        "comment": null,
+        "fields": [],
+        "indexes": {
+          "canonical": [],
+          "legacy": [],
+          "legacyOptions": [],
+          "primarySource": "canonical"
+        },
+        "primaryKey": {
+          "status": "absent"
+        },
+        "positions": [
+          {
+            "kind": "object",
+            "page": {
+              "value": "Main",
+              "origin": "declared",
+              "raw": "\"Main\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 8,
+                "endLine": 8,
+                "keyLine": 8
+              }
+            },
+            "x": {
+              "value": 10,
+              "origin": "declared",
+              "raw": "10",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 8,
+                "endLine": 8,
+                "keyLine": 8
+              }
+            },
+            "y": {
+              "value": 10,
+              "origin": "declared",
+              "raw": "10",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 8,
+                "endLine": 8,
+                "keyLine": 8
+              }
+            },
+            "width": null,
+            "height": null,
+            "rawElements": [
+              {
+                "index": 0,
+                "raw": "\"Main\"",
+                "quoted": true
+              },
+              {
+                "index": 1,
+                "raw": "10",
+                "quoted": false
+              },
+              {
+                "index": 2,
+                "raw": "10",
+                "quoted": false
+              }
+            ],
+            "elementsSeen": 3,
+            "raw": "\"Main\",10,10",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 8,
+              "endLine": 8,
+              "keyLine": 8
+            }
+          }
+        ],
+        "effectiveColumns": {
+          "status": "complete",
+          "columns": [],
+          "declared": [],
+          "common": [],
+          "collisions": [],
+          "usingCommonColumns": {
+            "value": 1,
+            "origin": "defaulted",
+            "raw": "",
+            "span": null,
+            "token": "absent"
+          }
+        },
+        "attributes": []
+      }
+    ],
+    "relations": [],
+    "pages": [
+      {
+        "name": "Main",
+        "raw": "\"Main\",3,\"A4Landscape\",\"$FFFFFF\"",
+        "span": {
+          "sectionIndex": 1,
+          "startLine": 4,
+          "endLine": 4,
+          "keyLine": 4
+        },
+        "displayMode": 3,
+        "paperSize": "A4Landscape",
+        "background": "$FFFFFF",
+        "elementsSeen": 4,
+        "shape": "documented",
+        "rawElements": [
+          {
+            "index": 0,
+            "raw": "\"Main\"",
+            "quoted": true
+          },
+          {
+            "index": 1,
+            "raw": "3",
+            "quoted": false
+          },
+          {
+            "index": 2,
+            "raw": "\"A4Landscape\"",
+            "quoted": true
+          },
+          {
+            "index": 3,
+            "raw": "\"$FFFFFF\"",
+            "quoted": true
+          }
+        ]
+      }
+    ],
+    "domains": [],
+    "commonFields": [],
+    "manager": {
+      "attributes": []
+    }
+  },
+  "unsupported": [],
+  "diagnostics": [],
+  "completeness": {
+    "sections": {
+      "total": 2,
+      "parsed": 2,
+      "preservedRaw": 0,
+      "unknown": 0
+    },
+    "keys": {
+      "total": 3,
+      "parsed": 3,
+      "preservedRaw": 0
+    },
+    "lines": {
+      "total": 8,
+      "accounted": 8,
+      "dropped": 0
+    },
+    "dropped": 0
+  }
+}

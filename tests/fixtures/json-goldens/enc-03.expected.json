@@ -1,0 +1,231 @@
+{
+  "contractVersion": "0.1.0",
+  "tool": {
+    "name": "@j1nn0/a5er-cli",
+    "version": "0.1.0"
+  },
+  "command": "inspect",
+  "status": "degraded",
+  "source": {
+    "path": "<tmp>/enc-03.a5er",
+    "sizeBytes": 106,
+    "sha256": "bee4268c610c97a84f125a3bf5abfaba0db32fc66fe69321fee10639d0f207c0",
+    "encoding": {
+      "detected": "shift_jis",
+      "bom": false,
+      "declared": "UTF8",
+      "mismatch": true
+    },
+    "format": {
+      "declared": 21,
+      "effective": 21,
+      "known": true
+    }
+  },
+  "limits": {
+    "maxBytes": 67108864,
+    "truncated": false
+  },
+  "schema": {
+    "objects": [
+      {
+        "kind": "entity",
+        "sectionIndex": 1,
+        "sectionHeader": "[Entity]",
+        "span": {
+          "sectionIndex": 1,
+          "startLine": 5,
+          "endLine": 5,
+          "keyLine": 5
+        },
+        "pname": {
+          "value": "注文",
+          "origin": "declared",
+          "raw": "\"注文\"",
+          "span": {
+            "sectionIndex": 1,
+            "startLine": 5,
+            "endLine": 5,
+            "keyLine": 5
+          }
+        },
+        "lname": {
+          "value": "注文テーブル",
+          "origin": "declared",
+          "raw": "\"注文テーブル\"",
+          "span": {
+            "sectionIndex": 1,
+            "startLine": 6,
+            "endLine": 6,
+            "keyLine": 6
+          }
+        },
+        "comment": null,
+        "fields": [],
+        "indexes": {
+          "canonical": [],
+          "legacy": [],
+          "legacyOptions": [],
+          "primarySource": "canonical"
+        },
+        "primaryKey": {
+          "status": "absent"
+        },
+        "positions": [
+          {
+            "kind": "object",
+            "page": {
+              "value": "Main",
+              "origin": "declared",
+              "raw": "\"Main\"",
+              "span": {
+                "sectionIndex": 1,
+                "startLine": 7,
+                "endLine": 7,
+                "keyLine": 7
+              }
+            },
+            "x": {
+              "value": 10,
+              "origin": "declared",
+              "raw": "10",
+              "span": {
+                "sectionIndex": 1,
+                "startLine": 7,
+                "endLine": 7,
+                "keyLine": 7
+              }
+            },
+            "y": {
+              "value": 10,
+              "origin": "declared",
+              "raw": "10",
+              "span": {
+                "sectionIndex": 1,
+                "startLine": 7,
+                "endLine": 7,
+                "keyLine": 7
+              }
+            },
+            "width": null,
+            "height": null,
+            "rawElements": [
+              {
+                "index": 0,
+                "raw": "\"Main\"",
+                "quoted": true
+              },
+              {
+                "index": 1,
+                "raw": "10",
+                "quoted": false
+              },
+              {
+                "index": 2,
+                "raw": "10",
+                "quoted": false
+              }
+            ],
+            "elementsSeen": 3,
+            "raw": "\"Main\",10,10",
+            "span": {
+              "sectionIndex": 1,
+              "startLine": 7,
+              "endLine": 7,
+              "keyLine": 7
+            }
+          }
+        ],
+        "effectiveColumns": {
+          "status": "complete",
+          "columns": [],
+          "declared": [],
+          "common": [],
+          "collisions": [],
+          "usingCommonColumns": {
+            "value": 1,
+            "origin": "defaulted",
+            "raw": "",
+            "span": null,
+            "token": "absent"
+          }
+        },
+        "attributes": []
+      }
+    ],
+    "relations": [],
+    "pages": [],
+    "domains": [],
+    "commonFields": [],
+    "manager": {
+      "attributes": []
+    }
+  },
+  "unsupported": [],
+  "diagnostics": [
+    {
+      "code": "D_ENCODING_MISMATCH",
+      "severity": "warning",
+      "message": "The declared encoding differs from the bytes; the bytes were used",
+      "details": {
+        "declared": "UTF8",
+        "detected": "shift_jis"
+      },
+      "span": null,
+      "construct": "Header"
+    },
+    {
+      "code": "V_MISSING_REQUIRED_KEY",
+      "severity": "error",
+      "message": "A key the specification requires is absent",
+      "details": {
+        "keys": "PageInfo",
+        "subject": "document",
+        "section": "Manager",
+        "column": null
+      },
+      "span": {
+        "sectionIndex": 1,
+        "startLine": 4,
+        "endLine": 4,
+        "keyLine": 4
+      },
+      "construct": "Section"
+    },
+    {
+      "code": "V_DANGLING_PAGE",
+      "severity": "warning",
+      "message": "A placement names a page the document does not declare",
+      "details": {
+        "page": "Main",
+        "section": "Entity"
+      },
+      "span": {
+        "sectionIndex": 1,
+        "startLine": 7,
+        "endLine": 7,
+        "keyLine": 7
+      },
+      "construct": "Position"
+    }
+  ],
+  "completeness": {
+    "sections": {
+      "total": 1,
+      "parsed": 1,
+      "preservedRaw": 0,
+      "unknown": 0
+    },
+    "keys": {
+      "total": 3,
+      "parsed": 3,
+      "preservedRaw": 0
+    },
+    "lines": {
+      "total": 7,
+      "accounted": 7,
+      "dropped": 0
+    },
+    "dropped": 0
+  }
+}

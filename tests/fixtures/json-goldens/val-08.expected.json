@@ -1,0 +1,253 @@
+{
+  "contractVersion": "0.1.0",
+  "tool": {
+    "name": "@j1nn0/a5er-cli",
+    "version": "0.1.0"
+  },
+  "command": "inspect",
+  "status": "degraded",
+  "source": {
+    "path": "<tmp>/val-08.a5er",
+    "sizeBytes": 166,
+    "sha256": "72ba6334f2c2fa32a91f8469449893070caf0aa5c92fc4f52311f49f4f51b393",
+    "encoding": {
+      "detected": "utf-8",
+      "bom": true,
+      "declared": null,
+      "mismatch": false
+    },
+    "format": {
+      "declared": 21,
+      "effective": 21,
+      "known": true
+    }
+  },
+  "limits": {
+    "maxBytes": 67108864,
+    "truncated": false
+  },
+  "schema": {
+    "objects": [
+      {
+        "kind": "view",
+        "sectionIndex": 2,
+        "sectionHeader": "[View]",
+        "span": {
+          "sectionIndex": 2,
+          "startLine": 7,
+          "endLine": 7,
+          "keyLine": 7
+        },
+        "pname": {
+          "value": "split_query",
+          "origin": "declared",
+          "raw": "\"split_query\"",
+          "span": {
+            "sectionIndex": 2,
+            "startLine": 7,
+            "endLine": 7,
+            "keyLine": 7
+          }
+        },
+        "lname": null,
+        "comment": null,
+        "query": "\"SELECT id",
+        "queryRaw": "\"SELECT id",
+        "querySpan": {
+          "sectionIndex": 2,
+          "startLine": 8,
+          "endLine": 8,
+          "keyLine": 8
+        },
+        "lnameByComment": {
+          "value": null,
+          "origin": "absent",
+          "raw": "",
+          "span": null,
+          "token": "absent"
+        },
+        "effectiveColumns": {
+          "status": "unknown",
+          "reason": "view-columns-not-stored"
+        },
+        "positions": [
+          {
+            "kind": "object",
+            "page": {
+              "value": "Main",
+              "origin": "declared",
+              "raw": "\"Main\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 10,
+                "endLine": 10,
+                "keyLine": 10
+              }
+            },
+            "x": {
+              "value": 10,
+              "origin": "declared",
+              "raw": "10",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 10,
+                "endLine": 10,
+                "keyLine": 10
+              }
+            },
+            "y": {
+              "value": 10,
+              "origin": "declared",
+              "raw": "10",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 10,
+                "endLine": 10,
+                "keyLine": 10
+              }
+            },
+            "width": null,
+            "height": null,
+            "rawElements": [
+              {
+                "index": 0,
+                "raw": "\"Main\"",
+                "quoted": true
+              },
+              {
+                "index": 1,
+                "raw": "10",
+                "quoted": false
+              },
+              {
+                "index": 2,
+                "raw": "10",
+                "quoted": false
+              }
+            ],
+            "elementsSeen": 3,
+            "raw": "\"Main\",10,10",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 10,
+              "endLine": 10,
+              "keyLine": 10
+            }
+          }
+        ],
+        "attributes": []
+      }
+    ],
+    "relations": [],
+    "pages": [
+      {
+        "name": "Main",
+        "raw": "\"Main\",3,\"A4Landscape\",\"$FFFFFF\"",
+        "span": {
+          "sectionIndex": 1,
+          "startLine": 4,
+          "endLine": 4,
+          "keyLine": 4
+        },
+        "displayMode": 3,
+        "paperSize": "A4Landscape",
+        "background": "$FFFFFF",
+        "elementsSeen": 4,
+        "shape": "documented",
+        "rawElements": [
+          {
+            "index": 0,
+            "raw": "\"Main\"",
+            "quoted": true
+          },
+          {
+            "index": 1,
+            "raw": "3",
+            "quoted": false
+          },
+          {
+            "index": 2,
+            "raw": "\"A4Landscape\"",
+            "quoted": true
+          },
+          {
+            "index": 3,
+            "raw": "\"$FFFFFF\"",
+            "quoted": true
+          }
+        ]
+      }
+    ],
+    "domains": [],
+    "commonFields": [],
+    "manager": {
+      "attributes": []
+    }
+  },
+  "unsupported": [
+    {
+      "kind": "multiline-value",
+      "sectionKind": "View",
+      "sectionHeader": "[View]",
+      "key": null,
+      "raw": "FROM users WHERE id > 0\"",
+      "span": {
+        "sectionIndex": 2,
+        "startLine": 9,
+        "endLine": 9,
+        "keyLine": 9
+      },
+      "reason": "not-a-key-value-line"
+    }
+  ],
+  "diagnostics": [
+    {
+      "code": "V_VIEW_COLUMNS_UNKNOWN",
+      "severity": "info",
+      "message": "A view does not store its columns",
+      "details": {
+        "view": "split_query",
+        "reason": "view-columns-not-stored"
+      },
+      "span": {
+        "sectionIndex": 2,
+        "startLine": 7,
+        "endLine": 7,
+        "keyLine": 7
+      },
+      "construct": "View"
+    },
+    {
+      "code": "S_MALFORMED_LINE",
+      "severity": "warning",
+      "message": "A line is not a section header, a key, a comment, or blank",
+      "details": {},
+      "span": {
+        "sectionIndex": 2,
+        "startLine": 9,
+        "endLine": 9,
+        "keyLine": 9
+      },
+      "construct": "Line"
+    }
+  ],
+  "completeness": {
+    "sections": {
+      "total": 2,
+      "parsed": 2,
+      "preservedRaw": 0,
+      "unknown": 0
+    },
+    "keys": {
+      "total": 4,
+      "parsed": 4,
+      "preservedRaw": 0
+    },
+    "lines": {
+      "total": 10,
+      "accounted": 10,
+      "dropped": 0
+    },
+    "dropped": 0
+  }
+}

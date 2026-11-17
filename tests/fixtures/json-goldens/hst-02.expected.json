@@ -1,0 +1,30 @@
+{
+  "contractVersion": "0.1.0",
+  "tool": {
+    "name": "@j1nn0/a5er-cli",
+    "version": "0.1.0"
+  },
+  "command": "inspect",
+  "status": "failed",
+  "source": null,
+  "limits": {
+    "maxBytes": 67108864,
+    "truncated": false
+  },
+  "schema": null,
+  "unsupported": [],
+  "diagnostics": [
+    {
+      "code": "E_BINARY_INPUT",
+      "severity": "fatal",
+      "message": "The input is binary and cannot be treated as text",
+      "details": {
+        "sizeBytes": 4096,
+        "windowBytes": 4096
+      },
+      "span": null,
+      "construct": "Source"
+    }
+  ],
+  "completeness": null
+}

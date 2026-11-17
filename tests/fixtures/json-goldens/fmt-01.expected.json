@@ -1,0 +1,1577 @@
+{
+  "contractVersion": "0.1.0",
+  "tool": {
+    "name": "@j1nn0/a5er-cli",
+    "version": "0.1.0"
+  },
+  "command": "inspect",
+  "status": "ok",
+  "source": {
+    "path": "<tmp>/fmt-01.a5er",
+    "sizeBytes": 935,
+    "sha256": "d4838f368b25ba1a128b41aabfe3e9f64df1b8b4bac528eb9e77f1334b9e0772",
+    "encoding": {
+      "detected": "utf-8",
+      "bom": true,
+      "declared": "UTF8",
+      "mismatch": false
+    },
+    "format": {
+      "declared": 21,
+      "effective": 21,
+      "known": true
+    }
+  },
+  "limits": {
+    "maxBytes": 67108864,
+    "truncated": false
+  },
+  "schema": {
+    "objects": [
+      {
+        "kind": "entity",
+        "sectionIndex": 2,
+        "sectionHeader": "[Entity]",
+        "span": {
+          "sectionIndex": 2,
+          "startLine": 8,
+          "endLine": 8,
+          "keyLine": 8
+        },
+        "pname": {
+          "value": "users",
+          "origin": "declared",
+          "raw": "\"users\"",
+          "span": {
+            "sectionIndex": 2,
+            "startLine": 8,
+            "endLine": 8,
+            "keyLine": 8
+          }
+        },
+        "lname": {
+          "value": "ユーザー",
+          "origin": "declared",
+          "raw": "\"ユーザー\"",
+          "span": {
+            "sectionIndex": 2,
+            "startLine": 9,
+            "endLine": 9,
+            "keyLine": 9
+          }
+        },
+        "comment": {
+          "value": "利用者",
+          "origin": "declared",
+          "raw": "\"利用者\"",
+          "span": {
+            "sectionIndex": 2,
+            "startLine": 10,
+            "endLine": 10,
+            "keyLine": 10
+          }
+        },
+        "fields": [
+          {
+            "elementsSeen": 10,
+            "logicalName": {
+              "value": "ユーザーID",
+              "origin": "declared",
+              "raw": "\"ユーザーID\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 11,
+                "endLine": 11,
+                "keyLine": 11
+              }
+            },
+            "physicalName": {
+              "value": "id",
+              "origin": "declared",
+              "raw": "\"id\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 11,
+                "endLine": 11,
+                "keyLine": 11
+              }
+            },
+            "dataType": {
+              "value": "Serial",
+              "origin": "declared",
+              "raw": "\"Serial\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 11,
+                "endLine": 11,
+                "keyLine": 11
+              }
+            },
+            "notNull": {
+              "value": true,
+              "origin": "declared",
+              "raw": "\"NOT NULL\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 11,
+                "endLine": 11,
+                "keyLine": 11
+              }
+            },
+            "notNullToken": "not-null",
+            "notNullRaw": "\"NOT NULL\"",
+            "keyOrder": {
+              "value": 0,
+              "origin": "declared",
+              "raw": "0",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 11,
+                "endLine": 11,
+                "keyLine": 11
+              }
+            },
+            "keyOrderToken": "ordinal",
+            "keyOrderRaw": "0",
+            "defaultValue": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 11,
+                "endLine": 11,
+                "keyLine": 11
+              }
+            },
+            "comment": {
+              "value": "主キー",
+              "origin": "declared",
+              "raw": "\"主キー\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 11,
+                "endLine": 11,
+                "keyLine": 11
+              }
+            },
+            "color": {
+              "value": "$FFFFFFFF",
+              "origin": "declared",
+              "raw": "$FFFFFFFF",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 11,
+                "endLine": 11,
+                "keyLine": 11
+              }
+            },
+            "option": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 11,
+                "endLine": 11,
+                "keyLine": 11
+              }
+            },
+            "additionalOption": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 11,
+                "endLine": 11,
+                "keyLine": 11
+              }
+            },
+            "raw": "\"ユーザーID\",\"id\",\"Serial\",\"NOT NULL\",0,\"\",\"主キー\",$FFFFFFFF,\"\",\"\"",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 11,
+              "endLine": 11,
+              "keyLine": 11
+            }
+          },
+          {
+            "elementsSeen": 10,
+            "logicalName": {
+              "value": "メール",
+              "origin": "declared",
+              "raw": "\"メール\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 12,
+                "endLine": 12,
+                "keyLine": 12
+              }
+            },
+            "physicalName": {
+              "value": "email",
+              "origin": "declared",
+              "raw": "\"email\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 12,
+                "endLine": 12,
+                "keyLine": 12
+              }
+            },
+            "dataType": {
+              "value": "varchar(255)",
+              "origin": "declared",
+              "raw": "\"varchar(255)\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 12,
+                "endLine": 12,
+                "keyLine": 12
+              }
+            },
+            "notNull": {
+              "value": true,
+              "origin": "declared",
+              "raw": "\"NOT NULL\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 12,
+                "endLine": 12,
+                "keyLine": 12
+              }
+            },
+            "notNullToken": "not-null",
+            "notNullRaw": "\"NOT NULL\"",
+            "keyOrder": null,
+            "keyOrderToken": "empty",
+            "keyOrderRaw": "",
+            "defaultValue": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 12,
+                "endLine": 12,
+                "keyLine": 12
+              }
+            },
+            "comment": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 12,
+                "endLine": 12,
+                "keyLine": 12
+              }
+            },
+            "color": {
+              "value": "$FFFFFFFF",
+              "origin": "declared",
+              "raw": "$FFFFFFFF",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 12,
+                "endLine": 12,
+                "keyLine": 12
+              }
+            },
+            "option": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 12,
+                "endLine": 12,
+                "keyLine": 12
+              }
+            },
+            "additionalOption": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 12,
+                "endLine": 12,
+                "keyLine": 12
+              }
+            },
+            "raw": "\"メール\",\"email\",\"varchar(255)\",\"NOT NULL\",,\"\",\"\",$FFFFFFFF,\"\",\"\"",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 12,
+              "endLine": 12,
+              "keyLine": 12
+            }
+          }
+        ],
+        "indexes": {
+          "canonical": [
+            {
+              "name": {
+                "value": "users_ix1",
+                "origin": "declared",
+                "raw": "\"users_ix1\"",
+                "span": {
+                  "sectionIndex": 2,
+                  "startLine": 13,
+                  "endLine": 13,
+                  "keyLine": 13
+                }
+              },
+              "uniqueness": {
+                "value": "unique",
+                "origin": "declared",
+                "raw": "1",
+                "span": {
+                  "sectionIndex": 2,
+                  "startLine": 13,
+                  "endLine": 13,
+                  "keyLine": 13
+                }
+              },
+              "uniquenessToken": "1",
+              "columns": [
+                {
+                  "value": "id",
+                  "origin": "declared",
+                  "raw": "id",
+                  "span": {
+                    "sectionIndex": 2,
+                    "startLine": 13,
+                    "endLine": 13,
+                    "keyLine": 13
+                  }
+                },
+                {
+                  "value": "email",
+                  "origin": "declared",
+                  "raw": "email",
+                  "span": {
+                    "sectionIndex": 2,
+                    "startLine": 13,
+                    "endLine": 13,
+                    "keyLine": 13
+                  }
+                }
+              ],
+              "option": {
+                "value": "",
+                "origin": "declared",
+                "raw": "\"\"",
+                "span": {
+                  "sectionIndex": 2,
+                  "startLine": 13,
+                  "endLine": 13,
+                  "keyLine": 13
+                }
+              },
+              "elementsSeen": 4,
+              "raw": "\"users_ix1\",1,\"id,email\", \"\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 13,
+                "endLine": 13,
+                "keyLine": 13
+              },
+              "role": "primary"
+            }
+          ],
+          "legacy": [],
+          "legacyOptions": [],
+          "primarySource": "canonical"
+        },
+        "primaryKey": {
+          "status": "inferred",
+          "value": ["id"],
+          "origin": "inferred",
+          "span": null,
+          "derivedFrom": [
+            {
+              "sectionIndex": 2,
+              "startLine": 11,
+              "endLine": 11,
+              "keyLine": 11
+            }
+          ],
+          "columns": [
+            {
+              "pname": "id",
+              "ordinal": 0,
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 11,
+                "endLine": 11,
+                "keyLine": 11
+              }
+            }
+          ]
+        },
+        "positions": [
+          {
+            "kind": "object",
+            "page": {
+              "value": "Main",
+              "origin": "declared",
+              "raw": "\"Main\"",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 14,
+                "endLine": 14,
+                "keyLine": 14
+              }
+            },
+            "x": {
+              "value": 1000,
+              "origin": "declared",
+              "raw": "1000",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 14,
+                "endLine": 14,
+                "keyLine": 14
+              }
+            },
+            "y": {
+              "value": 2000,
+              "origin": "declared",
+              "raw": "2000",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 14,
+                "endLine": 14,
+                "keyLine": 14
+              }
+            },
+            "width": null,
+            "height": null,
+            "rawElements": [
+              {
+                "index": 0,
+                "raw": "\"Main\"",
+                "quoted": true
+              },
+              {
+                "index": 1,
+                "raw": "1000",
+                "quoted": false
+              },
+              {
+                "index": 2,
+                "raw": "2000",
+                "quoted": false
+              }
+            ],
+            "elementsSeen": 3,
+            "raw": "\"Main\",1000,2000",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 14,
+              "endLine": 14,
+              "keyLine": 14
+            }
+          }
+        ],
+        "effectiveColumns": {
+          "status": "complete",
+          "columns": [
+            {
+              "pname": "id",
+              "logicalName": "ユーザーID",
+              "source": "declared",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 11,
+                "endLine": 11,
+                "keyLine": 11
+              },
+              "collision": false
+            },
+            {
+              "pname": "email",
+              "logicalName": "メール",
+              "source": "declared",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 12,
+                "endLine": 12,
+                "keyLine": 12
+              },
+              "collision": false
+            }
+          ],
+          "declared": [
+            {
+              "pname": "id",
+              "logicalName": "ユーザーID",
+              "source": "declared",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 11,
+                "endLine": 11,
+                "keyLine": 11
+              },
+              "collision": false
+            },
+            {
+              "pname": "email",
+              "logicalName": "メール",
+              "source": "declared",
+              "span": {
+                "sectionIndex": 2,
+                "startLine": 12,
+                "endLine": 12,
+                "keyLine": 12
+              },
+              "collision": false
+            }
+          ],
+          "common": [],
+          "collisions": [],
+          "usingCommonColumns": {
+            "value": 1,
+            "origin": "defaulted",
+            "raw": "",
+            "span": null,
+            "token": "absent"
+          }
+        },
+        "attributes": []
+      },
+      {
+        "kind": "entity",
+        "sectionIndex": 3,
+        "sectionHeader": "[Entity]",
+        "span": {
+          "sectionIndex": 3,
+          "startLine": 17,
+          "endLine": 17,
+          "keyLine": 17
+        },
+        "pname": {
+          "value": "orders",
+          "origin": "declared",
+          "raw": "\"orders\"",
+          "span": {
+            "sectionIndex": 3,
+            "startLine": 17,
+            "endLine": 17,
+            "keyLine": 17
+          }
+        },
+        "lname": null,
+        "comment": null,
+        "fields": [
+          {
+            "elementsSeen": 10,
+            "logicalName": {
+              "value": "注文ID",
+              "origin": "declared",
+              "raw": "\"注文ID\"",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 18,
+                "endLine": 18,
+                "keyLine": 18
+              }
+            },
+            "physicalName": {
+              "value": "id",
+              "origin": "declared",
+              "raw": "\"id\"",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 18,
+                "endLine": 18,
+                "keyLine": 18
+              }
+            },
+            "dataType": {
+              "value": "Serial",
+              "origin": "declared",
+              "raw": "\"Serial\"",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 18,
+                "endLine": 18,
+                "keyLine": 18
+              }
+            },
+            "notNull": {
+              "value": true,
+              "origin": "declared",
+              "raw": "\"NOT NULL\"",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 18,
+                "endLine": 18,
+                "keyLine": 18
+              }
+            },
+            "notNullToken": "not-null",
+            "notNullRaw": "\"NOT NULL\"",
+            "keyOrder": {
+              "value": 0,
+              "origin": "declared",
+              "raw": "0",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 18,
+                "endLine": 18,
+                "keyLine": 18
+              }
+            },
+            "keyOrderToken": "ordinal",
+            "keyOrderRaw": "0",
+            "defaultValue": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 18,
+                "endLine": 18,
+                "keyLine": 18
+              }
+            },
+            "comment": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 18,
+                "endLine": 18,
+                "keyLine": 18
+              }
+            },
+            "color": {
+              "value": "$FFFFFFFF",
+              "origin": "declared",
+              "raw": "$FFFFFFFF",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 18,
+                "endLine": 18,
+                "keyLine": 18
+              }
+            },
+            "option": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 18,
+                "endLine": 18,
+                "keyLine": 18
+              }
+            },
+            "additionalOption": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 18,
+                "endLine": 18,
+                "keyLine": 18
+              }
+            },
+            "raw": "\"注文ID\",\"id\",\"Serial\",\"NOT NULL\",0,\"\",\"\",$FFFFFFFF,\"\",\"\"",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 18,
+              "endLine": 18,
+              "keyLine": 18
+            }
+          },
+          {
+            "elementsSeen": 10,
+            "logicalName": {
+              "value": "ユーザーID",
+              "origin": "declared",
+              "raw": "\"ユーザーID\"",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 19,
+                "endLine": 19,
+                "keyLine": 19
+              }
+            },
+            "physicalName": {
+              "value": "user_id",
+              "origin": "declared",
+              "raw": "\"user_id\"",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 19,
+                "endLine": 19,
+                "keyLine": 19
+              }
+            },
+            "dataType": {
+              "value": "Integer",
+              "origin": "declared",
+              "raw": "\"Integer\"",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 19,
+                "endLine": 19,
+                "keyLine": 19
+              }
+            },
+            "notNull": {
+              "value": true,
+              "origin": "declared",
+              "raw": "\"NOT NULL\"",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 19,
+                "endLine": 19,
+                "keyLine": 19
+              }
+            },
+            "notNullToken": "not-null",
+            "notNullRaw": "\"NOT NULL\"",
+            "keyOrder": null,
+            "keyOrderToken": "empty",
+            "keyOrderRaw": "",
+            "defaultValue": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 19,
+                "endLine": 19,
+                "keyLine": 19
+              }
+            },
+            "comment": {
+              "value": "FK",
+              "origin": "declared",
+              "raw": "\"FK\"",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 19,
+                "endLine": 19,
+                "keyLine": 19
+              }
+            },
+            "color": {
+              "value": "$FFFFFFFF",
+              "origin": "declared",
+              "raw": "$FFFFFFFF",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 19,
+                "endLine": 19,
+                "keyLine": 19
+              }
+            },
+            "option": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 19,
+                "endLine": 19,
+                "keyLine": 19
+              }
+            },
+            "additionalOption": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 19,
+                "endLine": 19,
+                "keyLine": 19
+              }
+            },
+            "raw": "\"ユーザーID\",\"user_id\",\"Integer\",\"NOT NULL\",,\"\",\"FK\",$FFFFFFFF,\"\",\"\"",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 19,
+              "endLine": 19,
+              "keyLine": 19
+            }
+          }
+        ],
+        "indexes": {
+          "canonical": [
+            {
+              "name": {
+                "value": "orders_ix1",
+                "origin": "declared",
+                "raw": "\"orders_ix1\"",
+                "span": {
+                  "sectionIndex": 3,
+                  "startLine": 20,
+                  "endLine": 20,
+                  "keyLine": 20
+                }
+              },
+              "uniqueness": {
+                "value": "non-unique",
+                "origin": "declared",
+                "raw": "0",
+                "span": {
+                  "sectionIndex": 3,
+                  "startLine": 20,
+                  "endLine": 20,
+                  "keyLine": 20
+                }
+              },
+              "uniquenessToken": "0",
+              "columns": [
+                {
+                  "value": "user_id",
+                  "origin": "declared",
+                  "raw": "user_id",
+                  "span": {
+                    "sectionIndex": 3,
+                    "startLine": 20,
+                    "endLine": 20,
+                    "keyLine": 20
+                  }
+                }
+              ],
+              "option": {
+                "value": "",
+                "origin": "declared",
+                "raw": "\"\"",
+                "span": {
+                  "sectionIndex": 3,
+                  "startLine": 20,
+                  "endLine": 20,
+                  "keyLine": 20
+                }
+              },
+              "elementsSeen": 4,
+              "raw": "\"orders_ix1\",0,\"user_id\", \"\"",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 20,
+                "endLine": 20,
+                "keyLine": 20
+              },
+              "role": "primary"
+            }
+          ],
+          "legacy": [],
+          "legacyOptions": [],
+          "primarySource": "canonical"
+        },
+        "primaryKey": {
+          "status": "inferred",
+          "value": ["id"],
+          "origin": "inferred",
+          "span": null,
+          "derivedFrom": [
+            {
+              "sectionIndex": 3,
+              "startLine": 18,
+              "endLine": 18,
+              "keyLine": 18
+            }
+          ],
+          "columns": [
+            {
+              "pname": "id",
+              "ordinal": 0,
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 18,
+                "endLine": 18,
+                "keyLine": 18
+              }
+            }
+          ]
+        },
+        "positions": [
+          {
+            "kind": "object",
+            "page": {
+              "value": "Main",
+              "origin": "declared",
+              "raw": "\"Main\"",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 21,
+                "endLine": 21,
+                "keyLine": 21
+              }
+            },
+            "x": {
+              "value": 3000,
+              "origin": "declared",
+              "raw": "3000",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 21,
+                "endLine": 21,
+                "keyLine": 21
+              }
+            },
+            "y": {
+              "value": 2000,
+              "origin": "declared",
+              "raw": "2000",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 21,
+                "endLine": 21,
+                "keyLine": 21
+              }
+            },
+            "width": null,
+            "height": null,
+            "rawElements": [
+              {
+                "index": 0,
+                "raw": "\"Main\"",
+                "quoted": true
+              },
+              {
+                "index": 1,
+                "raw": "3000",
+                "quoted": false
+              },
+              {
+                "index": 2,
+                "raw": "2000",
+                "quoted": false
+              }
+            ],
+            "elementsSeen": 3,
+            "raw": "\"Main\",3000,2000",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 21,
+              "endLine": 21,
+              "keyLine": 21
+            }
+          }
+        ],
+        "effectiveColumns": {
+          "status": "complete",
+          "columns": [
+            {
+              "pname": "id",
+              "logicalName": "注文ID",
+              "source": "declared",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 18,
+                "endLine": 18,
+                "keyLine": 18
+              },
+              "collision": false
+            },
+            {
+              "pname": "user_id",
+              "logicalName": "ユーザーID",
+              "source": "declared",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 19,
+                "endLine": 19,
+                "keyLine": 19
+              },
+              "collision": false
+            }
+          ],
+          "declared": [
+            {
+              "pname": "id",
+              "logicalName": "注文ID",
+              "source": "declared",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 18,
+                "endLine": 18,
+                "keyLine": 18
+              },
+              "collision": false
+            },
+            {
+              "pname": "user_id",
+              "logicalName": "ユーザーID",
+              "source": "declared",
+              "span": {
+                "sectionIndex": 3,
+                "startLine": 19,
+                "endLine": 19,
+                "keyLine": 19
+              },
+              "collision": false
+            }
+          ],
+          "common": [],
+          "collisions": [],
+          "usingCommonColumns": {
+            "value": 1,
+            "origin": "defaulted",
+            "raw": "",
+            "span": null,
+            "token": "absent"
+          }
+        },
+        "attributes": []
+      },
+      {
+        "kind": "view",
+        "sectionIndex": 5,
+        "sectionHeader": "[View]",
+        "span": {
+          "sectionIndex": 5,
+          "startLine": 35,
+          "endLine": 35,
+          "keyLine": 35
+        },
+        "pname": {
+          "value": "active_users",
+          "origin": "declared",
+          "raw": "\"active_users\"",
+          "span": {
+            "sectionIndex": 5,
+            "startLine": 35,
+            "endLine": 35,
+            "keyLine": 35
+          }
+        },
+        "lname": null,
+        "comment": null,
+        "query": "SELECT * FROM users WHERE active = 1",
+        "queryRaw": "\"SELECT * FROM users WHERE active = 1\"",
+        "querySpan": {
+          "sectionIndex": 5,
+          "startLine": 36,
+          "endLine": 36,
+          "keyLine": 36
+        },
+        "lnameByComment": {
+          "value": null,
+          "origin": "absent",
+          "raw": "",
+          "span": null,
+          "token": "absent"
+        },
+        "effectiveColumns": {
+          "status": "unknown",
+          "reason": "view-columns-not-stored"
+        },
+        "positions": [
+          {
+            "kind": "object",
+            "page": {
+              "value": "Main",
+              "origin": "declared",
+              "raw": "\"Main\"",
+              "span": {
+                "sectionIndex": 5,
+                "startLine": 37,
+                "endLine": 37,
+                "keyLine": 37
+              }
+            },
+            "x": {
+              "value": 500,
+              "origin": "declared",
+              "raw": "500",
+              "span": {
+                "sectionIndex": 5,
+                "startLine": 37,
+                "endLine": 37,
+                "keyLine": 37
+              }
+            },
+            "y": {
+              "value": 4000,
+              "origin": "declared",
+              "raw": "4000",
+              "span": {
+                "sectionIndex": 5,
+                "startLine": 37,
+                "endLine": 37,
+                "keyLine": 37
+              }
+            },
+            "width": null,
+            "height": null,
+            "rawElements": [
+              {
+                "index": 0,
+                "raw": "\"Main\"",
+                "quoted": true
+              },
+              {
+                "index": 1,
+                "raw": "500",
+                "quoted": false
+              },
+              {
+                "index": 2,
+                "raw": "4000",
+                "quoted": false
+              }
+            ],
+            "elementsSeen": 3,
+            "raw": "\"Main\",500,4000",
+            "span": {
+              "sectionIndex": 5,
+              "startLine": 37,
+              "endLine": 37,
+              "keyLine": 37
+            }
+          }
+        ],
+        "attributes": []
+      }
+    ],
+    "relations": [
+      {
+        "sectionIndex": 4,
+        "sectionHeader": "[Relation]",
+        "span": {
+          "sectionIndex": 4,
+          "startLine": 23,
+          "endLine": 23,
+          "keyLine": 23
+        },
+        "pname": null,
+        "from": {
+          "key": "Entity1",
+          "declared": "users",
+          "raw": "\"users\"",
+          "span": {
+            "sectionIndex": 4,
+            "startLine": 24,
+            "endLine": 24,
+            "keyLine": 24
+          },
+          "status": "resolved",
+          "resolvedEntity": "users",
+          "candidates": 1
+        },
+        "to": {
+          "key": "Entity2",
+          "declared": "orders",
+          "raw": "\"orders\"",
+          "span": {
+            "sectionIndex": 4,
+            "startLine": 25,
+            "endLine": 25,
+            "keyLine": 25
+          },
+          "status": "resolved",
+          "resolvedEntity": "orders",
+          "candidates": 1
+        },
+        "fromColumns": {
+          "key": "Fields1",
+          "raw": "\"id\"",
+          "span": {
+            "sectionIndex": 4,
+            "startLine": 26,
+            "endLine": 26,
+            "keyLine": 26
+          },
+          "columns": [
+            {
+              "pname": "id",
+              "raw": "\"id\"",
+              "span": {
+                "sectionIndex": 4,
+                "startLine": 26,
+                "endLine": 26,
+                "keyLine": 26
+              },
+              "index": 0,
+              "empty": false
+            }
+          ]
+        },
+        "toColumns": {
+          "key": "Fields2",
+          "raw": "\"user_id\"",
+          "span": {
+            "sectionIndex": 4,
+            "startLine": 27,
+            "endLine": 27,
+            "keyLine": 27
+          },
+          "columns": [
+            {
+              "pname": "user_id",
+              "raw": "\"user_id\"",
+              "span": {
+                "sectionIndex": 4,
+                "startLine": 27,
+                "endLine": 27,
+                "keyLine": 27
+              },
+              "index": 0,
+              "empty": false
+            }
+          ]
+        },
+        "relationType1": {
+          "value": 2,
+          "origin": "declared",
+          "raw": "2",
+          "span": {
+            "sectionIndex": 4,
+            "startLine": 28,
+            "endLine": 28,
+            "keyLine": 28
+          }
+        },
+        "relationType2": {
+          "value": 4,
+          "origin": "declared",
+          "raw": "4",
+          "span": {
+            "sectionIndex": 4,
+            "startLine": 29,
+            "endLine": 29,
+            "keyLine": 29
+          }
+        },
+        "cardinarity1": {
+          "value": "P",
+          "origin": "declared",
+          "raw": "\"P\"",
+          "span": {
+            "sectionIndex": 4,
+            "startLine": 30,
+            "endLine": 30,
+            "keyLine": 30
+          }
+        },
+        "cardinarity2": {
+          "value": "Z",
+          "origin": "declared",
+          "raw": "\"Z\"",
+          "span": {
+            "sectionIndex": 4,
+            "startLine": 31,
+            "endLine": 31,
+            "keyLine": 31
+          }
+        },
+        "scalars": [
+          {
+            "key": "RelationType1",
+            "keyRaw": "RelationType1",
+            "origin": "declared",
+            "raw": "2",
+            "span": {
+              "sectionIndex": 4,
+              "startLine": 28,
+              "endLine": 28,
+              "keyLine": 28
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "integer",
+              "value": 2
+            }
+          },
+          {
+            "key": "RelationType2",
+            "keyRaw": "RelationType2",
+            "origin": "declared",
+            "raw": "4",
+            "span": {
+              "sectionIndex": 4,
+              "startLine": 29,
+              "endLine": 29,
+              "keyLine": 29
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "integer",
+              "value": 4
+            }
+          },
+          {
+            "key": "Cardinarity1",
+            "keyRaw": "Cardinarity1",
+            "origin": "declared",
+            "raw": "\"P\"",
+            "span": {
+              "sectionIndex": 4,
+              "startLine": 30,
+              "endLine": 30,
+              "keyLine": 30
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "P"
+            }
+          },
+          {
+            "key": "Cardinarity2",
+            "keyRaw": "Cardinarity2",
+            "origin": "declared",
+            "raw": "\"Z\"",
+            "span": {
+              "sectionIndex": 4,
+              "startLine": 31,
+              "endLine": 31,
+              "keyLine": 31
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "Z"
+            }
+          }
+        ],
+        "columnsAligned": true,
+        "positions": [
+          {
+            "kind": "relation",
+            "page": {
+              "value": "Main",
+              "origin": "declared",
+              "raw": "\"Main\"",
+              "span": {
+                "sectionIndex": 4,
+                "startLine": 32,
+                "endLine": 32,
+                "keyLine": 32
+              }
+            },
+            "lineMode": {
+              "value": 0,
+              "origin": "declared",
+              "raw": "0",
+              "span": {
+                "sectionIndex": 4,
+                "startLine": 32,
+                "endLine": 32,
+                "keyLine": 32
+              }
+            },
+            "linePositions": [
+              {
+                "value": 5000,
+                "origin": "declared",
+                "raw": "5000",
+                "span": {
+                  "sectionIndex": 4,
+                  "startLine": 32,
+                  "endLine": 32,
+                  "keyLine": 32
+                }
+              },
+              {
+                "value": 5000,
+                "origin": "declared",
+                "raw": "5000",
+                "span": {
+                  "sectionIndex": 4,
+                  "startLine": 32,
+                  "endLine": 32,
+                  "keyLine": 32
+                }
+              },
+              {
+                "value": 5000,
+                "origin": "declared",
+                "raw": "5000",
+                "span": {
+                  "sectionIndex": 4,
+                  "startLine": 32,
+                  "endLine": 32,
+                  "keyLine": 32
+                }
+              }
+            ],
+            "terminals": [
+              {
+                "value": "R",
+                "origin": "declared",
+                "raw": "R",
+                "span": {
+                  "sectionIndex": 4,
+                  "startLine": 32,
+                  "endLine": 32,
+                  "keyLine": 32
+                }
+              },
+              {
+                "value": "R",
+                "origin": "declared",
+                "raw": "R",
+                "span": {
+                  "sectionIndex": 4,
+                  "startLine": 32,
+                  "endLine": 32,
+                  "keyLine": 32
+                }
+              }
+            ],
+            "vertices": {
+              "value": "",
+              "origin": "declared",
+              "raw": "\"\"",
+              "span": {
+                "sectionIndex": 4,
+                "startLine": 32,
+                "endLine": 32,
+                "keyLine": 32
+              }
+            },
+            "rawElements": [
+              {
+                "index": 0,
+                "raw": "\"Main\"",
+                "quoted": true
+              },
+              {
+                "index": 1,
+                "raw": "0",
+                "quoted": false
+              },
+              {
+                "index": 2,
+                "raw": "5000",
+                "quoted": false
+              },
+              {
+                "index": 3,
+                "raw": "5000",
+                "quoted": false
+              },
+              {
+                "index": 4,
+                "raw": "5000",
+                "quoted": false
+              },
+              {
+                "index": 5,
+                "raw": "R",
+                "quoted": false
+              },
+              {
+                "index": 6,
+                "raw": "R",
+                "quoted": false
+              },
+              {
+                "index": 7,
+                "raw": "\"\"",
+                "quoted": true
+              }
+            ],
+            "elementsSeen": 8,
+            "raw": "\"Main\",0,5000,5000,5000,R,R,\"\"",
+            "span": {
+              "sectionIndex": 4,
+              "startLine": 32,
+              "endLine": 32,
+              "keyLine": 32
+            }
+          }
+        ],
+        "attributes": []
+      }
+    ],
+    "pages": [
+      {
+        "name": "Main",
+        "raw": "\"Main\",3,\"A4Landscape\",\"$FFFFFF\"",
+        "span": {
+          "sectionIndex": 1,
+          "startLine": 5,
+          "endLine": 5,
+          "keyLine": 5
+        },
+        "displayMode": 3,
+        "paperSize": "A4Landscape",
+        "background": "$FFFFFF",
+        "elementsSeen": 4,
+        "shape": "documented",
+        "rawElements": [
+          {
+            "index": 0,
+            "raw": "\"Main\"",
+            "quoted": true
+          },
+          {
+            "index": 1,
+            "raw": "3",
+            "quoted": false
+          },
+          {
+            "index": 2,
+            "raw": "\"A4Landscape\"",
+            "quoted": true
+          },
+          {
+            "index": 3,
+            "raw": "\"$FFFFFF\"",
+            "quoted": true
+          }
+        ]
+      }
+    ],
+    "domains": [],
+    "commonFields": [],
+    "manager": {
+      "attributes": []
+    }
+  },
+  "unsupported": [],
+  "diagnostics": [
+    {
+      "code": "V_VIEW_COLUMNS_UNKNOWN",
+      "severity": "info",
+      "message": "A view does not store its columns",
+      "details": {
+        "view": "active_users",
+        "reason": "view-columns-not-stored"
+      },
+      "span": {
+        "sectionIndex": 5,
+        "startLine": 35,
+        "endLine": 35,
+        "keyLine": 35
+      },
+      "construct": "View"
+    }
+  ],
+  "completeness": {
+    "sections": {
+      "total": 5,
+      "parsed": 5,
+      "preservedRaw": 0,
+      "unknown": 0
+    },
+    "keys": {
+      "total": 25,
+      "parsed": 25,
+      "preservedRaw": 0
+    },
+    "lines": {
+      "total": 37,
+      "accounted": 37,
+      "dropped": 0
+    },
+    "dropped": 0
+  }
+}

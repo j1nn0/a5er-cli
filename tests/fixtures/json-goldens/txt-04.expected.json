@@ -1,0 +1,319 @@
+{
+  "contractVersion": "0.1.0",
+  "tool": {
+    "name": "@j1nn0/a5er-cli",
+    "version": "0.1.0"
+  },
+  "command": "inspect",
+  "status": "ok",
+  "source": {
+    "path": "<tmp>/txt-04.a5er",
+    "sizeBytes": 190,
+    "sha256": "557c26e94cc2455aa1ec3fb4617a192b0d490fd67bb811df9e1b3f9a723bab45",
+    "encoding": {
+      "detected": "utf-8",
+      "bom": true,
+      "declared": null,
+      "mismatch": false
+    },
+    "format": {
+      "declared": 21,
+      "effective": 21,
+      "known": true
+    }
+  },
+  "limits": {
+    "maxBytes": 67108864,
+    "truncated": false
+  },
+  "schema": {
+    "objects": [
+      {
+        "kind": "entity",
+        "sectionIndex": 1,
+        "sectionHeader": "[Entity]",
+        "span": {
+          "sectionIndex": 1,
+          "startLine": 4,
+          "endLine": 4,
+          "keyLine": 4
+        },
+        "pname": {
+          "value": "known",
+          "origin": "declared",
+          "raw": "\"known\"",
+          "span": {
+            "sectionIndex": 1,
+            "startLine": 4,
+            "endLine": 4,
+            "keyLine": 4
+          }
+        },
+        "lname": null,
+        "comment": null,
+        "fields": [],
+        "indexes": {
+          "canonical": [],
+          "legacy": [],
+          "legacyOptions": [],
+          "primarySource": "canonical"
+        },
+        "primaryKey": {
+          "status": "absent"
+        },
+        "positions": [
+          {
+            "kind": "object",
+            "page": {
+              "value": "Main",
+              "origin": "declared",
+              "raw": "\"Main\"",
+              "span": {
+                "sectionIndex": 1,
+                "startLine": 7,
+                "endLine": 7,
+                "keyLine": 7
+              }
+            },
+            "x": {
+              "value": 10,
+              "origin": "declared",
+              "raw": "10",
+              "span": {
+                "sectionIndex": 1,
+                "startLine": 7,
+                "endLine": 7,
+                "keyLine": 7
+              }
+            },
+            "y": {
+              "value": 10,
+              "origin": "declared",
+              "raw": "10",
+              "span": {
+                "sectionIndex": 1,
+                "startLine": 7,
+                "endLine": 7,
+                "keyLine": 7
+              }
+            },
+            "width": null,
+            "height": null,
+            "rawElements": [
+              {
+                "index": 0,
+                "raw": "\"Main\"",
+                "quoted": true
+              },
+              {
+                "index": 1,
+                "raw": "10",
+                "quoted": false
+              },
+              {
+                "index": 2,
+                "raw": "10",
+                "quoted": false
+              }
+            ],
+            "elementsSeen": 3,
+            "raw": "\"Main\",10,10",
+            "span": {
+              "sectionIndex": 1,
+              "startLine": 7,
+              "endLine": 7,
+              "keyLine": 7
+            }
+          }
+        ],
+        "effectiveColumns": {
+          "status": "complete",
+          "columns": [],
+          "declared": [],
+          "common": [],
+          "collisions": [],
+          "usingCommonColumns": {
+            "value": 1,
+            "origin": "defaulted",
+            "raw": "",
+            "span": null,
+            "token": "absent"
+          }
+        },
+        "attributes": []
+      }
+    ],
+    "relations": [],
+    "pages": [
+      {
+        "name": "Main",
+        "raw": "\"Main\",3,\"A4Landscape\",\"$FFFFFF\"",
+        "span": {
+          "sectionIndex": 3,
+          "startLine": 13,
+          "endLine": 13,
+          "keyLine": 13
+        },
+        "displayMode": 3,
+        "paperSize": "A4Landscape",
+        "background": "$FFFFFF",
+        "elementsSeen": 4,
+        "shape": "documented",
+        "rawElements": [
+          {
+            "index": 0,
+            "raw": "\"Main\"",
+            "quoted": true
+          },
+          {
+            "index": 1,
+            "raw": "3",
+            "quoted": false
+          },
+          {
+            "index": 2,
+            "raw": "\"A4Landscape\"",
+            "quoted": true
+          },
+          {
+            "index": 3,
+            "raw": "\"$FFFFFF\"",
+            "quoted": true
+          }
+        ]
+      }
+    ],
+    "domains": [],
+    "commonFields": [],
+    "manager": {
+      "attributes": []
+    }
+  },
+  "unsupported": [
+    {
+      "kind": "unknown-key",
+      "sectionKind": "Entity",
+      "sectionHeader": "[Entity]",
+      "key": "MysteryKey",
+      "raw": "MysteryKey=\"value\"",
+      "span": {
+        "sectionIndex": 1,
+        "startLine": 5,
+        "endLine": 5,
+        "keyLine": 5
+      },
+      "reason": "no-registry-entry"
+    },
+    {
+      "kind": "unknown-key",
+      "sectionKind": "Entity",
+      "sectionHeader": "[Entity]",
+      "key": "SecondMystery",
+      "raw": "SecondMystery=\"value2\"",
+      "span": {
+        "sectionIndex": 1,
+        "startLine": 6,
+        "endLine": 6,
+        "keyLine": 6
+      },
+      "reason": "no-registry-entry"
+    },
+    {
+      "kind": "unknown-section",
+      "sectionKind": "unknown",
+      "sectionHeader": "[Memo]",
+      "key": null,
+      "raw": "[Memo]",
+      "span": {
+        "sectionIndex": 2,
+        "startLine": 9,
+        "endLine": 9,
+        "keyLine": 9
+      },
+      "reason": "section-not-modelled"
+    },
+    {
+      "kind": "unknown-key",
+      "sectionKind": "unknown",
+      "sectionHeader": "[Memo]",
+      "key": "Note",
+      "raw": "Note=\"自由メモ\"",
+      "span": {
+        "sectionIndex": 2,
+        "startLine": 10,
+        "endLine": 10,
+        "keyLine": 10
+      },
+      "reason": "section-not-modelled"
+    }
+  ],
+  "diagnostics": [
+    {
+      "code": "S_UNKNOWN_KEY",
+      "severity": "info",
+      "message": "A key this section does not define was preserved verbatim",
+      "details": {
+        "key": "MysteryKey",
+        "section": "Entity"
+      },
+      "span": {
+        "sectionIndex": 1,
+        "startLine": 5,
+        "endLine": 5,
+        "keyLine": 5
+      },
+      "construct": "Key"
+    },
+    {
+      "code": "S_UNKNOWN_KEY",
+      "severity": "info",
+      "message": "A key this section does not define was preserved verbatim",
+      "details": {
+        "key": "SecondMystery",
+        "section": "Entity"
+      },
+      "span": {
+        "sectionIndex": 1,
+        "startLine": 6,
+        "endLine": 6,
+        "keyLine": 6
+      },
+      "construct": "Key"
+    },
+    {
+      "code": "S_UNKNOWN_SECTION",
+      "severity": "info",
+      "message": "A section this tool does not model was preserved verbatim",
+      "details": {
+        "section": "[Memo]",
+        "keys": 1
+      },
+      "span": {
+        "sectionIndex": 2,
+        "startLine": 9,
+        "endLine": 11,
+        "keyLine": 9
+      },
+      "construct": "Section"
+    }
+  ],
+  "completeness": {
+    "sections": {
+      "total": 3,
+      "parsed": 2,
+      "preservedRaw": 1,
+      "unknown": 1
+    },
+    "keys": {
+      "total": 6,
+      "parsed": 3,
+      "preservedRaw": 3
+    },
+    "lines": {
+      "total": 13,
+      "accounted": 13,
+      "dropped": 0
+    },
+    "dropped": 0
+  }
+}
