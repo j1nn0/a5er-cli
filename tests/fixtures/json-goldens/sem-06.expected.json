@@ -51,6 +51,25 @@
         },
         "lname": null,
         "comment": null,
+        "scalars": [
+          {
+            "key": "PName",
+            "keyRaw": "PName",
+            "origin": "declared",
+            "raw": "\"view_with_lname\"",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 7,
+              "endLine": 7,
+              "keyLine": 7
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "view_with_lname"
+            }
+          }
+        ],
         "query": "SELECT id FROM subtype_member",
         "queryRaw": "\"SELECT id FROM subtype_member\"",
         "querySpan": {
@@ -165,6 +184,25 @@
         },
         "lname": null,
         "comment": null,
+        "scalars": [
+          {
+            "key": "PName",
+            "keyRaw": "PName",
+            "origin": "declared",
+            "raw": "\"plain_view\"",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 13,
+              "endLine": 13,
+              "keyLine": 13
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "plain_view"
+            }
+          }
+        ],
         "query": "SELECT id FROM subtype_member",
         "queryRaw": "\"SELECT id FROM subtype_member\"",
         "querySpan": {

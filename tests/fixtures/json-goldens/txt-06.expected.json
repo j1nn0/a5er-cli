@@ -51,6 +51,25 @@
         },
         "lname": null,
         "comment": null,
+        "scalars": [
+          {
+            "key": "PName",
+            "keyRaw": "PName",
+            "origin": "declared",
+            "raw": "\"dup_manager\"",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 8,
+              "endLine": 8,
+              "keyLine": 8
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "dup_manager"
+            }
+          }
+        ],
         "fields": [
           {
             "elementsSeen": 10,

@@ -51,6 +51,25 @@
         },
         "lname": null,
         "comment": null,
+        "scalars": [
+          {
+            "key": "PName",
+            "keyRaw": "PName",
+            "origin": "declared",
+            "raw": "\"future_format\"",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 8,
+              "endLine": 8,
+              "keyLine": 8
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "future_format"
+            }
+          }
+        ],
         "fields": [
           {
             "elementsSeen": 10,

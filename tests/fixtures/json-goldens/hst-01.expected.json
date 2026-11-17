@@ -61,6 +61,42 @@
             "keyLine": 8
           }
         },
+        "scalars": [
+          {
+            "key": "PName",
+            "keyRaw": "PName",
+            "origin": "declared",
+            "raw": "\"nul_comment\"",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 7,
+              "endLine": 7,
+              "keyLine": 7
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "nul_comment"
+            }
+          },
+          {
+            "key": "Comment",
+            "keyRaw": "Comment",
+            "origin": "declared",
+            "raw": "\"before\u0000after\"",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 8,
+              "endLine": 8,
+              "keyLine": 8
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "escaped",
+              "value": "before\u0000after"
+            }
+          }
+        ],
         "fields": [
           {
             "elementsSeen": 10,

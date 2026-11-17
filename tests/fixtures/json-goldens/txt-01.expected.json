@@ -61,6 +61,42 @@
           }
         },
         "comment": null,
+        "scalars": [
+          {
+            "key": "PName",
+            "keyRaw": "PName",
+            "origin": "declared",
+            "raw": "\"users\"",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 9,
+              "endLine": 9,
+              "keyLine": 9
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "users"
+            }
+          },
+          {
+            "key": "LName",
+            "keyRaw": "LName",
+            "origin": "declared",
+            "raw": "\"ユーザー\"",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 10,
+              "endLine": 10,
+              "keyLine": 10
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "ユーザー"
+            }
+          }
+        ],
         "fields": [
           {
             "elementsSeen": 10,
@@ -720,6 +756,42 @@
           }
         },
         "comment": null,
+        "scalars": [
+          {
+            "key": "PName",
+            "keyRaw": "PName",
+            "origin": "declared",
+            "raw": "\"orders\"",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 18,
+              "endLine": 18,
+              "keyLine": 18
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "orders"
+            }
+          },
+          {
+            "key": "LName",
+            "keyRaw": "LName",
+            "origin": "declared",
+            "raw": "\"注文\"",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 19,
+              "endLine": 19,
+              "keyLine": 19
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "注文"
+            }
+          }
+        ],
         "fields": [
           {
             "elementsSeen": 10,
@@ -1241,6 +1313,42 @@
           }
         },
         "comment": null,
+        "scalars": [
+          {
+            "key": "PName",
+            "keyRaw": "PName",
+            "origin": "declared",
+            "raw": "\"audit_log\"",
+            "span": {
+              "sectionIndex": 4,
+              "startLine": 26,
+              "endLine": 26,
+              "keyLine": 26
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "audit_log"
+            }
+          },
+          {
+            "key": "LName",
+            "keyRaw": "LName",
+            "origin": "declared",
+            "raw": "\"監査ログ\"",
+            "span": {
+              "sectionIndex": 4,
+              "startLine": 27,
+              "endLine": 27,
+              "keyLine": 27
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "監査ログ"
+            }
+          }
+        ],
         "fields": [],
         "indexes": {
           "canonical": [],
@@ -1355,6 +1463,25 @@
         },
         "lname": null,
         "comment": null,
+        "scalars": [
+          {
+            "key": "PName",
+            "keyRaw": "PName",
+            "origin": "declared",
+            "raw": "\"active_users\"",
+            "span": {
+              "sectionIndex": 5,
+              "startLine": 31,
+              "endLine": 31,
+              "keyLine": 31
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "active_users"
+            }
+          }
+        ],
         "query": "SELECT * FROM users WHERE email IS NOT NULL",
         "queryRaw": "\"SELECT * FROM users WHERE email IS NOT NULL\"",
         "querySpan": {
@@ -1464,6 +1591,25 @@
         },
         "lname": null,
         "comment": null,
+        "scalars": [
+          {
+            "key": "PName",
+            "keyRaw": "PName",
+            "origin": "declared",
+            "raw": "\"order_summary\"",
+            "span": {
+              "sectionIndex": 6,
+              "startLine": 36,
+              "endLine": 36,
+              "keyLine": 36
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "order_summary"
+            }
+          }
+        ],
         "query": "SELECT user_id, COUNT(*) FROM orders GROUP BY user_id",
         "queryRaw": "\"SELECT user_id, COUNT(*) FROM orders GROUP BY user_id\"",
         "querySpan": {

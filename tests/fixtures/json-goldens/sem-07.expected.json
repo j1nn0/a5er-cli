@@ -51,6 +51,25 @@
         },
         "lname": null,
         "comment": null,
+        "scalars": [
+          {
+            "key": "PName",
+            "keyRaw": "PName",
+            "origin": "declared",
+            "raw": "\"with_common\"",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 9,
+              "endLine": 9,
+              "keyLine": 9
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "with_common"
+            }
+          }
+        ],
         "fields": [
           {
             "elementsSeen": 10,
@@ -502,6 +521,25 @@
         },
         "lname": null,
         "comment": null,
+        "scalars": [
+          {
+            "key": "PName",
+            "keyRaw": "PName",
+            "origin": "declared",
+            "raw": "\"without_common\"",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 15,
+              "endLine": 15,
+              "keyLine": 15
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "without_common"
+            }
+          }
+        ],
         "fields": [
           {
             "elementsSeen": 10,

@@ -25,10 +25,13 @@
  * **Nothing is silently dropped.** Registered keys the resolved model does not otherwise project
  * become `attributes` with the registry's disposition (`structured` / `presentation` / `ddl-only` /
  * `legacy`), their token kept as written. A token that did not decode is an `invalid` attribute, not
- * a missing one. A relation's interpreted scalars carry their own raw text and span, and every
- * declaration of those five keys — duplicates and unreadable tokens included — is in `scalars`, so
- * last-wins never deletes a line. A view's columns stay `{ status: 'unknown' }` and a subtype's
- * membership stays `{ status: 'unsupported' }`; neither becomes `[]`.
+ * a missing one. Interpreted scalars carry their own raw text and span, and every declaration of a
+ * projected scalar key — duplicates and unreadable tokens included — is in `scalars`, so last-wins
+ * never deletes a line. That holds for `[Relation]`'s five keys since 6-A and for an entity's,
+ * view's and subtype's `PName`/`LName`/`Comment` since 6-B. A view's columns stay `{ status:
+ * 'unknown' }` and a subtype's membership stays `{ status: 'unsupported' }`; neither becomes `[]`.
+ * What is still only a count — the fact-shaped slots such as `Query` and `UsingCommonColumns` — is
+ * the gap `declaredOf` records below.
  *
  * **Failed input.** A rejected read yields the documented shape, not a partial diagram: `status:
  * 'failed'`, `source: null`, `schema: null`, `completeness: null`, `unsupported: []`, and the fatal
@@ -103,10 +106,12 @@ import type {
   JsonLegacyIndex,
   JsonObject,
   JsonObjectPosition,
+  JsonObjectScalarKey,
   JsonPage,
   JsonPosition,
   JsonPrimaryKey,
   JsonPrimaryKeyColumn,
+  JsonProjectedScalar,
   JsonRawElement,
   JsonRelation,
   JsonRelationColumn,
@@ -136,17 +141,44 @@ export interface SerializeContext {
 }
 
 /**
- * The keys each projection already carries in a structured slot.
+ * The `JsonValue` scalars each object kind projects into a typed slot (§4.5).
  *
- * Attributes are "every other key" (§4.5): repeating a projected key here would count one source
- * line twice, once as a typed slot and once as an attribute. A duplicate occurrence of a projected
- * scalar is still reported by `S_DUPLICATE_KEY`; it is not silently lost, and the structured slot
- * keeps the last-wins occurrence §4.2 defines.
+ * These keys are **both** a slot and every declaration of them in `scalars`, exactly as the five
+ * `[Relation]` scalars are (6-A). A repeated `PName`/`LName`/`Comment` is therefore never silently
+ * lost: the slot holds the last-wins occurrence §4.2 defines and `scalars` keeps the history behind
+ * it, so the overwritten line keeps its text and its line instead of only an `S_DUPLICATE_KEY`
+ * count (§12 rule 4, R26).
+ *
+ * The `*_PROJECTED` sets below spread these lists, so a scalar key cannot be retained without also
+ * being kept out of `attributes` — the same source line would otherwise be reported twice. Only
+ * `parsed` entries are read; none of these three has a documented default (§4.2), so no declared
+ * record can be fabricated from one.
  */
+const ENTITY_SCALAR_KEYS: readonly JsonObjectScalarKey[] = ['PName', 'LName', 'Comment'];
+const VIEW_SCALAR_KEYS: readonly JsonObjectScalarKey[] = ['PName', 'LName', 'Comment'];
+/** `[Subtype]` registers no `LName` and no `Comment`, so `PName` is its only projected scalar. */
+const SUBTYPE_SCALAR_KEYS: readonly JsonObjectScalarKey[] = ['PName'];
+
+/**
+ * A membership test for one kind's scalar keys, built from its list so the two cannot drift apart.
+ *
+ * The same shape `isRelationScalarKey` uses: one list per kind, one set built from it, and the
+ * kind's `*_PROJECTED` set spreads the list, so a key cannot be retained without also being kept
+ * out of `attributes` (and cannot be in both).
+ */
+function scalarKeyGuard(
+  keys: readonly JsonObjectScalarKey[],
+): (key: string) => key is JsonObjectScalarKey {
+  const members: ReadonlySet<string> = new Set(keys);
+  return (key: string): key is JsonObjectScalarKey => members.has(key);
+}
+
+const isEntityScalarKey = scalarKeyGuard(ENTITY_SCALAR_KEYS);
+const isViewScalarKey = scalarKeyGuard(VIEW_SCALAR_KEYS);
+const isSubtypeScalarKey = scalarKeyGuard(SUBTYPE_SCALAR_KEYS);
+
 const ENTITY_PROJECTED: ReadonlySet<string> = new Set([
-  'PName',
-  'LName',
-  'Comment',
+  ...ENTITY_SCALAR_KEYS,
   'Field',
   'IndexInfo',
   'Index',
@@ -156,16 +188,14 @@ const ENTITY_PROJECTED: ReadonlySet<string> = new Set([
 ]);
 
 const VIEW_PROJECTED: ReadonlySet<string> = new Set([
-  'PName',
-  'LName',
-  'Comment',
+  ...VIEW_SCALAR_KEYS,
   'Query',
   'LNameByComment',
   'Position',
 ]);
 
 const SUBTYPE_PROJECTED: ReadonlySet<string> = new Set([
-  'PName',
+  ...SUBTYPE_SCALAR_KEYS,
   'SharedMode',
   'CompleteCategory',
   'Position',
@@ -251,16 +281,21 @@ function occurrencesOf(section: ClassifiedSection, key: string): KeyOccurrence[]
  * The last declared value of one key, decoded to `T` (§4.2 last-wins), with its raw text and span.
  *
  * `null` means the key never appeared, or that its last occurrence does not decode to `T` — the
- * last-wins rule is not re-negotiated here by walking backwards to something readable (R26). The
- * occurrence itself always remains readable elsewhere: for an `[Relation]` scalar, in `scalars`;
- * for any other section, in the classification and the diagnostic list.
+ * last-wins rule is not re-negotiated here by walking backwards to something readable (R26). Never
+ * an earlier valid occurrence in place of a terminal unreadable one.
  *
- * **Known gap, deliberately not fixed in stage 6-A (finding 5-d).** For an entity, view, subtype
- * or index, an overwritten *projected* scalar (`PName`, `LName`, `Comment`, …) still keeps only
- * the terminal occurrence: the earlier line survives as an `S_DUPLICATE_KEY` count but not as a
- * record. `[Relation]` no longer has that gap because `scalars` retains every declaration; the
- * other kinds need the same treatment plus a golden that exercises it, which is a separate change
- * (§14 row 10 asks for both spans). Recorded here so the asymmetry is a decision, not an accident.
+ * The occurrence itself always remains readable elsewhere: for a `[Relation]` scalar and for an
+ * object's `PName`/`LName`/`Comment`, in `scalars` (every declaration, in file order); for a key
+ * that is not projected at all, in `attributes` and the diagnostic list. A projected *fact* slot is
+ * the exception the paragraph below records.
+ *
+ * **The one remaining gap (finding 5-d, narrowed in 6-B).** Objects and relations no longer have
+ * it: both keep every declaration of their projected scalars. What is still only a count is a
+ * *fact-shaped* slot — an entity's `UsingCommonColumns`, a view's `Query`/`LNameByComment` and a
+ * subtype's `SharedMode`/`CompleteCategory`/`ZOrder` — because those carry provenance or a default
+ * rather than a plain `JsonValue`, so they need their own record shape. (`IndexInfo`/`Index`
+ * scalars are not a gap at all: each declaration is its own array record.) Recorded here so the
+ * remainder is a decision, not an accident.
  */
 function declaredOf<T extends DecodedValue>(
   section: ClassifiedSection,
@@ -622,6 +657,7 @@ function entityObject(input: LoadedIntegrationInput, section: ClassifiedSection)
     pname: declaredString(section, 'PName'),
     lname: declaredString(section, 'LName'),
     comment: declaredString(section, 'Comment'),
+    scalars: jsonProjectedScalars(section, isEntityScalarKey),
     fields: section.decoded.fields.map(jsonField),
     indexes: jsonIndexes(section.decoded.indexes),
     primaryKey: jsonPrimaryKey(key, indeterminate),
@@ -646,6 +682,7 @@ function viewObject(input: LoadedIntegrationInput, section: ClassifiedSection): 
     pname: declaredString(section, 'PName'),
     lname: declaredString(section, 'LName'),
     comment: declaredString(section, 'Comment'),
+    scalars: jsonProjectedScalars(section, isViewScalarKey),
     query: view.query,
     queryRaw: view.queryRaw,
     querySpan: view.querySpan === null ? null : jsonSpan(view.querySpan),
@@ -684,6 +721,7 @@ function subtypeObject(
     pname: declaredString(section, 'PName'),
     lname: declaredString(section, 'LName'),
     comment: declaredString(section, 'Comment'),
+    scalars: jsonProjectedScalars(section, isSubtypeScalarKey),
     sharedMode: {
       value: subtype.sharedMode.value,
       raw: subtype.sharedMode.raw,
@@ -766,22 +804,29 @@ function jsonRelationColumnList(list: RelationColumnList): JsonRelationColumnLis
 }
 
 /**
- * Every declared occurrence of the five projected `[Relation]` scalars, in file order.
+ * Every declared occurrence of one kind's projected scalars, in file order.
  *
  * This is the retention half of §4.2's last-wins rule: the typed slots keep the occurrence the
  * rule selects, and this list keeps all of them, so an overwritten value never survives only as an
  * `S_DUPLICATE_KEY` count. `value` is the same token shape `attributes` uses, so an occurrence that
  * did not decode is kept as `invalid` with its reason rather than disappearing (R26).
  *
- * Only `parsed` entries are read: a defaulted key has no line, and none of these five has a
+ * One function for every kind that has projected scalars — the three objects and `[Relation]` — so
+ * the record shape cannot drift between them; `isScalarKey` is the kind's own membership test and
+ * `Key` its key union, so a record cannot name a key the kind does not project.
+ *
+ * Only `parsed` entries are read: a defaulted key has no line, and none of these keys has a
  * documented default (§4.2), so nothing can be fabricated here.
  */
-function jsonRelationScalars(section: ClassifiedSection): JsonRelationScalar[] {
-  const scalars: JsonRelationScalar[] = [];
+function jsonProjectedScalars<Key extends string>(
+  section: ClassifiedSection,
+  isScalarKey: (key: string) => key is Key,
+): JsonProjectedScalar<Key>[] {
+  const scalars: JsonProjectedScalar<Key>[] = [];
   for (const entry of section.entries) {
     if (entry.kind !== 'parsed') continue;
     const { occurrence } = entry;
-    if (!isRelationScalarKey(occurrence.spec.key)) continue;
+    if (!isScalarKey(occurrence.spec.key)) continue;
     // Every entry is a line, so its span exists; the guard keeps the type honest, not the data.
     if (occurrence.span === null) continue;
     scalars.push({
@@ -794,6 +839,11 @@ function jsonRelationScalars(section: ClassifiedSection): JsonRelationScalar[] {
     });
   }
   return scalars;
+}
+
+/** The five projected `[Relation]` scalars, through the shared record builder. */
+function jsonRelationScalars(section: ClassifiedSection): JsonRelationScalar[] {
+  return jsonProjectedScalars(section, isRelationScalarKey);
 }
 
 /**

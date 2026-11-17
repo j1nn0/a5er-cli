@@ -38,6 +38,15 @@
  * declarations. The per-file line table lives in the acceptance case at the end of this file, so a
  * reader can check every number against the fixture instead of against this serializer.
  *
+ * **The 41 object-bearing goldens (stage 6-B).** Every entity, view and subtype gained one member,
+ * `scalars`, so all 41 goldens that project an object were edited by hand — 54 objects, 62
+ * declarations. Each record was authored from its own fixture too: the fixture line for the key
+ * text, the value text and the line number, and the registry's key type for the decoded token
+ * (`string` for `PName`/`LName`, `escaped` for `Comment`). The three goldens that carry no object
+ * (`enc-04`, `hst-02`, `sem-09`) were not touched, and no fixture declares one of these keys
+ * twice, so every `scalars` here is the section's own single-declaration history, not an empty
+ * placeholder. `serialize()` was not used to author any of it (test-strategy §3.6).
+ *
  * **Comparison rules.** After `JSON.parse`, objects are compared structurally and arrays keep
  * file order; key arrays are compared recursively as well, so construction order is deterministic
  * without a textual diff. `source.path` is the only scrubbed field; `source.sha256` is asserted
@@ -91,6 +100,16 @@ import { FIXTURES } from './helpers/fixture-registry.js';
 import { stage } from './helpers/stage.js';
 
 const GOLDEN_DIR = fileURLToPath(new URL('./fixtures/json-goldens/', import.meta.url));
+
+/**
+ * The projected object scalars, per kind — this repo's statement of the registry's key sets, kept
+ * in the test so a golden cannot gain a key the format does not define for that section.
+ */
+const OBJECT_SCALAR_KEYS: Readonly<Record<JsonObject['kind'], readonly string[]>> = {
+  entity: ['PName', 'LName', 'Comment'],
+  view: ['PName', 'LName', 'Comment'],
+  subtype: ['PName'],
+};
 
 /** The five committed byte fixtures, as their modules export them. */
 const BYTE_FIXTURES: Readonly<Record<string, Uint8Array>> = {
@@ -326,6 +345,47 @@ function assertEnvelopeInvariants(envelope: JsonEnvelope): void {
       expect(object.membership.status, 'subtype membership').toBe('unsupported');
       expect(Object.prototype.hasOwnProperty.call(object.membership, 'members')).toBe(false);
       expect(Object.prototype.hasOwnProperty.call(object.membership, 'entities')).toBe(false);
+    }
+
+    // Every declaration of a projected object scalar is retained, in file order, on its own line;
+    // the slots hold the last-wins selection, which must be one of those declarations (§12 rule 4).
+    const objectWhere = `objects[section ${String(object.sectionIndex)}]`;
+    const scalarKeys = OBJECT_SCALAR_KEYS[object.kind];
+    const scalarLines = object.scalars.map((scalar) => scalar.span.startLine);
+    expect(scalarLines, `${objectWhere}.scalars: file order`).toEqual(
+      [...scalarLines].sort((left, right) => left - right),
+    );
+    for (const scalar of object.scalars) {
+      expect(scalarKeys, `${objectWhere}.scalars.key`).toContain(scalar.key);
+      expect(scalar.origin, `${objectWhere}.scalars.origin`).toBe('declared');
+      expect(scalar.span.sectionIndex, `${objectWhere}.scalars.span`).toBe(object.sectionIndex);
+      expect(scalar.keyRaw.length, `${objectWhere}.scalars.keyRaw`).toBeGreaterThan(0);
+      expect(scalar.raw.length, `${objectWhere}.scalars.raw`).toBeGreaterThan(0);
+      // One source line, one record: no projected scalar is repeated as an attribute.
+      const alsoAttribute = object.attributes.some(
+        (attribute) =>
+          attribute.key === scalar.key && attribute.span?.startLine === scalar.span.startLine,
+      );
+      expect(alsoAttribute, `${objectWhere}.attributes: ${scalar.key} reported twice`).toBe(false);
+    }
+    for (const [key, slot] of [
+      ['PName', object.pname],
+      ['LName', object.lname],
+      ['Comment', object.comment],
+    ] as const) {
+      if (!scalarKeys.includes(key) || slot === null) continue;
+      expect(slot.span, `${objectWhere}.${key}: selected value has a span`).not.toBeNull();
+      const declared = object.scalars.some(
+        (scalar) =>
+          scalar.key === key &&
+          scalar.raw === slot.raw &&
+          scalar.span.startLine === slot.span?.startLine &&
+          scalar.value.status === 'decoded' &&
+          scalar.value.value === slot.value,
+      );
+      expect(declared, `${objectWhere}.${key}: selected value is a retained declaration`).toBe(
+        true,
+      );
     }
   }
 

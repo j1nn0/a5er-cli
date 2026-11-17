@@ -51,6 +51,25 @@
         },
         "lname": null,
         "comment": null,
+        "scalars": [
+          {
+            "key": "PName",
+            "keyRaw": "PName",
+            "origin": "declared",
+            "raw": "\"mixed_eol\"",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 5,
+              "endLine": 5,
+              "keyLine": 5
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "mixed_eol"
+            }
+          }
+        ],
         "fields": [
           {
             "elementsSeen": 10,

@@ -415,6 +415,41 @@ export interface JsonAttribute {
   readonly value: JsonAttributeToken;
 }
 
+/**
+ * One declared occurrence of a key the envelope also carries in a typed slot, with its line.
+ *
+ * The typed slots hold the occurrence §4.2's last-wins rule **selects**; this record exists for
+ * every declaration, so an overwritten value keeps its text and its line instead of surviving only
+ * as an `S_DUPLICATE_KEY` count (§12 rule 4, R26). `value` is the token shape `attributes` already
+ * uses: a token its type could not decode is `invalid` with the reason, never a missing
+ * occurrence.
+ *
+ * `Key` is the kind's own key union, so the record cannot claim a key the kind does not project.
+ */
+export interface JsonProjectedScalar<Key extends string> {
+  readonly key: Key;
+  /** The key text exactly as written, whitespace included. */
+  readonly keyRaw: string;
+  /** Always `'declared'`: a defaulted key has no line to point at and is never in this list. */
+  readonly origin: 'declared';
+  /** The value text verbatim, before any unquoting. */
+  readonly raw: string;
+  readonly span: JsonSpan;
+  readonly value: JsonAttributeToken;
+}
+
+/**
+ * The scalar keys the three object kinds project into `JsonValue` slots (§4.5).
+ *
+ * The union is across kinds, not a claim that every kind can declare every key: `serialize.ts`
+ * keeps one key set per kind, and `[Subtype]` has `PName` alone because the registry declares no
+ * `LName` and no `Comment` for it. Everything else the kind registers is an attribute.
+ */
+export type JsonObjectScalarKey = 'PName' | 'LName' | 'Comment';
+
+/** One declared occurrence of an object scalar, the same record a relation scalar uses. */
+export type JsonObjectScalar = JsonProjectedScalar<JsonObjectScalarKey>;
+
 /** The fields every object kind shares (§4.5 `SchemaObject`). */
 interface JsonObjectBase {
   /** 1-based section ordinal the object was declared in. */
@@ -432,9 +467,23 @@ interface JsonObjectBase {
   readonly pname: JsonValue<string> | null;
   readonly lname: JsonValue<string> | null;
   readonly comment: JsonValue<string> | null;
+  /**
+   * Every declared occurrence of this kind's projected scalars, in file order.
+   *
+   * The three slots above hold the occurrence §4.2's last-wins rule selects; this list is the
+   * history behind them, so an overwritten `PName`, `LName` or `Comment` keeps its text and its
+   * line instead of surviving only as an `S_DUPLICATE_KEY` count (§12 rule 4, R26). A key the kind
+   * does not project is never here — `[Subtype]` has `PName` alone.
+   */
+  readonly scalars: readonly JsonObjectScalar[];
   /** Every `Position` occurrence, in declaration order, shapes included (§P11). */
   readonly positions: readonly JsonPosition[];
-  /** Every other registered key of the section, in file order (F9, D7). */
+  /**
+   * Every other registered key of the section, in file order (F9, D7).
+   *
+   * A projected key is never also an attribute, duplicates included: the same source line would
+   * then be reported twice. A repeated projected scalar is in `scalars` instead.
+   */
   readonly attributes: readonly JsonAttribute[];
 }
 
@@ -515,26 +564,8 @@ export type JsonRelationScalarKey =
   | 'Cardinarity1'
   | 'Cardinarity2';
 
-/**
- * One declared occurrence of a projected `[Relation]` scalar, with the line it was written on.
- *
- * The typed slots below hold the occurrence §4.2's last-wins rule **selects**; this record exists
- * for every declaration, so an overwritten value keeps its text and its line instead of surviving
- * only as an `S_DUPLICATE_KEY` count (§12 rule 4, R26). `value` is the token shape `attributes`
- * already uses: a token its type could not decode is `invalid` with the reason, never a missing
- * occurrence.
- */
-export interface JsonRelationScalar {
-  readonly key: JsonRelationScalarKey;
-  /** The key text exactly as written, whitespace included. */
-  readonly keyRaw: string;
-  /** Always `'declared'`: a defaulted key has no line to point at and is never in this list. */
-  readonly origin: 'declared';
-  /** The value text verbatim, before any unquoting. */
-  readonly raw: string;
-  readonly span: JsonSpan;
-  readonly value: JsonAttributeToken;
-}
+/** One declared occurrence of a projected `[Relation]` scalar, the record `JsonProjectedScalar` defines. */
+export type JsonRelationScalar = JsonProjectedScalar<JsonRelationScalarKey>;
 
 /**
  * One relation: the resolved record plus its presentation records and its declarations.

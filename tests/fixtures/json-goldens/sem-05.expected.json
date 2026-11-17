@@ -51,6 +51,25 @@
         },
         "lname": null,
         "comment": null,
+        "scalars": [
+          {
+            "key": "PName",
+            "keyRaw": "PName",
+            "origin": "declared",
+            "raw": "\"subtype_member\"",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 7,
+              "endLine": 7,
+              "keyLine": 7
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "subtype_member"
+            }
+          }
+        ],
         "fields": [
           {
             "elementsSeen": 10,
@@ -345,6 +364,25 @@
         },
         "lname": null,
         "comment": null,
+        "scalars": [
+          {
+            "key": "PName",
+            "keyRaw": "PName",
+            "origin": "declared",
+            "raw": "\"unknown_membership\"",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 12,
+              "endLine": 12,
+              "keyLine": 12
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "unknown_membership"
+            }
+          }
+        ],
         "sharedMode": {
           "value": "0",
           "raw": "0",

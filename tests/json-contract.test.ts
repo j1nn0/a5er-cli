@@ -869,6 +869,250 @@ describe('json envelope — relation provenance (stage 6-A)', () => {
   });
 });
 
+/**
+ * The projected object scalars, per kind: `PName`/`LName`/`Comment` for `[Entity]` and `[View]`,
+ * `PName` alone for `[Subtype]` — the registry (v2.21) declares no `LName` and no `Comment` for it.
+ */
+const OBJECT_SCALAR_KEYS: Readonly<Record<'entity' | 'view' | 'subtype', readonly string[]>> = {
+  entity: ['PName', 'LName', 'Comment'],
+  view: ['PName', 'LName', 'Comment'],
+  subtype: ['PName'],
+};
+
+describe('json envelope — object scalar provenance (stage 6-B)', () => {
+  it('keeps every duplicate object scalar, in file order, with the slots on the terminal one', () => {
+    // One document with each kind's own case: `[Entity]` repeats `LName` and `Comment`, `[View]`
+    // repeats `PName`, and `[Subtype]` repeats the only scalar it has. Nothing else repeats, so the
+    // four `S_DUPLICATE_KEY` findings are exactly the four scalars this unit retains.
+    const text = [
+      '# A5:ER FORMAT:21',
+      '',
+      '[Manager]',
+      'PageInfo="Main",3,"A4Landscape","$FFFFFF"',
+      '',
+      '[Entity]',
+      'PName="alpha"',
+      'LName="Alpha"',
+      'LName="AlphaRenamed"',
+      'Comment="first note"',
+      'Comment="second note"',
+      'Field="ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,"",""',
+      'Position="Main",10,10',
+      '',
+      '[View]',
+      'PName="report"',
+      'PName="report_v2"',
+      'LName="Report"',
+      'Comment="view note"',
+      'Query="select 1"',
+      'Position="Main",20,20',
+      '',
+      '[Subtype]',
+      'PName="sub"',
+      'PName="sub2"',
+      'Position="Main",30,30',
+      '',
+    ].join('\n');
+
+    withDocument(text, (path, input) => {
+      const envelope = serialize(input, { command: 'inspect', path });
+      const objects = envelope.schema?.objects ?? [];
+      const [entity, view, subtype] = objects;
+      if (entity === undefined || view === undefined || subtype === undefined) {
+        throw new Error('the three object projections are missing');
+      }
+
+      expect(objects.map((object) => object.kind)).toEqual(['entity', 'view', 'subtype']);
+
+      // The anchor is the last `PName` line in the section: 7, 17 and 25 — not the overwritten one.
+      expect(entity.span).toEqual(oneLineSpan(2, 7));
+      expect(view.span).toEqual(oneLineSpan(3, 17));
+      expect(subtype.span).toEqual(oneLineSpan(4, 25));
+
+      // Every declaration is a record, in file order, with its own text and its own line.
+      expect(
+        entity.scalars.map((scalar) => [
+          scalar.key,
+          scalar.keyRaw,
+          scalar.origin,
+          scalar.raw,
+          scalar.span.startLine,
+        ]),
+      ).toEqual([
+        ['PName', 'PName', 'declared', '"alpha"', 7],
+        ['LName', 'LName', 'declared', '"Alpha"', 8],
+        ['LName', 'LName', 'declared', '"AlphaRenamed"', 9],
+        ['Comment', 'Comment', 'declared', '"first note"', 10],
+        ['Comment', 'Comment', 'declared', '"second note"', 11],
+      ]);
+      expect(view.scalars.map((scalar) => [scalar.key, scalar.raw, scalar.span.startLine])).toEqual(
+        [
+          ['PName', '"report"', 16],
+          ['PName', '"report_v2"', 17],
+          ['LName', '"Report"', 18],
+          ['Comment', '"view note"', 19],
+        ],
+      );
+      expect(
+        subtype.scalars.map((scalar) => [scalar.key, scalar.raw, scalar.span.startLine]),
+      ).toEqual([
+        ['PName', '"sub"', 24],
+        ['PName', '"sub2"', 25],
+      ]);
+
+      // The slots hold the occurrence §4.2's last-wins rule selects — never an earlier, readable one.
+      expect(entity.pname?.value).toBe('alpha');
+      expect(entity.lname).toEqual({
+        value: 'AlphaRenamed',
+        origin: 'declared',
+        raw: '"AlphaRenamed"',
+        span: oneLineSpan(2, 9),
+      });
+      expect(entity.comment).toEqual({
+        value: 'second note',
+        origin: 'declared',
+        raw: '"second note"',
+        span: oneLineSpan(2, 11),
+      });
+      expect(view.pname).toEqual({
+        value: 'report_v2',
+        origin: 'declared',
+        raw: '"report_v2"',
+        span: oneLineSpan(3, 17),
+      });
+      expect(subtype.pname).toEqual({
+        value: 'sub2',
+        origin: 'declared',
+        raw: '"sub2"',
+        span: oneLineSpan(4, 25),
+      });
+
+      // A subtype has no slot to fill: the registry declares no `LName` and no `Comment` for it, so
+      // neither is invented as a null-*shaped* scalar record here either.
+      expect(subtype.lname).toBeNull();
+      expect(subtype.comment).toBeNull();
+
+      // The token is the same shape `attributes` uses. An object scalar cannot be `invalid`: all
+      // three keys are registry-typed `string`/`escaped`, and `decodeValue` never fails for those two
+      // types, so the unreadable-token arm is a relation-only case (pinned above, `RelationType2`).
+      expect(entity.scalars.map((scalar) => scalar.value)).toEqual([
+        { status: 'decoded', kind: 'string', value: 'alpha' },
+        { status: 'decoded', kind: 'string', value: 'Alpha' },
+        { status: 'decoded', kind: 'string', value: 'AlphaRenamed' },
+        { status: 'decoded', kind: 'escaped', value: 'first note' },
+        { status: 'decoded', kind: 'escaped', value: 'second note' },
+      ]);
+
+      // A projected scalar is never also an attribute: one source line is reported once.
+      for (const object of objects) {
+        for (const attribute of object.attributes) {
+          expect(OBJECT_SCALAR_KEYS[object.kind], `${object.kind}.${attribute.key}`).not.toContain(
+            attribute.key,
+          );
+        }
+      }
+
+      // The overwritten values are still in the document, text and line both.
+      const json = toJsonString(envelope);
+      for (const raw of ['"Alpha"', '"first note"', '"report"', '"sub"']) {
+        expect(json).toContain(raw);
+      }
+
+      // Reported once per extra occurrence, in file order, and nothing new is invented.
+      const duplicates = envelope.diagnostics.filter(
+        (diagnostic) => diagnostic.code === 'S_DUPLICATE_KEY',
+      );
+      expect(
+        duplicates.map((diagnostic) => [
+          diagnostic.details['key'],
+          diagnostic.details['occurrences'],
+          diagnostic.span?.startLine,
+        ]),
+      ).toEqual([
+        ['LName', 2, 9],
+        ['Comment', 2, 11],
+        ['PName', 2, 17],
+        ['PName', 2, 25],
+      ]);
+      expect(envelope.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+        'D_BOM_MISSING',
+        'S_DUPLICATE_KEY',
+        'S_DUPLICATE_KEY',
+        'S_DUPLICATE_KEY',
+        'V_VIEW_COLUMNS_UNKNOWN',
+        'S_DUPLICATE_KEY',
+        'V_UNSUPPORTED_SUBTYPE_MEMBERSHIP',
+      ]);
+
+      // Counts, completeness and the one unsupported record are the document's own; `scalars` is
+      // evidence and does not move any of them. 4 sections, 17 parsed keys, no dropped line.
+      expect(envelope.completeness).toEqual({
+        sections: { total: 4, parsed: 4, preservedRaw: 0, unknown: 0 },
+        keys: { total: 17, parsed: 17, preservedRaw: 0 },
+        lines: { total: 26, accounted: 26, dropped: 0 },
+        dropped: 0,
+      });
+      expect(
+        envelope.unsupported.map((entry) => [entry.kind, entry.sectionKind, entry.key]),
+      ).toEqual([['subtype-membership', 'Subtype', null]]);
+    });
+  });
+
+  it('never turns a line that is not a key-value declaration into a scalar record', () => {
+    // `LName` with no `=`: §7.3 makes it `multiline-value` evidence plus `S_MALFORMED_LINE`, not a
+    // declaration of `LName`. It must neither add a `scalars` record nor blank the slot — the slot
+    // follows the last *declaration*, and a line that is not a token at all is `unsupported`
+    // evidence, not an unreadable token. This bounds the 6-B change; it is not a retention gap.
+    const text = [
+      '# A5:ER FORMAT:21',
+      '',
+      '[Manager]',
+      'PageInfo="Main",3,"A4Landscape","$FFFFFF"',
+      '',
+      '[Entity]',
+      'PName="alpha"',
+      'LName="Alpha"',
+      'LName',
+      'Field="ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,"",""',
+      'Position="Main",10,10',
+      '',
+    ].join('\n');
+
+    withDocument(text, (path, input) => {
+      const envelope = serialize(input, { command: 'inspect', path });
+      const entity = envelope.schema?.objects[0];
+      if (entity === undefined) throw new Error('the entity projection is missing');
+
+      expect(
+        entity.scalars.map((scalar) => [scalar.key, scalar.raw, scalar.span.startLine]),
+      ).toEqual([
+        ['PName', '"alpha"', 7],
+        ['LName', '"Alpha"', 8],
+      ]);
+      expect(entity.lname).toEqual({
+        value: 'Alpha',
+        origin: 'declared',
+        raw: '"Alpha"',
+        span: oneLineSpan(2, 8),
+      });
+
+      // The raw line is still kept, as its own evidence record — never as a phantom default.
+      expect(
+        envelope.unsupported.map((entry) => [entry.kind, entry.sectionKind, entry.key, entry.raw]),
+      ).toEqual([['multiline-value', 'Entity', null, 'LName']]);
+      expect(
+        envelope.diagnostics.map((diagnostic) => [
+          diagnostic.code,
+          diagnostic.span?.startLine ?? null,
+        ]),
+      ).toEqual([
+        ['D_BOM_MISSING', null],
+        ['S_MALFORMED_LINE', 9],
+      ]);
+    });
+  });
+});
+
 describe('json envelope — known sections the model does not resolve (stage 6-A)', () => {
   /**
    * `[Shape]`, `[Line]` and `[Comment]` are recognised kinds with real registries, and §4.5's

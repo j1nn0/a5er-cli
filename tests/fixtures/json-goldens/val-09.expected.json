@@ -51,6 +51,25 @@
         },
         "lname": null,
         "comment": null,
+        "scalars": [
+          {
+            "key": "PName",
+            "keyRaw": "PName",
+            "origin": "declared",
+            "raw": "\"gap_pk\"",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 7,
+              "endLine": 7,
+              "keyLine": 7
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "gap_pk"
+            }
+          }
+        ],
         "fields": [
           {
             "elementsSeen": 10,

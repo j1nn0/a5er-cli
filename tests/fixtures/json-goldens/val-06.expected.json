@@ -51,6 +51,25 @@
         },
         "lname": null,
         "comment": null,
+        "scalars": [
+          {
+            "key": "PName",
+            "keyRaw": "PName",
+            "origin": "declared",
+            "raw": "\"memberships\"",
+            "span": {
+              "sectionIndex": 1,
+              "startLine": 4,
+              "endLine": 4,
+              "keyLine": 4
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "memberships"
+            }
+          }
+        ],
         "fields": [
           {
             "elementsSeen": 9,

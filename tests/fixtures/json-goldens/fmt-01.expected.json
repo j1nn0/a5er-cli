@@ -71,6 +71,59 @@
             "keyLine": 10
           }
         },
+        "scalars": [
+          {
+            "key": "PName",
+            "keyRaw": "PName",
+            "origin": "declared",
+            "raw": "\"users\"",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 8,
+              "endLine": 8,
+              "keyLine": 8
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "users"
+            }
+          },
+          {
+            "key": "LName",
+            "keyRaw": "LName",
+            "origin": "declared",
+            "raw": "\"ユーザー\"",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 9,
+              "endLine": 9,
+              "keyLine": 9
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "ユーザー"
+            }
+          },
+          {
+            "key": "Comment",
+            "keyRaw": "Comment",
+            "origin": "declared",
+            "raw": "\"利用者\"",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 10,
+              "endLine": 10,
+              "keyLine": 10
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "escaped",
+              "value": "利用者"
+            }
+          }
+        ],
         "fields": [
           {
             "elementsSeen": 10,
@@ -567,6 +620,25 @@
         },
         "lname": null,
         "comment": null,
+        "scalars": [
+          {
+            "key": "PName",
+            "keyRaw": "PName",
+            "origin": "declared",
+            "raw": "\"orders\"",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 17,
+              "endLine": 17,
+              "keyLine": 17
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "orders"
+            }
+          }
+        ],
         "fields": [
           {
             "elementsSeen": 10,
@@ -1052,6 +1124,25 @@
         },
         "lname": null,
         "comment": null,
+        "scalars": [
+          {
+            "key": "PName",
+            "keyRaw": "PName",
+            "origin": "declared",
+            "raw": "\"active_users\"",
+            "span": {
+              "sectionIndex": 5,
+              "startLine": 35,
+              "endLine": 35,
+              "keyLine": 35
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "active_users"
+            }
+          }
+        ],
         "query": "SELECT * FROM users WHERE active = 1",
         "queryRaw": "\"SELECT * FROM users WHERE active = 1\"",
         "querySpan": {

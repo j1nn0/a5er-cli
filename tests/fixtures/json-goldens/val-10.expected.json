@@ -51,6 +51,25 @@
         },
         "lname": null,
         "comment": null,
+        "scalars": [
+          {
+            "key": "PName",
+            "keyRaw": "PName",
+            "origin": "declared",
+            "raw": "\"equals_value\"",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 7,
+              "endLine": 7,
+              "keyLine": 7
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "equals_value"
+            }
+          }
+        ],
         "fields": [
           {
             "elementsSeen": 10,
