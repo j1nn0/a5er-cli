@@ -70,6 +70,16 @@ export interface SubtypeDeclaration {
   readonly sectionIndex: number;
   /** Header text exactly as written, kept so a subtype is traceable even without a `PName`. */
   readonly headerRaw: string;
+  /**
+   * The `[Subtype]` header line itself — the line `headerRaw` was read from (§4.1).
+   *
+   * Separate from `span` on purpose, and the two must not be swapped. `span` anchors the semantic
+   * finding at the most specific line the file actually contains (the `PName` line when there is
+   * one), while any record that *quotes* `headerRaw` — the `unsupported` evidence in
+   * `src/validate/` — has to point at the line that text occupies. One span cannot do both without
+   * claiming the header text sits on the `PName` line (§4.2, §12 rules 3–4).
+   */
+  readonly headerSpan: Span;
   /** `PName` with escapes applied — the spelling the file used; `null` when it declares none. */
   readonly pname: string | null;
   /** Every `PName` line in file order: more than one is a duplicate key, and all are kept (§4.2). */
@@ -86,7 +96,10 @@ export interface SubtypeDeclaration {
   readonly membership: SubtypeMembership;
   /** Keys this section does not define, preserved raw with their own spans (§4.3). */
   readonly unknownEntries: readonly RawEntry[];
-  /** The line this subtype's finding points at: its `PName` line, else the `[Subtype]` header. */
+  /**
+   * The line this subtype's finding points at: its `PName` line, else `headerSpan` (§4.1's "one
+   * line, the most specific one the file contains", the convention `required.ts` uses).
+   */
   readonly span: Span;
 }
 
@@ -113,20 +126,30 @@ function occurrencesOf(section: ClassifiedSection, key: string): KeyOccurrence[]
 }
 
 /**
+ * The `[Subtype]` header as a single-line span.
+ *
+ * `ClassifiedSection.span` is the section's extent, and the scanner guarantees its `keyLine` is the
+ * header line (§4.1), so the one-line span is derived rather than stored twice. The same shape
+ * `required.ts` uses for a section-level finding — `headerRaw`, this span and the semantic `span`
+ * then all describe the line the file actually wrote.
+ */
+function headerSpanOf(section: ClassifiedSection): Span {
+  return {
+    sectionIndex: section.index,
+    startLine: section.span.keyLine,
+    endLine: section.span.keyLine,
+    keyLine: section.span.keyLine,
+  };
+}
+
+/**
  * The line a subtype reports on: its `PName` line, else the `[Subtype]` header.
  *
  * The same convention `required.ts` uses for a missing key — one line, the most specific one the
- * file actually contains.
+ * file actually contains. This is the *finding* anchor; `headerSpanOf` is the *text* anchor.
  */
 function reportSpanOf(section: ClassifiedSection, pnameSpans: readonly Span[]): Span {
-  return (
-    pnameSpans.at(-1) ?? {
-      sectionIndex: section.index,
-      startLine: section.span.keyLine,
-      endLine: section.span.keyLine,
-      keyLine: section.span.keyLine,
-    }
-  );
+  return pnameSpans.at(-1) ?? headerSpanOf(section);
 }
 
 /** Absent, declared or unreadable — never a default, because v2.21 states none for these keys. */
@@ -175,6 +198,7 @@ function subtypeOf(section: ClassifiedSection): SubtypeDeclaration {
   return {
     sectionIndex: section.index,
     headerRaw: section.headerRaw,
+    headerSpan: headerSpanOf(section),
     pname: pnameScalar.value,
     pnameSpans,
     sharedMode: scalarOf(section, 'SharedMode', asString),

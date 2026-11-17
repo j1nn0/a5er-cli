@@ -209,6 +209,18 @@ function rulesOf(run: () => void): readonly IntegrationRule[] {
   throw new Error('expected an IntegrationError');
 }
 
+/**
+ * The source line a span names, exactly as the scanner stored it (terminator excluded).
+ *
+ * Read from `scan.lines` rather than from the fixture file, so the check compares the evidence
+ * against the same text the pipeline saw, with no second decoder in the way.
+ */
+function lineTextAt(input: LoadedIntegrationInput, line: number): string {
+  const source = input.scan.lines.at(line - 1);
+  if (source === undefined) throw new Error(`line ${String(line)} is outside the document`);
+  return source.text;
+}
+
 /** Every span the integration reports must point at a line that exists (§12 rule 3, T4). */
 function assertSpansAreReal(
   input: LoadedIntegrationInput,
@@ -706,7 +718,7 @@ describe('validate — fatal path', () => {
 
 describe('validate — unsupported evidence', () => {
   for (const spec of TEXT_FIXTURES) {
-    it(`${spec.id}: evidence is the projection of stored records, each with raw and span`, () => {
+    it(`${spec.id}: evidence is the projection of stored records, each with raw on its own line`, () => {
       const { input, integration } = pipelineOf(spec.id);
 
       // No record is counted twice and none is invented: the list is exactly the retained
@@ -727,6 +739,12 @@ describe('validate — unsupported evidence', () => {
         expect(evidence.span.startLine, `${spec.id} ${evidence.kind}`).toBeLessThanOrEqual(
           input.scan.lines.length,
         );
+        // §12 rule 4: the raw text sits on the line the span names. R31 was exactly this
+        // assertion failing for `subtype-membership` (header text, `PName`-line span).
+        expect(
+          lineTextAt(input, evidence.span.startLine),
+          `${spec.id} ${evidence.kind} raw/span`,
+        ).toContain(evidence.raw);
       }
 
       // Ordering is by position, so two runs produce the same list.
@@ -735,8 +753,8 @@ describe('validate — unsupported evidence', () => {
     });
   }
 
-  it('sem-05: subtype membership is evidence, and the info finding points at the same line', () => {
-    const { integration } = pipelineOf('sem-05');
+  it('sem-05: membership evidence quotes the header line, the finding stays on the PName line', () => {
+    const { input, integration } = pipelineOf('sem-05');
     const evidence = first(integration.unsupported, 'sem-05 evidence');
     expect(evidence.kind).toBe('subtype-membership');
     expect(evidence.sectionKind).toBe('Subtype');
@@ -744,8 +762,111 @@ describe('validate — unsupported evidence', () => {
     expect(evidence.raw).toBe('[Subtype]');
     expect(evidence.reason).toBe('no-membership-key-in-v2.21');
     expect(evidence.key).toBeNull();
-    expect(evidence.span.startLine).toBe(12);
-    expect(first(integration.diagnostics, 'sem-05 diagnostics').span?.startLine).toBe(12);
+
+    // R31: the evidence quotes the `[Subtype]` header, so its span is that header line (11) —
+    // one line, `sectionIndex` 3 — and the raw text is the line it claims to have read.
+    expect(evidence.span).toEqual({ sectionIndex: 3, startLine: 11, endLine: 11, keyLine: 11 });
+    expect(lineTextAt(input, evidence.span.startLine)).toBe(evidence.raw);
+
+    // The semantic finding keeps its own anchor: the most specific line the file has, `PName` (12).
+    const diagnostic = first(integration.diagnostics, 'sem-05 diagnostics');
+    expect(diagnostic.code).toBe('V_UNSUPPORTED_SUBTYPE_MEMBERSHIP');
+    expect(diagnostic.span).toEqual({ sectionIndex: 3, startLine: 12, endLine: 12, keyLine: 12 });
+    expect(lineTextAt(input, 12)).toBe('PName="unknown_membership"');
+    // Evidence and finding are two anchors for two different claims, not a contradiction.
+    expect(evidence.span.startLine).not.toBe(diagnostic.span?.startLine);
+  });
+
+  it('a subtype with no PName anchors both the evidence and the finding on its header', () => {
+    const input = loadedFromText(
+      [
+        '# A5:ER FORMAT:21',
+        '',
+        '[Manager]',
+        'PageInfo="Main",3,"A4Landscape","$FFFFFF"',
+        '',
+        '[Subtype]',
+        'SharedMode=0',
+        'Position="Main",10,10',
+        '',
+      ].join('\n'),
+    );
+    const integration = integrate(input);
+
+    // `reportSpanOf` falls back to the header when there is no `PName`, so both anchors agree.
+    expect(input.semantics.subtypes).toHaveLength(1);
+    expect(input.semantics.subtypes.at(0)?.pname).toBeNull();
+    expect(input.semantics.subtypes.at(0)?.headerSpan.startLine).toBe(6);
+    expect(input.semantics.subtypes.at(0)?.span.startLine).toBe(6);
+
+    const evidence = first(integration.unsupported, 'header-only subtype evidence');
+    expect(evidence.kind).toBe('subtype-membership');
+    expect(evidence.raw).toBe('[Subtype]');
+    expect(evidence.span).toEqual({ sectionIndex: 2, startLine: 6, endLine: 6, keyLine: 6 });
+    expect(lineTextAt(input, evidence.span.startLine)).toBe(evidence.raw);
+
+    // Both findings are about that same header line: the absent identity and the silent format.
+    expect(integration.diagnostics.map((entry) => entry.code)).toEqual([
+      'V_MISSING_REQUIRED_KEY',
+      'V_UNSUPPORTED_SUBTYPE_MEMBERSHIP',
+    ]);
+    expect(integration.diagnostics.map((entry) => entry.span?.startLine)).toEqual([6, 6]);
+  });
+
+  it('two subtypes keep their own headers, in file order', () => {
+    const input = loadedFromText(
+      [
+        '# A5:ER FORMAT:21',
+        '',
+        '[Manager]',
+        'PageInfo="Main",3,"A4Landscape","$FFFFFF"',
+        '',
+        '[Subtype]',
+        'PName="first"',
+        'SharedMode=0',
+        'Position="Main",10,10',
+        '',
+        '[Subtype]',
+        'PName="second"',
+        'SharedMode=1',
+        'Position="Main",20,20',
+        '',
+      ].join('\n'),
+    );
+    const integration = integrate(input);
+
+    expect(input.semantics.subtypes.map((entry) => entry.headerSpan.startLine)).toEqual([6, 11]);
+    expect(input.semantics.subtypes.map((entry) => entry.span.startLine)).toEqual([7, 12]);
+
+    // One evidence record per subtype, ordered by position, each pointing at its own header.
+    expect(
+      integration.unsupported.map((entry) => ({
+        kind: entry.kind,
+        raw: entry.raw,
+        span: entry.span,
+      })),
+    ).toEqual([
+      {
+        kind: 'subtype-membership',
+        raw: '[Subtype]',
+        span: { sectionIndex: 2, startLine: 6, endLine: 6, keyLine: 6 },
+      },
+      {
+        kind: 'subtype-membership',
+        raw: '[Subtype]',
+        span: { sectionIndex: 3, startLine: 11, endLine: 11, keyLine: 11 },
+      },
+    ]);
+    for (const evidence of integration.unsupported) {
+      expect(lineTextAt(input, evidence.span.startLine)).toBe(evidence.raw);
+    }
+
+    // The findings still point at each subtype's own `PName` line, in file order.
+    expect(integration.diagnostics.map((entry) => entry.code)).toEqual([
+      'V_UNSUPPORTED_SUBTYPE_MEMBERSHIP',
+      'V_UNSUPPORTED_SUBTYPE_MEMBERSHIP',
+    ]);
+    expect(integration.diagnostics.map((entry) => entry.span?.startLine)).toEqual([7, 12]);
   });
 
   it('an unsupported Position shape becomes evidence instead of disappearing', () => {
@@ -774,7 +895,11 @@ describe('validate — unsupported evidence', () => {
     expect(evidence.key).toBe('Position');
     expect(evidence.sectionKind).toBe('Shape');
     expect(evidence.raw).toBe('"Main",10,10');
-    expect(evidence.span.startLine).toBe(8);
+    expect(evidence.span).toEqual({ sectionIndex: 2, startLine: 8, endLine: 8, keyLine: 8 });
+    // Audit of this projection, which no fixture exercises: the value text is a suffix of the
+    // `Position=` line its span names, so raw and provenance stay on one line (§12 rule 4).
+    expect(lineTextAt(input, evidence.span.startLine)).toBe('Position="Main",10,10');
+    expect(lineTextAt(input, evidence.span.startLine)).toContain(evidence.raw);
     // No diagnostic is invented for the unsupported shape (§11 has no geometry code).
     expect(integration.diagnostics).toEqual([]);
   });
@@ -799,7 +924,10 @@ describe('validate — unsupported evidence', () => {
       'unexpected-element-count',
     ]);
     expect(integration.unsupported.map((entry) => entry.kind)).toEqual(['unsupported-position']);
-    expect(integration.unsupported.at(0)?.raw).toBe('"Main",1,2,3');
+    const evidence = first(integration.unsupported, 'four-element position evidence');
+    expect(evidence.raw).toBe('"Main",1,2,3');
+    expect(evidence.span).toEqual({ sectionIndex: 2, startLine: 9, endLine: 9, keyLine: 9 });
+    expect(lineTextAt(input, evidence.span.startLine)).toBe('Position="Main",1,2,3');
   });
 
   it('does not fold undecodable tokens or indeterminate markers into diagnostics', () => {

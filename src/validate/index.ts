@@ -43,10 +43,11 @@
  * **Unsupported is evidence, not a judgement** (§13, §12 rule 7). The list holds the retained
  * `RawEntry` records (unknown sections, unknown keys, continuation lines) plus the two unmodelled
  * constructs §13 names that have no `RawEntry`: a `Position` whose shape the documents do not
- * state, and a `Subtype` whose membership key does not exist in v2.21. Each record keeps the raw
- * text and the span it came from, and each is a projection of a record that already exists in the
- * classification or the semantics — no line is claimed twice, and the line ledger above stays a
- * partition of physical lines only.
+ * state, and a `Subtype` whose membership key does not exist in v2.21. Every record keeps its raw
+ * text together with the span of **the line that text occupies** (§12 rule 4) — for a subtype that
+ * is the `[Subtype]` header, not the `PName` line its diagnostic points at. Each is a projection of
+ * a record that already exists in the classification or the semantics, so no line is claimed twice
+ * and the line ledger above stays a partition of physical lines only.
  *
  * Two observations this unit records rather than fixes, both pinned by an assertion in
  * `tests/validate-integration.test.ts`: `RetentionKind` declares `'unsupported-construct'`, but no
@@ -140,6 +141,14 @@ export interface UnsupportedEvidence {
   readonly key: string | null;
   /** The original text this record is about: a line, a header, or a value. Never a paraphrase. */
   readonly raw: string;
+  /**
+   * The one line `raw` was read from.
+   *
+   * `raw` is always text that occurs on this line — the whole line for a retained record or a
+   * header, the value text for a `Position` (§12 rule 4: raw travels next to the position it was
+   * taken from). A record that quotes a construct's *name* therefore carries that construct's
+   * header span, which is not necessarily the span its diagnostic reports on.
+   */
   readonly span: Span;
   /** Stable machine reason, e.g. `no-registry-entry`; never file text. */
   readonly reason: string;
@@ -434,6 +443,11 @@ function orderedEvidence(evidence: readonly UnsupportedEvidence[]): readonly Uns
  * retained record is a line the registry could not model, while a `Position` or `PName` line on a
  * view or subtype is a parsed key. `Subtype.unknownEntries` is the same object set as the
  * preserved records, so it is not read again here.
+ *
+ * **`raw` and `span` describe one line** (§4.2, §12 rule 4). For a subtype the evidence quotes the
+ * `[Subtype]` header, so its span is `Subtype.headerSpan`, not the semantic `span` — the latter
+ * anchors the `V_UNSUPPORTED_SUBTYPE_MEMBERSHIP` finding at the `PName` line. Evidence and
+ * diagnostics are allowed to point at different lines; a raw value and its span are not.
  */
 function unsupportedOf(
   classification: Classification,
@@ -465,7 +479,7 @@ function unsupportedOf(
       sectionHeader: subtype.headerRaw,
       key: null,
       raw: subtype.headerRaw,
-      span: subtype.span,
+      span: subtype.headerSpan,
       reason: subtype.membership.reason,
     });
   }

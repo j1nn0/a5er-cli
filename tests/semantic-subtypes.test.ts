@@ -58,8 +58,12 @@ describe('membership is unsupported, never empty (§9.6, F7, D6)', () => {
       status: 'unsupported',
       reason: 'no-membership-key-in-v2.21',
     });
-    // The reason is a fact about the format, not about this file: it is identical for every subtype.
+    // Two anchors, two claims (R31). `span` is the finding anchor — the most specific line the
+    // file has, the `PName` line — while `headerSpan` is the line `headerRaw` was actually read
+    // from. Text and its provenance travel together, so a consumer that quotes the header cannot
+    // be handed a span pointing somewhere else (§4.2, §12 rule 4).
     expect(entry?.span).toEqual({ sectionIndex: 3, startLine: 12, endLine: 12, keyLine: 12 });
+    expect(entry?.headerSpan).toEqual({ sectionIndex: 3, startLine: 11, endLine: 11, keyLine: 11 });
     assertCodes(
       semantics.diagnostics.map((diagnostic) => diagnostic.code),
       ['V_UNSUPPORTED_SUBTYPE_MEMBERSHIP'],
@@ -173,7 +177,10 @@ describe('adversarial subtypes (§14 row 15, K11)', () => {
 
     expect(entry?.pname).toBeNull();
     expect(entry?.pnameSpans).toEqual([]);
+    // Without a `PName` the two anchors coincide: the header is both the most specific line the
+    // file has and the line `headerRaw` came from.
     expect(entry?.span).toEqual({ sectionIndex: 2, startLine: 3, endLine: 3, keyLine: 3 });
+    expect(entry?.headerSpan).toEqual({ sectionIndex: 2, startLine: 3, endLine: 3, keyLine: 3 });
     expect(entry?.membership.status).toBe('unsupported');
     // The absent name is the required-key finding; membership is still its own finding.
     assertCodes(
