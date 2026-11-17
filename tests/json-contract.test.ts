@@ -1922,3 +1922,130 @@ describe('json envelope — known sections the model does not resolve (stage 6-A
     });
   });
 });
+
+describe('json envelope — FORMAT declarations (stage 6-B unit 4)', () => {
+  /**
+   * §6's five rows, as the envelope must report them: `declared` is what the header said,
+   * `effective` is a version this build knows or `null`, and an unknown declaration is warned
+   * about — never silently upgraded to 21 and never rejected (`format-coverage.md` F2, K2, U1).
+   */
+  const DECLARATIONS = [
+    { label: 'absent', line: null, declared: null, known: false, effective: null, warned: true },
+    { label: '19 (2.20-era)', line: 19, declared: 19, known: true, effective: 19, warned: false },
+    {
+      label: '20 (the hole, K2)',
+      line: 20,
+      declared: 20,
+      known: false,
+      effective: null,
+      warned: true,
+    },
+    { label: '21 (canonical)', line: 21, declared: 21, known: true, effective: 21, warned: false },
+    {
+      label: '99 (future, as absent, U1)',
+      line: 99,
+      declared: 99,
+      known: false,
+      effective: null,
+      warned: true,
+    },
+  ] as const;
+  /** One minimal document per declaration: no index keys, so FORMAT is the only variable. */
+  function documentWith(line: number | null): string {
+    return [
+      ...(line === null ? [] : [`# A5:ER FORMAT:${String(line)}`]),
+      '',
+      '[Manager]',
+      'PageInfo="Main",3,"A4Landscape","$FFFFFF"',
+      '',
+      '[Entity]',
+      'PName="e"',
+      'Field="ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,""',
+      'Position="Main",1,1',
+      '',
+    ].join('\n');
+  }
+  it('reports declared/effective/known and warns for exactly the unknown declarations', () => {
+    for (const row of DECLARATIONS) {
+      withDocument(documentWith(row.line), (path, input) => {
+        const envelope = serialize(input, { command: 'inspect', path });
+        expect(envelope.source?.format, row.label).toEqual({
+          declared: row.declared,
+          effective: row.effective,
+          known: row.known,
+        });
+        // `effective` is never a version this build does not implement: 20 and 99 keep their own
+        // declaration in `declared` and report no effective version at all.
+        if (!row.known) expect(envelope.source?.format.effective, row.label).toBeNull();
+        const warnings = envelope.diagnostics.filter(
+          (diagnostic) => diagnostic.code === 'S_HEADER_UNKNOWN_FORMAT',
+        );
+        expect(warnings.length, row.label).toBe(row.warned ? 1 : 0);
+        if (row.warned) {
+          expect(warnings[0]?.details, row.label).toEqual({ declared: row.declared });
+          expect(warnings[0]?.severity, row.label).toBe('warning');
+          // The declaration's own line, or line 1 when there is nothing to point at.
+          expect(warnings[0]?.span, row.label).toEqual(oneLineSpan(0, 1));
+        }
+        // A known declaration is exactly the case with no FORMAT finding, so severity (not a
+        // hard-coded status) is what decides `ok`/`degraded`.
+        expect(envelope.status, row.label).toBe(row.warned ? 'degraded' : 'ok');
+        // `D_BOM_MISSING` is this staged document's own missing BOM (an `info`), so the FORMAT
+        // finding is the only other code either way.
+        expect(
+          envelope.diagnostics.map((diagnostic) => diagnostic.code),
+          row.label,
+        ).toEqual(row.warned ? ['D_BOM_MISSING', 'S_HEADER_UNKNOWN_FORMAT'] : ['D_BOM_MISSING']);
+      });
+    }
+  });
+  it('accepts both index spellings in every profile, and moves only their roles', () => {
+    // §6: the gate decides interpretation, never acceptance. The canonical declaration is primary
+    // only under `21`; every other declaration — 19, the 20 hole, 99 and absent — makes the legacy
+    // spelling primary, which is the reading §6 records as this project's choice (U1, K2).
+    const ROWS = [
+      {
+        line: null,
+        primarySource: 'legacy',
+        canonicalRole: 'compatibility',
+        legacyRole: 'primary',
+      },
+      { line: 19, primarySource: 'legacy', canonicalRole: 'compatibility', legacyRole: 'primary' },
+      { line: 20, primarySource: 'legacy', canonicalRole: 'compatibility', legacyRole: 'primary' },
+      {
+        line: 21,
+        primarySource: 'canonical',
+        canonicalRole: 'primary',
+        legacyRole: 'compatibility',
+      },
+      { line: 99, primarySource: 'legacy', canonicalRole: 'compatibility', legacyRole: 'primary' },
+    ] as const;
+    for (const row of ROWS) {
+      const text = [
+        ...(row.line === null ? [] : [`# A5:ER FORMAT:${String(row.line)}`]),
+        '[Manager]',
+        'PageInfo="Main",3,"A4Landscape","$FFFFFF"',
+        '[Entity]',
+        'PName="both"',
+        'Field="ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,""',
+        'IndexInfo="ix_canonical",1,"id",""',
+        'Index=ix_legacy=0,id',
+        'Position="Main",1,1',
+        '',
+      ].join('\n');
+      withDocument(text, (path, input) => {
+        const envelope = serialize(input, { command: 'inspect', path });
+        const object = envelope.schema?.objects[0];
+        if (object === undefined || object.kind !== 'entity') throw new Error('no entity');
+        const indexes = object.indexes;
+        const where = `FORMAT:${String(row.line)}`;
+        // Neither spelling is dropped, in any profile.
+        expect(indexes?.canonical, where).toHaveLength(1);
+        expect(indexes?.legacy, where).toHaveLength(1);
+        expect(indexes?.primarySource, where).toBe(row.primarySource);
+        expect(indexes?.canonical[0]?.role, where).toBe(row.canonicalRole);
+        expect(indexes?.legacy[0]?.role, where).toBe(row.legacyRole);
+      });
+    }
+  });
+});

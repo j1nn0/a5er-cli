@@ -74,10 +74,12 @@
  * entries stay untouched (`tests/validate-integration.test.ts` §"decode-only" documents the same
  * delta). This file asserts the three-code envelope.
  *
- * **`enc-05` key count.** The catalog says `keys.total: 3`, but the decoded fixture contains
- * exactly two keys (`PName` and `Position`); the envelope carries the reconciled count `2`. The
- * catalog entry is decode-only and left unchanged, and the discrepancy is recorded here rather
- * than papered over.
+ * **Counts come from the catalog, once.** Every `completeness` number below is compared with
+ * `spec.expectation.counts` (`tests/helpers/fixture-registry.ts`), with no per-fixture override: the
+ * catalog is the authored expectation and a disagreement must show up as a failed assertion rather
+ * than be papered over here. `enc-05`'s `keys.total` was the one stale number (3 for a five-line
+ * UTF-16LE document that writes two `key=value` lines); it now says `2`, counted from the decoded
+ * bytes in `tests/fixtures-content.test.ts` and re-derived again in the enc-05 case below.
  *
  * **`exitPolicy`.** Unit 1 deliberately does not emit `exitPolicy` in the envelope (the §12 field
  * list has no such member), so it is not in any golden. The policy remains Integration data and is
@@ -112,7 +114,7 @@ import * as hst02 from './fixtures/bytes/hst-02-binary.js';
 import * as hst05 from './fixtures/bytes/hst-05-mixed-eol.js';
 import { assertCodes } from './helpers/assert-codes.js';
 import { classificationOf } from './helpers/classified.js';
-import type { ExpectedCounts, FixtureSpec } from './helpers/fixture-registry.js';
+import type { FixtureSpec } from './helpers/fixture-registry.js';
 import { FIXTURES } from './helpers/fixture-registry.js';
 import { stage } from './helpers/stage.js';
 
@@ -158,19 +160,6 @@ const GOLDEN_CASES: readonly FixtureSpec[] = FIXTURES.filter(
 
 /** `enc-03`/`enc-05` catalog codes are decode-only; the envelope is the three-code superset. */
 const DECODE_ONLY = new Set(['enc-03', 'enc-05']);
-
-/**
- * `enc-05`'s catalog key count is wrong, not merely earlier-stage.
- *
- * `enc-05-utf16le.ts`'s bytes are 130 bytes of `FF FE` plus five UTF-16LE lines: the `FORMAT`
- * comment, a blank, `[Entity]`, `PName="utf16"` and `Position="Main",10,10` — two `key=value`
- * lines. The entry says three, and its own `spans` (a header on line 3) leave no line for a third
- * key; a 3-key document with that header needs at least six lines. Key counting is a §13 syntax/
- * schema fact, not a decode-stage one, so "decode-only" does not explain the number. The entry is
- * left untouched because the catalog is outside this unit's scope; the envelope carries the
- * reconciled count, and this constant states 2 explicitly so a fixture edit stays visible.
- */
-const ENC05_RECONCILED_KEYS = 2;
 
 interface Staged {
   readonly path: string;
@@ -537,17 +526,6 @@ function assertEnvelopeInvariants(envelope: JsonEnvelope): void {
   }
 }
 
-/** Counts this fixture must reconcile to; only `enc-05`'s key count needs its own record. */
-function expectedCounts(spec: FixtureSpec): ExpectedCounts {
-  if (spec.id === 'enc-05') {
-    return {
-      sections: spec.expectation.counts.sections,
-      keys: { total: ENC05_RECONCILED_KEYS, parsed: ENC05_RECONCILED_KEYS, preservedRaw: 0 },
-    };
-  }
-  return spec.expectation.counts;
-}
-
 function entities(envelope: JsonEnvelope): Extract<JsonObject, { kind: 'entity' }>[] {
   return (envelope.schema?.objects ?? []).filter(
     (object): object is Extract<JsonObject, { kind: 'entity' }> => object.kind === 'entity',
@@ -685,11 +663,12 @@ describe('json goldens — full-envelope sweep', () => {
         }
 
         // Counts: the envelope's, reconciled, and the catalog's concrete numbers.
-        // The identity asserted here is §13's two-term one (`parsed + preservedRaw == total`).
-        // §12 rule 2's wording adds `unsupported` as a third term and is wrong — that list is a
-        // projection of `preservedRaw` records plus constructs with no counter (hst-04: 5 sections
-        // against 11 records). Recorded here because fixing the wording is a docs change, not a
-        // stage 6-A change; `src/json/serialize.ts` records the same point at `jsonCompleteness`.
+        // The identity asserted here is §13's two-term one (`parsed + preservedRaw == total`), plus
+        // the line ledger. `unsupported` is never a term: that list projects records already inside
+        // `preservedRaw` (unknown sections and keys) together with constructs that own no counter at
+        // all (`multiline-value` on a non-line value, `unsupported-position`, `subtype-membership`),
+        // so adding it double-counts — `hst-04` has 5 sections against 6 evidence records.
+        // `docs/architecture.md` §12 rule 2 and §13 state the same identity.
         if (golden.completeness !== null) {
           const completeness = golden.completeness;
           expect(golden.status).not.toBe('failed');
@@ -705,7 +684,8 @@ describe('json goldens — full-envelope sweep', () => {
           );
           expect(completeness.sections.unknown).toBe(completeness.sections.preservedRaw);
 
-          const expected = expectedCounts(spec);
+          // Straight from the catalog: no per-fixture override anywhere in this file.
+          const expected = spec.expectation.counts;
           expect(completeness.sections.total).toBe(expected.sections.total);
           expect(completeness.sections.parsed).toBe(expected.sections.parsed);
           expect(completeness.sections.preservedRaw).toBe(expected.sections.preservedRaw);
@@ -1437,5 +1417,218 @@ describe('json goldens — page and domain references (stage 6-B unit 3)', () =>
       // Nothing was dropped and the references added no diagnostic of their own.
       expect(envelope.completeness?.dropped ?? 0, spec.id).toBe(0);
     }
+  });
+});
+
+describe('json goldens — counting identities, FORMAT and the byte fixtures (stage 6-B unit 4)', () => {
+  /** The catalog entry for one id, or a thrown error: no fixture is looked up by file name. */
+  function specOf(id: string): FixtureSpec {
+    const spec = FIXTURES.find((candidate) => candidate.id === id);
+    if (spec === undefined) throw new Error(`no fixture ${id}`);
+    return spec;
+  }
+  it('reconciles in two terms: `unsupported` is evidence, never a summand (§12 rule 2, §13)', () => {
+    // §12 rule 2 used to claim `total = structured + raw-preserved + unsupported-reported`. That sum
+    // cannot close, and these three goldens show why in all three shapes of evidence:
+    //
+    //   - `unknown-section` / `unknown-key` records are *already inside* `preservedRaw`;
+    //   - `subtype-membership` and `unsupported-position` own no counter at all;
+    //   - `multiline-value` counts as a key only when it starts a key line.
+    //
+    // So `counted` evidence repeats the partition and `uncounted` evidence has no term to be added
+    // to: the three-term formula over-counts (and for `sem-05` it invents a section).
+    const ROWS = [
+      // id, sections[total, parsed, preservedRaw], keys[total, parsed, preservedRaw],
+      // evidence already inside preservedRaw, evidence with no counter.
+      { id: 'hst-04', sections: [5, 2, 3], keys: [6, 4, 2], counted: 5, uncounted: 1 },
+      { id: 'sem-05', sections: [3, 3, 0], keys: [9, 9, 0], counted: 0, uncounted: 1 },
+      { id: 'txt-04', sections: [3, 2, 1], keys: [6, 3, 3], counted: 4, uncounted: 0 },
+    ] as const;
+    for (const row of ROWS) {
+      const envelope = readGolden(row.id);
+      const completeness = envelope.completeness;
+      if (completeness === null) throw new Error(`${row.id} lost its completeness`);
+      const [sectionsTotal, sectionsParsed, sectionsPreserved] = row.sections;
+      const [keysTotal, keysParsed, keysPreserved] = row.keys;
+      expect(completeness.sections, row.id).toEqual({
+        total: sectionsTotal,
+        parsed: sectionsParsed,
+        preservedRaw: sectionsPreserved,
+        unknown: sectionsPreserved,
+      });
+      expect(completeness.keys, row.id).toEqual({
+        total: keysTotal,
+        parsed: keysParsed,
+        preservedRaw: keysPreserved,
+      });
+      expect(completeness.dropped, row.id).toBe(0);
+      expect(completeness.lines.dropped, row.id).toBe(0);
+      expect(completeness.lines.accounted, row.id).toBe(completeness.lines.total);
+      // The two-term identity §13 states, and which `validate/` enforces at runtime.
+      expect(sectionsParsed + sectionsPreserved, row.id).toBe(sectionsTotal);
+      expect(keysParsed + keysPreserved, row.id).toBe(keysTotal);
+      // The evidence splits exactly into the part the partition already counted and the part no
+      // counter owns — never into a third term.
+      expect(envelope.unsupported, row.id).toHaveLength(row.counted + row.uncounted);
+      const countedKinds = new Set(['unknown-section', 'unknown-key', 'legacy-key']);
+      const counted = envelope.unsupported.filter((record) => countedKinds.has(record.kind));
+      expect(counted, row.id).toHaveLength(row.counted);
+      expect(counted.length, row.id).toBe(sectionsPreserved + keysPreserved);
+      // Adding the evidence to the partition over-counts the total, in both dimensions.
+      expect(sectionsParsed + sectionsPreserved + envelope.unsupported.length, row.id).not.toBe(
+        sectionsTotal,
+      );
+      expect(keysParsed + keysPreserved + envelope.unsupported.length, row.id).not.toBe(keysTotal);
+    }
+  });
+  it('counts enc-05 from its decoded bytes: one header, two key lines', () => {
+    // The stale number this unit fixes, derived from the bytes rather than from the catalog: the
+    // fixture is `FF FE` plus five UTF-16LE lines. Counting the documented shapes on those physical
+    // lines gives 1 section and 2 `key=value` lines — not the 3 the entry used to claim.
+    const spec = specOf('enc-05');
+    withFixture(spec, ({ staged, envelope, golden }) => {
+      const bytes = readFileSync(staged.path);
+      expect(bytes.subarray(0, 2).toString('hex')).toBe('fffe');
+      const decoded = new TextDecoder('utf-16le', { fatal: true }).decode(bytes);
+      const lines = decoded.split(/\r\n|\n|\r/);
+      // The document writes one terminating newline; the reader counts the five lines before it.
+      if (lines.at(-1) === '') lines.pop();
+      expect(lines).toEqual([
+        '# A5:ER FORMAT:21',
+        '',
+        '[Entity]',
+        'PName="utf16"',
+        'Position="Main",10,10',
+      ]);
+      const headers = lines.filter((line) => /^\s*\[.+\]\s*$/.test(line));
+      const keys = lines.filter(
+        (line) =>
+          !/^\s*\[.+\]\s*$/.test(line) &&
+          line.trim() !== '' &&
+          !line.startsWith('#') &&
+          /^[^=]+?=/.test(line),
+      );
+      expect(headers, 'section headers').toHaveLength(1);
+      expect(keys, 'key=value lines').toHaveLength(2);
+      // Three independent sources agree: the bytes, the catalog entry, and the golden.
+      expect(spec.expectation.counts.sections).toEqual({ total: 1, parsed: 1, preservedRaw: 0 });
+      expect(spec.expectation.counts.keys).toEqual({ total: 2, parsed: 2, preservedRaw: 0 });
+      expect(golden.completeness?.sections.total).toBe(headers.length);
+      expect(golden.completeness?.keys.total).toBe(keys.length);
+      expect(envelope.completeness?.sections).toEqual({
+        total: 1,
+        parsed: 1,
+        preservedRaw: 0,
+        unknown: 0,
+      });
+      expect(envelope.completeness?.keys).toEqual({ total: 2, parsed: 2, preservedRaw: 0 });
+      expect(envelope.completeness?.lines).toEqual({ total: 5, accounted: 5, dropped: 0 });
+    });
+  });
+  it("keeps enc-03's decode-stage entry apart from the envelope, bending neither", () => {
+    // `enc-03`/`enc-05` catalog codes are measured at the decode stage (`DECODE_ONLY`). The split is
+    // real for diagnostics and *not* real for counts: the decoded document has one section and three
+    // key lines either way, and only the semantic stage adds the two findings it could not see.
+    const spec = specOf('enc-03');
+    withFixture(spec, ({ input, envelope, golden }) => {
+      // The decode stage's own outcome, before scan/classify/derive ever run.
+      const load = input.load;
+      if (!load.ok) throw new Error('enc-03 must decode');
+      const decodeCodes = load.source.diagnostics.map((entry) => entry.code);
+      expect(decodeCodes).toEqual(spec.expectation.codes);
+      expect(decodeCodes).toEqual(['D_ENCODING_MISMATCH']);
+      expect(spec.expectation.status).toBe('degraded');
+      expect(load.source.format).toBe(21);
+      assertCodes(
+        envelope.diagnostics.map((diagnostic) => diagnostic.code),
+        [...spec.expectation.codes, 'V_DANGLING_PAGE', 'V_MISSING_REQUIRED_KEY'],
+        'enc-03 envelope codes',
+      );
+      expect(envelope.status).toBe('degraded');
+      // Counts are the same fact at both stages, which is why the `enc-05` key count could be
+      // fixed in the catalog without touching the decode-only code delta.
+      expect(spec.expectation.counts).toEqual({
+        sections: { total: 1, parsed: 1, preservedRaw: 0 },
+        keys: { total: 3, parsed: 3, preservedRaw: 0 },
+      });
+      expect(envelope.completeness?.sections.total).toBe(1);
+      expect(envelope.completeness?.keys.total).toBe(3);
+      expect(golden.completeness).toEqual(envelope.completeness);
+    });
+  });
+  it('keeps all 44 goldens complete, stamped and self-consistent on their own', () => {
+    // Read from disk only: this guard does not run the serializer, so a golden cannot be kept
+    // honest by the code it is supposed to judge.
+    const names = readdirSync(GOLDEN_DIR)
+      .filter((name) => name.endsWith('.expected.json'))
+      .sort();
+    expect(names).toHaveLength(44);
+    expect(names).toEqual(GOLDEN_CASES.map((spec) => `${spec.id}.expected.json`).sort());
+    const FIELDS = [
+      'contractVersion',
+      'tool',
+      'command',
+      'status',
+      'source',
+      'limits',
+      'schema',
+      'unsupported',
+      'diagnostics',
+      'completeness',
+    ] as const;
+    let projected = 0;
+    let rejected = 0;
+    for (const name of names) {
+      const raw: unknown = JSON.parse(readFileSync(join(GOLDEN_DIR, name), 'utf8'));
+      if (!isRecord(raw)) throw new Error(`${name}: not an object`);
+      // §12's ten fields, in construction order.
+      expect(Object.keys(raw), name).toEqual([...FIELDS]);
+      expect(raw['contractVersion'], name).toBe('0.1.0');
+      expect(raw['tool'], name).toEqual({ name: '@j1nn0/a5er-cli', version: '0.1.0' });
+      expect(raw['command'], name).toBe('inspect');
+      expect(raw['limits'], name).toEqual({ maxBytes: 64 * 1024 * 1024, truncated: false });
+      const source = raw['source'];
+      const schema = raw['schema'];
+      const completeness = raw['completeness'];
+      if (schema === null) {
+        rejected += 1;
+        // A rejected read is the documented arm, not a half-built envelope.
+        expect(raw['status'], name).toBe('failed');
+        expect(source, name).toBeNull();
+        expect(completeness, name).toBeNull();
+        expect(raw['unsupported'], name).toEqual([]);
+        continue;
+      }
+      projected += 1;
+      expect(raw['status'], name).not.toBe('failed');
+      if (!isRecord(source) || !isRecord(completeness)) throw new Error(`${name}: missing block`);
+      // The FORMAT identity, on the golden alone: no effective version this build cannot name.
+      const format = source['format'];
+      if (!isRecord(format)) throw new Error(`${name}: no format`);
+      expect(format['effective'], name).toBe(format['known'] === true ? format['declared'] : null);
+      // §13's identities, on the golden alone.
+      const sections = completeness['sections'];
+      const keys = completeness['keys'];
+      const lines = completeness['lines'];
+      if (!isRecord(sections) || !isRecord(keys) || !isRecord(lines)) {
+        throw new Error(`${name}: incomplete ledger`);
+      }
+      expect(completeness['dropped'], name).toBe(0);
+      expect(sections['parsed'], name).toEqual(expect.any(Number));
+      expect(
+        Number(sections['parsed']) + Number(sections['preservedRaw']),
+        `${name} sections`,
+      ).toBe(Number(sections['total']));
+      expect(sections['unknown'], `${name} unknown`).toBe(sections['preservedRaw']);
+      expect(Number(keys['parsed']) + Number(keys['preservedRaw']), `${name} keys`).toBe(
+        Number(keys['total']),
+      );
+      expect(lines['accounted'], `${name} lines`).toBe(lines['total']);
+      expect(lines['dropped'], name).toBe(0);
+      expect(raw['unsupported'], name).toEqual(expect.any(Array));
+      expect(raw['diagnostics'], name).toEqual(expect.any(Array));
+    }
+    expect(projected).toBe(42);
+    expect(rejected).toBe(2);
   });
 });

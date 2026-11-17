@@ -17,7 +17,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import type { FixtureSpec } from './helpers/fixture-registry.js';
 import { FIXTURES } from './helpers/fixture-registry.js';
+import type { ParsedText } from './helpers/fixture-text.js';
 import {
   BOM,
   entityKeyLines,
@@ -72,6 +74,24 @@ function isKnownToGit(relativePath: string): boolean {
     .split('\n')
     .map((line) => line.trim())
     .some((line) => line === relativePath);
+}
+/**
+ * The catalog's section and key totals, counted from the fixture's own text.
+ *
+ * `parseText` is a line-level reader, not a parser (`test-strategy` §7 T1): a section header is
+ * `[…]` after trimming, a key line has an `=` after at least one other character, and blank lines
+ * and `#` comments are neither. Byte fixtures use the same reader on their decoded text, so the
+ * number a catalog entry claims is checked against the bytes instead of against a parser's opinion
+ * — which is what caught `enc-05`'s stale `keys.total`.
+ */
+function assertDeclaredTotals(spec: FixtureSpec, parsed: ParsedText): void {
+  expect(parsed.sectionLines.length, 'section headers').toBe(
+    spec.expectation.counts.sections.total,
+  );
+  expect(parsed.keyLines.length, 'key=value lines').toBe(spec.expectation.counts.keys.total);
+  const { sections, keys } = spec.expectation.counts;
+  expect(sections.parsed + sections.preservedRaw).toBe(sections.total);
+  expect(keys.parsed + keys.preservedRaw).toBe(keys.total);
 }
 
 describe('fixture content', () => {
@@ -174,6 +194,18 @@ describe('fixture content', () => {
             evaluateFact(spec, parsed, module.bytes, fact);
           }
         });
+        it('matches the declared section and key totals in its decoded bytes', () => {
+          const module = BYTE_MODULES[spec.id];
+          if (module === undefined) throw new Error(`no byte module for ${spec.id}`);
+          // Binary and invalid input have no decoded text to count, and their entries say 0/0.
+          if (module.encoding === undefined) {
+            expect(spec.expectation.counts.sections.total, 'sections').toBe(0);
+            expect(spec.expectation.counts.keys.total, 'keys').toBe(0);
+            return;
+          }
+          const decoded = new TextDecoder(module.encoding, { fatal: true }).decode(module.bytes);
+          assertDeclaredTotals(spec, parseText(Buffer.from(module.bytes), decoded));
+        });
         return;
       }
 
@@ -191,14 +223,7 @@ describe('fixture content', () => {
       });
 
       it('matches the declared section and key totals', () => {
-        const parsed = readText(path);
-        expect(parsed.sectionLines.length, 'section headers').toBe(
-          spec.expectation.counts.sections.total,
-        );
-        expect(parsed.keyLines.length, 'key=value lines').toBe(spec.expectation.counts.keys.total);
-        const { sections, keys } = spec.expectation.counts;
-        expect(sections.parsed + sections.preservedRaw).toBe(sections.total);
-        expect(keys.parsed + keys.preservedRaw).toBe(keys.total);
+        assertDeclaredTotals(spec, readText(path));
       });
 
       it('resolves every reference when no dangling code is expected', () => {

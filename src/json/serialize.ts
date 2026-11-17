@@ -1269,17 +1269,14 @@ function jsonDiagnostic(diagnostic: CompletedIntegration['diagnostics'][number])
 /**
  * §13's counters, projected verbatim: this layer recounts nothing.
  *
- * **Documented contradiction, recorded not fixed.** §12 rule 2 (`docs/architecture.md`, the
- * sentence "`sections.total` and `keys.total` must equal structured + raw-preserved +
- * unsupported-reported") is arithmetically false with `unsupported` as a third term: that list is a
- * *projection* of records already counted in `preservedRaw` plus constructs that own no counter at
- * all (`multiline-value`, `unsupported-position`, `subtype-membership`), which is why `hst-04` has
- * 5 sections against 11 evidence records. The two-term identity in §13 (`parsed + preservedRaw`)
- * is what `validate/` reconciles and what every golden holds; fixing the wording is a docs change
- * outside stage 6-A. The same stale formula is in `docs/test-strategy.md`'s G-1 row.
- *
- * The `unsupported-construct` records this module adds are no exception: they are evidence for
- * parsed keys, counted in `keys.parsed` once, and never a third term.
+ * The identities are the two-term ones §12 rule 2 and §13 now state: every section header is
+ * `parsed` or `preservedRaw`, every `key=value` line is `parsed` or `preservedRaw`, and every
+ * physical line is `accounted` or in `lines.dropped`. `unsupported` is **evidence, not a term**: it
+ * projects records already counted in `preservedRaw` (`unknown-section`, `unknown-key`,
+ * `legacy-key`) together with constructs that own no counter at all (`multiline-value` on a value
+ * line, `unsupported-position`, `subtype-membership`). Adding the list to a total therefore
+ * double-counts — `hst-04` has 5 sections against 6 evidence records — which is why the two-term
+ * partition, not a three-term sum, is what `validate/` reconciles and what every golden holds.
  */
 function jsonCompleteness(completeness: CompletedIntegration['completeness']): JsonCompleteness {
   return {

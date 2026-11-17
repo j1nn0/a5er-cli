@@ -389,7 +389,7 @@ v1 — it is reported, because a percentage would let an untested branch hide be
 
 | Gate | Check | Where |
 |---|---|---|
-| G-1 | `completeness` **reconciles** on every non-failed fixture (`sections.total` and `keys.total` equal structured + raw-preserved + unsupported, with that fixture's concrete counts) and the remainder `dropped` is 0 — never a bare `dropped === 0` | `fixtures.test.ts` global hook, using each expected envelope's counts |
+| G-1 | `completeness` **reconciles** on every non-failed fixture with that fixture's concrete counts: each partition is a two-term identity (`sections.parsed + sections.preservedRaw == sections.total`, `keys.parsed + keys.preservedRaw == keys.total`, `lines.accounted == lines.total`), `sections.unknown == sections.preservedRaw`, and both remainders (`lines.dropped`, the aggregate `dropped`) are 0 — never a bare `dropped === 0`. `unsupported` is evidence and never a third term (§13) | `json-goldens.test.ts` (all 42 schema-bearing goldens and their catalog entries), `validate-integration.test.ts` and `schema-registry.test.ts` (every synthetic fixture) |
 | G-2 | Exact diagnostic code multiset matches each expected envelope | `assertCodes` |
 | G-3 | **Every** non-fatal code in the taxonomy is produced by at least one fixture | `catalog.test.ts` cross-check of codes in expected files vs `DiagnosticCode` |
 | G-4 | No `any` in `src/` | `tsc --noEmit` plus a guard test scanning for `: any`, `as any`, `<any>` |

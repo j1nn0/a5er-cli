@@ -363,7 +363,10 @@ export const FIXTURES: readonly FixtureSpec[] = [
       codes: ['D_ENCODING_ASSUMED'],
       counts: {
         sections: { total: 1, parsed: 1, preservedRaw: 0 },
-        keys: { total: 3, parsed: 3, preservedRaw: 0 },
+        // Two `key=value` lines (`PName` line 4, `Position` line 5). The bytes are `FF FE` plus five
+        // UTF-16LE lines — a `FORMAT` comment, a blank, `[Entity]` and those two keys — so a third
+        // key has no line to stand on. Counted from the decoded text in `fixtures-content.test.ts`.
+        keys: { total: 2, parsed: 2, preservedRaw: 0 },
       },
       spans: [{ sectionIndex: 1, startLine: 5, endLine: 5, keyLine: 5 }],
       sourceFacts: [

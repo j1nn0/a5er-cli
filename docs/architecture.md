@@ -389,12 +389,23 @@ Alias normalisation happens once, at section-header level: `[Relationship]` → 
 ```ts
 export interface FormatProfile {
   declared: number | null      // from `# A5:ER FORMAT:<n>`
-  effective: number | null     // declared, or filled in from a legacy marker
   known: boolean               // false for absent, 20 (K2), or > 21
-  legacyIndex: boolean         // decode Index/IndexOption
-  fontSize: 'int' | 'float'    // 2.20: Integer (+FontSizeReal); 2.21: Float
+  legacy: boolean              // true for every declaration except 21
 }
 ```
+Two fields of the original sketch are deliberately **not** profile members, and both for the same
+reason — the document does not define them for every declaration:
+
+- `legacyIndex` is `true` in every row of the table below (`21` may still carry the compat keys and
+  they are decoded anyway), so as a per-profile switch it would be the constant `true`. What
+  differs between profiles is which spelling is *primary*, and that is `legacy`.
+- `fontSize` is only derivable for `21` (Float) and `< 21` (Integer); an absent or `99` declaration
+  has no stated answer, so a `'int' | 'float'` field would have to invent one. A consumer compares
+  `declared` with `21` where the value is in hand.
+
+The envelope carries one derived member of its own (§12): `source.format.effective` is `declared`
+when `known` and `null` otherwise. v2.21 defines no marker to fill an effective version in from, and
+naming a version this build does not implement would be a claim it cannot support.
 
 Policy, and its reasoning:
 
@@ -854,9 +865,9 @@ a Phase 2 command-level concern.
 ```json
 {
   "contractVersion": "0.1.0",
-  "tool": { "name": "a5er-cli", "version": "0.0.0" },
-  "status": "degraded",
+  "tool": { "name": "@j1nn0/a5er-cli", "version": "0.1.0" },
   "command": "inspect",
+  "status": "degraded",
   "source": {
     "path": "schema.a5er",
     "sizeBytes": 4321,
@@ -864,12 +875,22 @@ a Phase 2 command-level concern.
     "encoding": { "detected": "utf-8", "bom": true, "declared": "UTF8", "mismatch": false },
     "format": { "declared": null, "effective": null, "known": false }
   },
-  "schema": { "objects": [], "relations": [], "pages": [], "pageReferences": [],
-              "domains": [], "domainReferences": [], "commonFields": [] },
+  "limits": { "maxBytes": 67108864, "truncated": false },
+  "schema": {
+    "objects": [],
+    "relations": [],
+    "pages": [],
+    "pageReferences": [],
+    "domains": [],
+    "domainReferences": [],
+    "commonFields": [],
+    "manager": { "attributes": [] }
+  },
   "unsupported": [
     { "kind": "unknown-section", "sectionKind": "unknown", "sectionHeader": "[Memo]",
-      "key": null, "reason": "no-registry-entry",
-      "span": { "sectionIndex": 5, "startLine": 102, "endLine": 105, "keyLine": 102 } }
+      "key": null, "raw": "[Memo]",
+      "span": { "sectionIndex": 5, "startLine": 102, "endLine": 102, "keyLine": 102 },
+      "reason": "section-not-modelled" }
   ],
   "diagnostics": [
     { "code": "S_HEADER_UNKNOWN_FORMAT", "severity": "warning",
@@ -884,28 +905,39 @@ a Phase 2 command-level concern.
       "construct": "Section" }
   ],
   "completeness": {
-    "sections": { "total": 5, "parsed": 4, "preservedRaw": 1 },
+    "sections": { "total": 5, "parsed": 4, "preservedRaw": 1, "unknown": 1 },
     "keys":     { "total": 41, "parsed": 38, "preservedRaw": 3 },
+    "lines":    { "total": 118, "accounted": 118, "dropped": 0 },
     "dropped":  0
-  },
-  "limits": { "maxBytes": 67108864, "truncated": false }
+  }
 }
 ```
-
-Abbreviated: one `inspect` of a five-section file that has no `FORMAT` header and carries an
-unmodelled `[Memo]` section. Arrays are elided to a single entry; every real `unsupported`
-record also carries the verbatim `raw` line(s), omitted here only for width.
+Illustrative, not derived from any fixture: one `inspect` of a five-section file that declares no
+`FORMAT` and carries an unmodelled `[Memo]` section, so each diagnostic, count and evidence record
+is a plausible value of the documented shape rather than a file in the repository. **Field order is
+the contract** — it is the construction order above, and a golden asserts it. What is elided here is
+stated rather than implied: `schema`'s eight members are shown empty (a real envelope fills them
+from §4.5's model, `pageReferences`/`domainReferences` from §9.4), `objects`/`relations`/`pages`
+are not abbreviated further because they would only repeat §4.2's `Value<T>` shape, and `sha256` is
+truncated for width. Every `unsupported` record really carries the verbatim `raw` line and its own
+span — here the header line, while the diagnostic for the same section spans its whole extent
+(102–105), because a diagnostic points at the construct and evidence points at the text.
 
 Contract rules:
 
 1. **`status`** is `ok` (nothing above `info`), `degraded` (warnings/errors, schema emitted) or
    `failed` (fatal, `schema: null`). A `failed` envelope is still valid JSON — automation
    should never have to distinguish "no output" from "crashed".
-2. **`dropped` must be `0` by reconciliation, not by assertion.** For every fixture,
-   `sections.total` and `keys.total` must equal structured + raw-preserved + unsupported-reported
-   using that fixture's concrete counts; `dropped` is the arithmetic remainder of the
-   reconciliation and must come out as zero (§13). A bare `dropped === 0` proves nothing on its
-   own. `unsupported` entries are *not* drops — they are retained evidence.
+2. **`dropped` must be `0` by reconciliation, not by assertion.** The envelope carries three
+   partitions, each a two-term identity over that fixture's concrete counts: every section header
+   is `parsed` or `preservedRaw`, every `key=value` line is `parsed` or `preservedRaw`, and every
+   physical line is `accounted` or in `lines.dropped` (§13). `dropped` is the sum of those three
+   remainders and must come out as zero; a bare `dropped === 0` proves nothing on its own.
+   **`unsupported` is evidence, not a term.** Its records either restate a construct already
+   inside `preservedRaw` (`unknown-section`, `unknown-key`, `legacy-key`) or describe one that owns
+   no counter at all (`multiline-value` on a value line, `unsupported-position`,
+   `subtype-membership`), so adding the list to a total double-counts and dropping it would lose
+   evidence (§12 rule 7). Every record is retained verbatim with its `raw` text and its span.
 3. **Span presence**: every node that exists in the file — object, entry, column, index,
    relation, position, diagnostic — carries a `Span`. A node the resolver synthesised has
    `span: null`, `origin` other than `declared`, and cites its inputs in `derivedFrom` instead
@@ -945,21 +977,34 @@ Open contract points are listed as TBD-O4–O6; none blocks Phase 2 stage 1–4.
 
 ## 13. Completeness accounting
 
-Three counters, computed during parse and resolved output, never estimated:
+Three partitions, computed during parse and resolved output, never estimated. Each is a **two-term
+identity** on the fixture's own numbers; the envelope carries all of them (`completeness`).
 
 | Counter | Definition | Invariant |
 |---|---|---|
-| `sections.total` | Every `[…]` header in the file, known or not | equals parsed + preservedRaw |
-| `keys.total` | Every `key=value` line in every section | equals parsed + preservedRaw (decoded legacy keys count as parsed) |
-| `dropped` | Constructs that were read and then discarded | arithmetic remainder of the two rows above; **must be 0** |
+| `sections.total` | Every `[…]` header in the file, known or not | equals `parsed + preservedRaw` |
+| `sections.parsed` | Headers whose section kind this build models | the other term of the partition |
+| `sections.preservedRaw` | Headers kept as `unknown-section` evidence | equals `sections.unknown` |
+| `sections.unknown` | The same count read back from the stored sections, so a classification that stopped marking a header `unknown` breaks the reconciliation instead of quietly moving a number | equals `sections.preservedRaw` |
+| `keys.total` | Every `key=value` line in the **file** — including the header region before the first `[…]`, whose keys belong to no section and are counted from `preserved` | equals `parsed + preservedRaw` |
+| `keys.parsed` | Keys a registry entry decoded; a decoded legacy `Index`/`IndexOption` counts here too | the other term of the partition |
+| `keys.preservedRaw` | Keys kept as `unknown-key`/`legacy-key` evidence | |
+| `lines.total` | Every physical line the scanner split (CRLF, LF and CR all end one) | equals `accounted + dropped` |
+| `lines.accounted` | Lines claimed as exactly one record kind: a section header, a key, a comment, a blank position, a raw line | equals `lines.total` in a healthy read |
+| `lines.dropped` | Lines no record claims | **must be 0** |
+| `dropped` | The sum of the three remainders above: `(sections.total − parsed − preservedRaw) + (keys.total − parsed − preservedRaw) + lines.dropped` | **must be 0** |
 
-`dropped` is a reconciliation, not a switch. The guarantee is that every section and key counted
-in `total` is accounted for on the right-hand side with the fixture's concrete numbers, and the
-remainder is asserted to be zero. Asserting `dropped === 0` alone proves nothing — a parser that
-never increments `total` would pass it. A test that reconciles the totals will fail the day a
-code path learns to skip, which is the only durable defence against the failure mode this project
-exists to avoid (D8, L4); both evaluated parsers fail precisely here (`parser-evaluation.md` §4 —
-"neither reports what it skipped").
+The two remainders are different facts and are both computed: `lines.dropped` catches a line the
+scanner lost, and the aggregate `dropped` catches a construct that was read and then discarded
+without either being counted or kept raw.
+
+`dropped` is a reconciliation, not a switch. The guarantee is that every section, key and physical
+line counted in `total` is accounted for on the right-hand side with the fixture's concrete
+numbers, and each remainder is asserted to be zero. Asserting `dropped === 0` alone proves nothing —
+a parser that never increments `total` would pass it. A test that reconciles the totals will fail
+the day a code path learns to skip, which is the only durable defence against the failure mode this
+project exists to avoid (D8, L4); both evaluated parsers fail precisely here
+(`parser-evaluation.md` §4 — "neither reports what it skipped").
 
 The counters are **derived, never accumulated**. Both stages recompute them by walking the
 records they stored — lines, section headers, keys, comments, blank positions, raw lines — and
@@ -971,7 +1016,12 @@ Accumulating the same numbers in a second place during classification is what R1
 bookkeeping paths can drift silently, and only one of them would be tested.
 
 `unsupported` is separate and expected to be non-empty: `Subtype` membership, unknown
-`ShapeType`, undefined vertex format, multi-line values, unknown keys and sections.
+`ShapeType`, undefined vertex format, multi-line values, unknown keys and sections. It is **evidence,
+never a fourth term**: some of its records restate a construct already inside `preservedRaw`
+(`unknown-section`, `unknown-key`, `legacy-key`) and the rest describe one that owns no counter at
+all (`multiline-value` on a value line, `unsupported-position`, `subtype-membership`). Adding the
+list to a total double-counts — `hst-04` has 5 sections against 6 evidence records — and removing it
+would lose evidence (§12 rule 7).
 
 ---
 
