@@ -14,8 +14,9 @@
  *
  * The taxonomy is parsed from the document rather than duplicated as a constant: a code
  * added to `architecture.md` without a fixture fails here, which is the point of the gate.
- * When `DiagnosticCode` exists in `src/` (§18 stages 3–5), this file should cross-check the
- * union instead of the table.
+ * `DiagnosticCode` now exists in `src/diagnostics/diagnostic.ts` (stage 5 closed the semantic
+ * family), but the gate still reads §11: it filters on the *severity class* in the second cell,
+ * which the union does not carry, and the document stays the source a code must reach first.
  */
 
 import { execFileSync } from 'node:child_process';

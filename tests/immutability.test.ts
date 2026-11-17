@@ -7,8 +7,10 @@
  *
  * What exists today is the *fixture* half of that harness: staging and reading a fixture
  * must satisfy all four. The CLI half — every command against every text fixture — is
- * skipped with a TODO until the commands exist (architecture §18 stage 5); this unit does
- * not stub them, because a stub would report a green sweep over commands that do nothing.
+ * skipped with a TODO until the commands exist (architecture §18 stage 7; stage 5 is
+ * `validate`, whose library-level immutability is asserted in `validate-integration.test.ts`);
+ * this unit does not stub them, because a stub would report a green sweep over commands that
+ * do nothing.
  *
  * Vitest runs suites serially by default, which is what §9 requires for imm-01; nothing here
  * opts into concurrency.
@@ -68,7 +70,7 @@ describe('imm-01 — fixture immutability', () => {
   // copy of every text fixture; §11 also requires `inspect` to be the read-only writer-free
   // path, which is why the sweep runs serially.
   it.skip('TODO(PHASE2-imm-01) leaves every text fixture untouched across every command', () => {
-    // No commands exist yet (architecture §18 stage 5), and stubbing them would assert
+    // No commands exist yet (architecture §18 stage 7), and stubbing them would assert
     // immutability of a no-op. The harness above is the part that can be proven now.
   });
 });
