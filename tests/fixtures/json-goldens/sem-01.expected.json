@@ -623,6 +623,92 @@
         },
         "scalars": [
           {
+            "key": "Entity1",
+            "keyRaw": "Entity1",
+            "origin": "declared",
+            "raw": "\"orders\"",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 13,
+              "endLine": 13,
+              "keyLine": 13
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "orders"
+            }
+          },
+          {
+            "key": "Entity2",
+            "keyRaw": "Entity2",
+            "origin": "declared",
+            "raw": "\"ghost_table\"",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 14,
+              "endLine": 14,
+              "keyLine": 14
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "ghost_table"
+            }
+          },
+          {
+            "key": "Fields1",
+            "keyRaw": "Fields1",
+            "origin": "declared",
+            "raw": "\"user_id\"",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 15,
+              "endLine": 15,
+              "keyLine": 15
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "complex",
+              "value": {
+                "parts": [
+                  {
+                    "value": "user_id",
+                    "quoted": true,
+                    "hadEscape": false
+                  }
+                ],
+                "trailingElementsOmitted": false
+              }
+            }
+          },
+          {
+            "key": "Fields2",
+            "keyRaw": "Fields2",
+            "origin": "declared",
+            "raw": "\"ghost_column\"",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 16,
+              "endLine": 16,
+              "keyLine": 16
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "complex",
+              "value": {
+                "parts": [
+                  {
+                    "value": "ghost_column",
+                    "quoted": true,
+                    "hadEscape": false
+                  }
+                ],
+                "trailingElementsOmitted": false
+              }
+            }
+          },
+          {
             "key": "RelationType1",
             "keyRaw": "RelationType1",
             "origin": "declared",

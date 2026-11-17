@@ -1304,6 +1304,92 @@
         },
         "scalars": [
           {
+            "key": "Entity1",
+            "keyRaw": "Entity1",
+            "origin": "declared",
+            "raw": "\"parent_a\"",
+            "span": {
+              "sectionIndex": 4,
+              "startLine": 20,
+              "endLine": 20,
+              "keyLine": 20
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "parent_a"
+            }
+          },
+          {
+            "key": "Entity2",
+            "keyRaw": "Entity2",
+            "origin": "declared",
+            "raw": "\"child_b\"",
+            "span": {
+              "sectionIndex": 4,
+              "startLine": 21,
+              "endLine": 21,
+              "keyLine": 21
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "child_b"
+            }
+          },
+          {
+            "key": "Fields1",
+            "keyRaw": "Fields1",
+            "origin": "declared",
+            "raw": "\"a,b\"",
+            "span": {
+              "sectionIndex": 4,
+              "startLine": 22,
+              "endLine": 22,
+              "keyLine": 22
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "complex",
+              "value": {
+                "parts": [
+                  {
+                    "value": "a,b",
+                    "quoted": true,
+                    "hadEscape": false
+                  }
+                ],
+                "trailingElementsOmitted": false
+              }
+            }
+          },
+          {
+            "key": "Fields2",
+            "keyRaw": "Fields2",
+            "origin": "declared",
+            "raw": "\"x,y,z\"",
+            "span": {
+              "sectionIndex": 4,
+              "startLine": 23,
+              "endLine": 23,
+              "keyLine": 23
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "complex",
+              "value": {
+                "parts": [
+                  {
+                    "value": "x,y,z",
+                    "quoted": true,
+                    "hadEscape": false
+                  }
+                ],
+                "trailingElementsOmitted": false
+              }
+            }
+          },
+          {
             "key": "RelationType1",
             "keyRaw": "RelationType1",
             "origin": "declared",

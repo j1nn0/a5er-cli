@@ -68,6 +68,23 @@
               "kind": "string",
               "value": "split_query"
             }
+          },
+          {
+            "key": "Query",
+            "keyRaw": "Query",
+            "origin": "declared",
+            "raw": "\"SELECT id",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 8,
+              "endLine": 8,
+              "keyLine": 8
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "\"SELECT id"
+            }
           }
         ],
         "query": "\"SELECT id",

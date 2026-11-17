@@ -381,6 +381,57 @@
               "kind": "string",
               "value": "unknown_membership"
             }
+          },
+          {
+            "key": "SharedMode",
+            "keyRaw": "SharedMode",
+            "origin": "declared",
+            "raw": "0",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 13,
+              "endLine": 13,
+              "keyLine": 13
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "0"
+            }
+          },
+          {
+            "key": "CompleteCategory",
+            "keyRaw": "CompleteCategory",
+            "origin": "declared",
+            "raw": "0",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 14,
+              "endLine": 14,
+              "keyLine": 14
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "0"
+            }
+          },
+          {
+            "key": "ZOrder",
+            "keyRaw": "ZOrder",
+            "origin": "declared",
+            "raw": "1",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 16,
+              "endLine": 16,
+              "keyLine": 16
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "integer",
+              "value": 1
+            }
           }
         ],
         "sharedMode": {

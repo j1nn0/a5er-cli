@@ -582,8 +582,8 @@ describe('json envelope — incomplete and unreadable data', () => {
 });
 
 /**
- * The five `[Relation]` scalars that have a typed slot, the slot each fills, and the JSON type the
- * token must decode to before the slot is filled at all (`src/json/envelope.ts`, §9.2, K7).
+ * The five `[Relation]` scalars whose slot is a `JsonValue`: the slot each fills, and the JSON type
+ * the token must decode to before the slot is filled at all (`src/json/envelope.ts`, §9.2, K7).
  */
 const RELATION_SLOTS = [
   { key: 'PName', slot: 'pname', type: 'string' },
@@ -593,7 +593,23 @@ const RELATION_SLOTS = [
   { key: 'Cardinarity2', slot: 'cardinarity2', type: 'string' },
 ] as const;
 
-const RELATION_SLOT_KEYS: ReadonlySet<string> = new Set(RELATION_SLOTS.map((entry) => entry.key));
+/**
+ * The four `[Relation]` declarations whose slot is a nested record — the endpoints' `declared`/`raw`/
+ * `span` and the column lists' `raw`/`span`. They are retained in `scalars` exactly like the five
+ * above (unit 2), and their slot keeps the terminal occurrence.
+ */
+const RELATION_RECORD_SLOTS = [
+  { key: 'Entity1', slot: 'from' },
+  { key: 'Entity2', slot: 'to' },
+  { key: 'Fields1', slot: 'fromColumns' },
+  { key: 'Fields2', slot: 'toColumns' },
+] as const;
+
+/** All nine projected `[Relation]` keys, so the expected `scalars` list is the scanner's own. */
+const RELATION_SLOT_KEYS: ReadonlySet<string> = new Set([
+  ...RELATION_SLOTS.map((entry) => entry.key),
+  ...RELATION_RECORD_SLOTS.map((entry) => entry.key),
+]);
 
 /**
  * The goldens whose `schema.relations` is non-empty — read off the committed expectations, not off
@@ -650,7 +666,7 @@ describe('json envelope — relation provenance (stage 6-A)', () => {
           expect(relation.sectionIndex).toBe(section.index);
           expect(relation.sectionHeader).toBe(section.headerRaw);
 
-          // Every occurrence of the five scalars, straight from the scanner: as-written key text,
+          // Every occurrence of the nine projected keys, straight from the scanner: as-written key text,
           // the value text, and the line. The envelope must show all of them, in file order —
           // duplicates included, which is what last-wins would otherwise erase (§12 rule 4).
           const declared = section.entries.flatMap((entry) =>
@@ -724,6 +740,27 @@ describe('json envelope — relation provenance (stage 6-A)', () => {
               raw: last.raw,
               span: jsonSpanOf(last.span),
             });
+          }
+
+          // The four declaration-shaped slots follow the same rule with their own shape: their raw
+          // text and span are the terminal occurrence's, never a mix of two declarations.
+          for (const slotSpec of RELATION_RECORD_SLOTS) {
+            const occurrences = parsed.filter((occurrence) => occurrence.spec.key === slotSpec.key);
+            const last = occurrences.at(-1);
+            const selected = relation[slotSpec.slot];
+            if (last === undefined) {
+              expect(selected, `${where}.${slotSpec.slot}: key never appeared`).toBeNull();
+              continue;
+            }
+            expect(
+              last.span,
+              `${where}.${slotSpec.key}: declared occurrence has a line`,
+            ).not.toBeNull();
+            if (last.span === null) throw new Error(`${where}: unreachable`);
+            expect(selected?.raw, `${where}.${slotSpec.slot}.raw: last-wins`).toBe(last.raw);
+            expect(selected?.span, `${where}.${slotSpec.slot}.span: last-wins`).toEqual(
+              jsonSpanOf(last.span),
+            );
           }
 
           // The semantic record and the envelope read the same occurrences: neither may silently
@@ -874,9 +911,9 @@ describe('json envelope — relation provenance (stage 6-A)', () => {
  * `PName` alone for `[Subtype]` — the registry (v2.21) declares no `LName` and no `Comment` for it.
  */
 const OBJECT_SCALAR_KEYS: Readonly<Record<'entity' | 'view' | 'subtype', readonly string[]>> = {
-  entity: ['PName', 'LName', 'Comment'],
-  view: ['PName', 'LName', 'Comment'],
-  subtype: ['PName'],
+  entity: ['PName', 'LName', 'Comment', 'UsingCommonColumns'],
+  view: ['PName', 'LName', 'Comment', 'Query', 'LNameByComment'],
+  subtype: ['PName', 'SharedMode', 'CompleteCategory', 'ZOrder'],
 };
 
 describe('json envelope — object scalar provenance (stage 6-B)', () => {
@@ -951,6 +988,8 @@ describe('json envelope — object scalar provenance (stage 6-B)', () => {
           ['PName', '"report_v2"', 17],
           ['LName', '"Report"', 18],
           ['Comment', '"view note"', 19],
+          // `Query` is a single-fact slot, so it is retained the same way (unit 2).
+          ['Query', '"select 1"', 20],
         ],
       );
       expect(
@@ -992,9 +1031,10 @@ describe('json envelope — object scalar provenance (stage 6-B)', () => {
       expect(subtype.lname).toBeNull();
       expect(subtype.comment).toBeNull();
 
-      // The token is the same shape `attributes` uses. An object scalar cannot be `invalid`: all
-      // three keys are registry-typed `string`/`escaped`, and `decodeValue` never fails for those two
-      // types, so the unreadable-token arm is a relation-only case (pinned above, `RelationType2`).
+      // The token is the same shape `attributes` uses. None of *these* records can be `invalid`:
+      // `PName`/`LName`/`Query` are registry-typed `string` and `Comment` is `escaped`, and
+      // `decodeValue` never fails for those two types. The integer, boolean and complex fact keys
+      // added in unit 2 do have unreadable terminals, and their own case below pins them.
       expect(entity.scalars.map((scalar) => scalar.value)).toEqual([
         { status: 'decoded', kind: 'string', value: 'alpha' },
         { status: 'decoded', kind: 'string', value: 'Alpha' },
@@ -1109,6 +1149,325 @@ describe('json envelope — object scalar provenance (stage 6-B)', () => {
         ['D_BOM_MISSING', null],
         ['S_MALFORMED_LINE', 9],
       ]);
+    });
+  });
+});
+
+describe('json envelope — single-fact scalar provenance (stage 6-B unit 2)', () => {
+  it('keeps every declaration of a fact-shaped slot, with the slots on the terminal one', () => {
+    // One document, every single-fact key repeated, and every terminal token chosen to be either
+    // unreadable or a different value than the first — so "last-wins" cannot be satisfied by
+    // reaching backwards. `UsingCommonColumns=7` and `ZOrder=abc` are unreadable; `LNameByComment`
+    // is a boolean whose terminal is not `1`/`0`; `Entity1` and `Fields1` repeat a nested slot.
+    const text = [
+      '# A5:ER FORMAT:21', // 1
+      '', // 2
+      '[Manager]', // 3
+      'PageInfo="Main",3,"A4Landscape","$FFFFFF"', // 4
+      '', // 5
+      '[Entity]', // 6 — object 1, section 2
+      'PName="alpha"', // 7
+      'UsingCommonColumns=1', // 8
+      'UsingCommonColumns=7', // 9
+      'Field="ID","ID","Serial","NOT NULL",0,"","",$FFFFFFFF,"",""', // 10
+      'Position="Main",10,10', // 11
+      '', // 12
+      '[Entity]', // 13 — object 2, section 3 (no `UsingCommonColumns`: the default)
+      'PName="beta"', // 14
+      'Field="ID","ID","Serial","NOT NULL",0,"","",$FFFFFFFF,"",""', // 15
+      'Position="Main",20,20', // 16
+      '', // 17
+      '[View]', // 18 — object 3, section 4
+      'PName="v"', // 19
+      'Query="select 1"', // 20
+      'Query="select 2"', // 21
+      'LNameByComment=1', // 22
+      'LNameByComment=maybe', // 23
+      'Position="Main",30,30', // 24
+      '', // 25
+      '[Subtype]', // 26 — object 4, section 5
+      'PName="s"', // 27
+      'SharedMode=0', // 28
+      'SharedMode=2', // 29
+      'CompleteCategory=0', // 30
+      'CompleteCategory=1', // 31
+      'ZOrder=1', // 32
+      'ZOrder=abc', // 33
+      'Position="Main",40,40', // 34
+      '', // 35
+      '[Relation]', // 36 — section 6
+      'Entity1="alpha"', // 37
+      'Entity1="beta"', // 38
+      'Entity2="alpha"', // 39
+      'RelationType1=2', // 40
+      'RelationType2=4', // 41
+      'Fields1="ID"', // 42
+      'Fields1="ID"', // 43
+      'Fields2="ID"', // 44
+      'Position="Main",0,1,1,1,R,R,""', // 45
+      '', // 46
+    ].join('\n');
+
+    withDocument(text, (path, input) => {
+      const envelope = serialize(input, { command: 'inspect', path });
+      const objects = envelope.schema?.objects ?? [];
+      const [alpha, beta, view, subtype] = objects;
+      const relation = envelope.schema?.relations[0];
+      if (
+        alpha === undefined ||
+        beta === undefined ||
+        view === undefined ||
+        subtype === undefined ||
+        relation === undefined
+      ) {
+        throw new Error('the projections are missing');
+      }
+      if (alpha.kind !== 'entity' || beta.kind !== 'entity') {
+        throw new Error('an entity projection lost its kind');
+      }
+      if (view.kind !== 'view') throw new Error('the view projection lost its kind');
+      if (subtype.kind !== 'subtype') throw new Error('the subtype projection lost its kind');
+
+      // Every declaration, in file order. `scalars` is the history behind the slots, so it is never
+      // shorter than the slots and never repeats a line.
+      const triples = (scalars: readonly { key: string; raw: string; span: JsonSpan }[]) =>
+        scalars.map((scalar) => [scalar.key, scalar.raw, scalar.span.startLine]);
+      for (const [scalars, sectionIndex] of [
+        [alpha.scalars, 2],
+        [beta.scalars, 3],
+        [view.scalars, 4],
+        [subtype.scalars, 5],
+        [relation.scalars, 6],
+      ] as const) {
+        const lines = scalars.map((scalar) => scalar.span.startLine);
+        expect(new Set(lines).size, 'one record per physical line').toBe(lines.length);
+        expect(lines, 'file order').toEqual([...lines].sort((left, right) => left - right));
+        for (const scalar of scalars) {
+          expect(scalar.origin).toBe('declared');
+          expect(scalar.keyRaw).toBe(scalar.key);
+          expect(scalar.span.sectionIndex).toBe(sectionIndex);
+          expect(scalar.span.endLine).toBe(scalar.span.startLine);
+          expect(scalar.span.keyLine).toBe(scalar.span.startLine);
+        }
+      }
+
+      expect(triples(alpha.scalars)).toEqual([
+        ['PName', '"alpha"', 7],
+        ['UsingCommonColumns', '1', 8],
+        ['UsingCommonColumns', '7', 9],
+      ]);
+      // The defaulted `UsingCommonColumns` of the second entity is not a declaration: no line, no
+      // record. Only the slot says `defaulted`.
+      expect(triples(beta.scalars)).toEqual([['PName', '"beta"', 14]]);
+      expect(triples(view.scalars)).toEqual([
+        ['PName', '"v"', 19],
+        ['Query', '"select 1"', 20],
+        ['Query', '"select 2"', 21],
+        ['LNameByComment', '1', 22],
+        ['LNameByComment', 'maybe', 23],
+      ]);
+      expect(triples(subtype.scalars)).toEqual([
+        ['PName', '"s"', 27],
+        ['SharedMode', '0', 28],
+        ['SharedMode', '2', 29],
+        ['CompleteCategory', '0', 30],
+        ['CompleteCategory', '1', 31],
+        ['ZOrder', '1', 32],
+        ['ZOrder', 'abc', 33],
+      ]);
+      expect(triples(relation.scalars)).toEqual([
+        ['Entity1', '"alpha"', 37],
+        ['Entity1', '"beta"', 38],
+        ['Entity2', '"alpha"', 39],
+        ['RelationType1', '2', 40],
+        ['RelationType2', '4', 41],
+        ['Fields1', '"ID"', 42],
+        ['Fields1', '"ID"', 43],
+        ['Fields2', '"ID"', 44],
+      ]);
+
+      // The token keeps both statuses: an integer that is not `1`/`0` still *decodes* (it is the
+      // slot that calls it unrecognised), while a non-integer and a non-boolean are `invalid`.
+      expect(alpha.scalars.map((scalar) => scalar.value)).toEqual([
+        { status: 'decoded', kind: 'string', value: 'alpha' },
+        { status: 'decoded', kind: 'integer', value: 1 },
+        { status: 'decoded', kind: 'integer', value: 7 },
+      ]);
+      expect(view.scalars.slice(3).map((scalar) => scalar.value)).toEqual([
+        { status: 'decoded', kind: 'boolean', value: true },
+        { status: 'invalid', kind: 'boolean', reason: 'not-a-boolean' },
+      ]);
+      expect(subtype.scalars.slice(5).map((scalar) => scalar.value)).toEqual([
+        { status: 'decoded', kind: 'integer', value: 1 },
+        { status: 'invalid', kind: 'integer', reason: 'not-an-integer' },
+      ]);
+      // `Fields1` is a Complex token: the JSON value is the elements, one per slot, never a string.
+      expect(relation.scalars.slice(5, 7).map((scalar) => scalar.value)).toEqual([
+        {
+          status: 'decoded',
+          kind: 'complex',
+          value: {
+            parts: [{ value: 'ID', quoted: true, hadEscape: false }],
+            trailingElementsOmitted: false,
+          },
+        },
+        {
+          status: 'decoded',
+          kind: 'complex',
+          value: {
+            parts: [{ value: 'ID', quoted: true, hadEscape: false }],
+            trailingElementsOmitted: false,
+          },
+        },
+      ]);
+
+      // Last-wins: the slot is the terminal declaration, and an unreadable terminal stays unknown
+      // instead of resurrecting the readable first one (R26).
+      expect(alpha.effectiveColumns.status).toBe('partial');
+      expect(alpha.effectiveColumns.usingCommonColumns).toEqual({
+        value: null,
+        origin: 'declared',
+        raw: '7',
+        span: oneLineSpan(2, 9),
+        token: 'unrecognised',
+      });
+      expect(beta.effectiveColumns.usingCommonColumns).toEqual({
+        value: 1,
+        origin: 'defaulted',
+        raw: '',
+        span: null,
+        token: 'absent',
+      });
+      expect(view.query).toBe('select 2');
+      expect(view.queryRaw).toBe('"select 2"');
+      expect(view.querySpan).toEqual(oneLineSpan(4, 21));
+      expect(view.lnameByComment).toEqual({
+        value: null,
+        origin: 'invalid',
+        raw: 'maybe',
+        span: oneLineSpan(4, 23),
+        token: 'unrecognised',
+      });
+      expect(subtype.sharedMode).toEqual({
+        value: '2',
+        raw: '2',
+        span: oneLineSpan(5, 29),
+        token: 'declared',
+      });
+      expect(subtype.completeCategory).toEqual({
+        value: '1',
+        raw: '1',
+        span: oneLineSpan(5, 31),
+        token: 'declared',
+      });
+      expect(subtype.zOrder).toEqual({
+        value: null,
+        raw: 'abc',
+        span: oneLineSpan(5, 33),
+        token: 'unrecognised',
+      });
+      expect(relation.from).toMatchObject({
+        key: 'Entity1',
+        declared: 'beta',
+        raw: '"beta"',
+        span: oneLineSpan(6, 38),
+        status: 'resolved',
+        resolvedEntity: 'beta',
+      });
+      expect(relation.to).toMatchObject({
+        key: 'Entity2',
+        declared: 'alpha',
+        raw: '"alpha"',
+        span: oneLineSpan(6, 39),
+      });
+      expect(relation.fromColumns?.raw).toBe('"ID"');
+      expect(relation.fromColumns?.span).toEqual(oneLineSpan(6, 43));
+      expect(relation.toColumns?.raw).toBe('"ID"');
+      expect(relation.toColumns?.span).toEqual(oneLineSpan(6, 44));
+
+      // A projected key is never also an attribute, and the count of records is the count of
+      // physical key lines — the projections do not re-count the same line.
+      for (const object of objects) {
+        const keys = new Set(OBJECT_SCALAR_KEYS[object.kind]);
+        for (const attribute of object.attributes) {
+          expect(keys.has(attribute.key), `${object.kind}.${attribute.key}`).toBe(false);
+        }
+      }
+      const relationKeys = new Set([
+        'PName',
+        'RelationType1',
+        'RelationType2',
+        'Cardinarity1',
+        'Cardinarity2',
+        'Entity1',
+        'Entity2',
+        'Fields1',
+        'Fields2',
+      ]);
+      for (const attribute of relation.attributes) {
+        expect(relationKeys.has(attribute.key), `relation.${attribute.key}`).toBe(false);
+      }
+      expect(
+        [
+          alpha.scalars.length,
+          beta.scalars.length,
+          view.scalars.length,
+          subtype.scalars.length,
+          relation.scalars.length,
+        ].reduce((sum, count) => sum + count, 0),
+      ).toBe(24);
+
+      // One finding per extra occurrence, in file order, and nothing else is invented.
+      expect(
+        envelope.diagnostics
+          .filter((diagnostic) => diagnostic.code === 'S_DUPLICATE_KEY')
+          .map((diagnostic) => [
+            diagnostic.details['key'],
+            diagnostic.details['occurrences'],
+            diagnostic.span?.startLine,
+          ]),
+      ).toEqual([
+        ['UsingCommonColumns', 2, 9],
+        ['Query', 2, 21],
+        ['LNameByComment', 2, 23],
+        ['SharedMode', 2, 29],
+        ['CompleteCategory', 2, 31],
+        ['ZOrder', 2, 33],
+        ['Entity1', 2, 38],
+        ['Fields1', 2, 43],
+      ]);
+      expect(envelope.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+        'D_BOM_MISSING',
+        'S_DUPLICATE_KEY',
+        'V_VIEW_COLUMNS_UNKNOWN',
+        'S_DUPLICATE_KEY',
+        'S_DUPLICATE_KEY',
+        'V_UNSUPPORTED_SUBTYPE_MEMBERSHIP',
+        'S_DUPLICATE_KEY',
+        'S_DUPLICATE_KEY',
+        'S_DUPLICATE_KEY',
+        'S_DUPLICATE_KEY',
+        'S_DUPLICATE_KEY',
+      ]);
+
+      // Retention moves no counter: 6 sections, 32 parsed keys, 45 physical lines, nothing dropped.
+      expect(envelope.completeness).toEqual({
+        sections: { total: 6, parsed: 6, preservedRaw: 0, unknown: 0 },
+        keys: { total: 32, parsed: 32, preservedRaw: 0 },
+        lines: { total: 45, accounted: 45, dropped: 0 },
+        dropped: 0,
+      });
+      // The one unmodelled construct is the subtype's membership; the repeated keys are findings,
+      // not unsupported evidence.
+      expect(
+        envelope.unsupported.map((entry) => [entry.kind, entry.sectionKind, entry.key]),
+      ).toEqual([['subtype-membership', 'Subtype', null]]);
+
+      // Both retained copies are still in the document, text and line both.
+      const json = toJsonString(envelope);
+      for (const raw of ['"alpha"', '"beta"', '"select 1"', 'maybe', 'abc']) {
+        expect(json).toContain(raw);
+      }
     });
   });
 });

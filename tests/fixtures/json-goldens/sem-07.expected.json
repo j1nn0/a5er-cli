@@ -538,6 +538,23 @@
               "kind": "string",
               "value": "without_common"
             }
+          },
+          {
+            "key": "UsingCommonColumns",
+            "keyRaw": "UsingCommonColumns",
+            "origin": "declared",
+            "raw": "0",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 16,
+              "endLine": 16,
+              "keyLine": 16
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "integer",
+              "value": 0
+            }
           }
         ],
         "fields": [

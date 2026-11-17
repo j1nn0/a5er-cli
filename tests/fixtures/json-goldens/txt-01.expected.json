@@ -1480,6 +1480,23 @@
               "kind": "string",
               "value": "active_users"
             }
+          },
+          {
+            "key": "Query",
+            "keyRaw": "Query",
+            "origin": "declared",
+            "raw": "\"SELECT * FROM users WHERE email IS NOT NULL\"",
+            "span": {
+              "sectionIndex": 5,
+              "startLine": 32,
+              "endLine": 32,
+              "keyLine": 32
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "SELECT * FROM users WHERE email IS NOT NULL"
+            }
           }
         ],
         "query": "SELECT * FROM users WHERE email IS NOT NULL",
@@ -1607,6 +1624,23 @@
               "status": "decoded",
               "kind": "string",
               "value": "order_summary"
+            }
+          },
+          {
+            "key": "Query",
+            "keyRaw": "Query",
+            "origin": "declared",
+            "raw": "\"SELECT user_id, COUNT(*) FROM orders GROUP BY user_id\"",
+            "span": {
+              "sectionIndex": 6,
+              "startLine": 37,
+              "endLine": 37,
+              "keyLine": 37
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "SELECT user_id, COUNT(*) FROM orders GROUP BY user_id"
             }
           }
         ],
@@ -1829,6 +1863,92 @@
           }
         },
         "scalars": [
+          {
+            "key": "Entity1",
+            "keyRaw": "Entity1",
+            "origin": "declared",
+            "raw": "\"users\"",
+            "span": {
+              "sectionIndex": 7,
+              "startLine": 41,
+              "endLine": 41,
+              "keyLine": 41
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "users"
+            }
+          },
+          {
+            "key": "Entity2",
+            "keyRaw": "Entity2",
+            "origin": "declared",
+            "raw": "\"orders\"",
+            "span": {
+              "sectionIndex": 7,
+              "startLine": 42,
+              "endLine": 42,
+              "keyLine": 42
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "orders"
+            }
+          },
+          {
+            "key": "Fields1",
+            "keyRaw": "Fields1",
+            "origin": "declared",
+            "raw": "\"id\"",
+            "span": {
+              "sectionIndex": 7,
+              "startLine": 43,
+              "endLine": 43,
+              "keyLine": 43
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "complex",
+              "value": {
+                "parts": [
+                  {
+                    "value": "id",
+                    "quoted": true,
+                    "hadEscape": false
+                  }
+                ],
+                "trailingElementsOmitted": false
+              }
+            }
+          },
+          {
+            "key": "Fields2",
+            "keyRaw": "Fields2",
+            "origin": "declared",
+            "raw": "\"user_id\"",
+            "span": {
+              "sectionIndex": 7,
+              "startLine": 44,
+              "endLine": 44,
+              "keyLine": 44
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "complex",
+              "value": {
+                "parts": [
+                  {
+                    "value": "user_id",
+                    "quoted": true,
+                    "hadEscape": false
+                  }
+                ],
+                "trailingElementsOmitted": false
+              }
+            }
+          },
           {
             "key": "RelationType1",
             "keyRaw": "RelationType1",

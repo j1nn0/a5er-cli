@@ -1141,6 +1141,23 @@
               "kind": "string",
               "value": "active_users"
             }
+          },
+          {
+            "key": "Query",
+            "keyRaw": "Query",
+            "origin": "declared",
+            "raw": "\"SELECT * FROM users WHERE active = 1\"",
+            "span": {
+              "sectionIndex": 5,
+              "startLine": 36,
+              "endLine": 36,
+              "keyLine": 36
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "SELECT * FROM users WHERE active = 1"
+            }
           }
         ],
         "query": "SELECT * FROM users WHERE active = 1",
@@ -1362,6 +1379,92 @@
           }
         },
         "scalars": [
+          {
+            "key": "Entity1",
+            "keyRaw": "Entity1",
+            "origin": "declared",
+            "raw": "\"users\"",
+            "span": {
+              "sectionIndex": 4,
+              "startLine": 24,
+              "endLine": 24,
+              "keyLine": 24
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "users"
+            }
+          },
+          {
+            "key": "Entity2",
+            "keyRaw": "Entity2",
+            "origin": "declared",
+            "raw": "\"orders\"",
+            "span": {
+              "sectionIndex": 4,
+              "startLine": 25,
+              "endLine": 25,
+              "keyLine": 25
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "orders"
+            }
+          },
+          {
+            "key": "Fields1",
+            "keyRaw": "Fields1",
+            "origin": "declared",
+            "raw": "\"id\"",
+            "span": {
+              "sectionIndex": 4,
+              "startLine": 26,
+              "endLine": 26,
+              "keyLine": 26
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "complex",
+              "value": {
+                "parts": [
+                  {
+                    "value": "id",
+                    "quoted": true,
+                    "hadEscape": false
+                  }
+                ],
+                "trailingElementsOmitted": false
+              }
+            }
+          },
+          {
+            "key": "Fields2",
+            "keyRaw": "Fields2",
+            "origin": "declared",
+            "raw": "\"user_id\"",
+            "span": {
+              "sectionIndex": 4,
+              "startLine": 27,
+              "endLine": 27,
+              "keyLine": 27
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "complex",
+              "value": {
+                "parts": [
+                  {
+                    "value": "user_id",
+                    "quoted": true,
+                    "hadEscape": false
+                  }
+                ],
+                "trailingElementsOmitted": false
+              }
+            }
+          },
           {
             "key": "RelationType1",
             "keyRaw": "RelationType1",

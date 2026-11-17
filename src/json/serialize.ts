@@ -26,12 +26,13 @@
  * become `attributes` with the registry's disposition (`structured` / `presentation` / `ddl-only` /
  * `legacy`), their token kept as written. A token that did not decode is an `invalid` attribute, not
  * a missing one. Interpreted scalars carry their own raw text and span, and every declaration of a
- * projected scalar key — duplicates and unreadable tokens included — is in `scalars`, so last-wins
- * never deletes a line. That holds for `[Relation]`'s five keys since 6-A and for an entity's,
- * view's and subtype's `PName`/`LName`/`Comment` since 6-B. A view's columns stay `{ status:
- * 'unknown' }` and a subtype's membership stays `{ status: 'unsupported' }`; neither becomes `[]`.
- * What is still only a count — the fact-shaped slots such as `Query` and `UsingCommonColumns` — is
- * the gap `declaredOf` records below.
+ * **projected** key — duplicates and unreadable tokens included — is in `scalars`, so last-wins
+ * never deletes a line. That now covers every projected key: `[Relation]`'s nine since 6-A/6-B,
+ * an entity's, view's and subtype's `PName`/`LName`/`Comment` since 6-B unit 1, and the ten
+ * single-fact slots (`UsingCommonColumns`, `Query`, `LNameByComment`, `SharedMode`,
+ * `CompleteCategory`, `ZOrder`, and the relation's `Entity1`/`Entity2`/`Fields1`/`Fields2`) in unit
+ * 2. A view's columns stay `{ status: 'unknown' }` and a subtype's membership stays `{ status:
+ * 'unsupported' }`; neither becomes `[]`.
  *
  * **Failed input.** A rejected read yields the documented shape, not a partial diagram: `status:
  * 'failed'`, `source: null`, `schema: null`, `completeness: null`, `unsupported: []`, and the fatal
@@ -141,23 +142,45 @@ export interface SerializeContext {
 }
 
 /**
- * The `JsonValue` scalars each object kind projects into a typed slot (§4.5).
+ * Every key each object kind projects into a typed slot, and therefore retains every declaration of
+ * (§4.5, §9.6, §12 rule 4).
  *
- * These keys are **both** a slot and every declaration of them in `scalars`, exactly as the five
- * `[Relation]` scalars are (6-A). A repeated `PName`/`LName`/`Comment` is therefore never silently
- * lost: the slot holds the last-wins occurrence §4.2 defines and `scalars` keeps the history behind
- * it, so the overwritten line keeps its text and its line instead of only an `S_DUPLICATE_KEY`
- * count (§12 rule 4, R26).
+ * Two families, one rule. The three `JsonValue` slots (`PName`/`LName`/`Comment`) and the six
+ * single-fact slots (`UsingCommonColumns`, `Query`, `LNameByComment`, `SharedMode`,
+ * `CompleteCategory`, `ZOrder`) are each a slot **and** every declaration of them in `scalars`.
+ * Without the second half a repeated key is erased down to its terminal occurrence, surviving only
+ * as an `S_DUPLICATE_KEY` count; the slot keeps what the file means, `scalars` keeps the history
+ * (§12 rule 4, R26). Unit 1 did the `JsonValue` half, unit 2 the fact half.
  *
- * The `*_PROJECTED` sets below spread these lists, so a scalar key cannot be retained without also
- * being kept out of `attributes` — the same source line would otherwise be reported twice. Only
- * `parsed` entries are read; none of these three has a documented default (§4.2), so no declared
- * record can be fabricated from one.
+ * The `*_PROJECTED` sets below spread these lists, so a key cannot be retained without also being
+ * kept out of `attributes` — the same source line would otherwise be reported twice.
+ *
+ * Only `parsed` entries are read. `UsingCommonColumns` has a documented default (§4.2) and a
+ * defaulted value has `span: null`, so it is never fabricated into this list; the other eight have
+ * no default at all.
  */
-const ENTITY_SCALAR_KEYS: readonly JsonObjectScalarKey[] = ['PName', 'LName', 'Comment'];
-const VIEW_SCALAR_KEYS: readonly JsonObjectScalarKey[] = ['PName', 'LName', 'Comment'];
-/** `[Subtype]` registers no `LName` and no `Comment`, so `PName` is its only projected scalar. */
-const SUBTYPE_SCALAR_KEYS: readonly JsonObjectScalarKey[] = ['PName'];
+const ENTITY_SCALAR_KEYS: readonly JsonObjectScalarKey[] = [
+  'PName',
+  'LName',
+  'Comment',
+  'UsingCommonColumns',
+];
+
+const VIEW_SCALAR_KEYS: readonly JsonObjectScalarKey[] = [
+  'PName',
+  'LName',
+  'Comment',
+  'Query',
+  'LNameByComment',
+];
+
+/** `[Subtype]` registers no `LName`, `Comment` or `Query`, so this is its whole projected surface. */
+const SUBTYPE_SCALAR_KEYS: readonly JsonObjectScalarKey[] = [
+  'PName',
+  'SharedMode',
+  'CompleteCategory',
+  'ZOrder',
+];
 
 /**
  * A membership test for one kind's scalar keys, built from its list so the two cannot drift apart.
@@ -184,30 +207,18 @@ const ENTITY_PROJECTED: ReadonlySet<string> = new Set([
   'Index',
   'IndexOption',
   'Position',
-  'UsingCommonColumns',
 ]);
 
-const VIEW_PROJECTED: ReadonlySet<string> = new Set([
-  ...VIEW_SCALAR_KEYS,
-  'Query',
-  'LNameByComment',
-  'Position',
-]);
+const VIEW_PROJECTED: ReadonlySet<string> = new Set([...VIEW_SCALAR_KEYS, 'Position']);
 
-const SUBTYPE_PROJECTED: ReadonlySet<string> = new Set([
-  ...SUBTYPE_SCALAR_KEYS,
-  'SharedMode',
-  'CompleteCategory',
-  'Position',
-  'ZOrder',
-]);
+const SUBTYPE_PROJECTED: ReadonlySet<string> = new Set([...SUBTYPE_SCALAR_KEYS, 'Position']);
 
 /**
  * The `[Relation]` keys the envelope carries in a slot of their own (§9.2, P9, K7).
  *
- * The five scalars are typed slots **and** their every declaration is in `scalars`; `Entity1`/
- * `Entity2` live in `from`/`to`, `Fields1`/`Fields2` in `fromColumns`/`toColumns`, and `Position`
- * in `positions`. Everything else registered for the section is an attribute.
+ * All nine are typed slots **and** every declaration of them is in `scalars`; `Entity1`/`Entity2`
+ * live in `from`/`to`, `Fields1`/`Fields2` in `fromColumns`/`toColumns`, and `Position` in
+ * `positions`. Everything else registered for the section is an attribute.
  */
 const RELATION_SCALAR_KEYS: readonly JsonRelationScalarKey[] = [
   'PName',
@@ -215,23 +226,20 @@ const RELATION_SCALAR_KEYS: readonly JsonRelationScalarKey[] = [
   'RelationType2',
   'Cardinarity1',
   'Cardinarity2',
-];
-
-const RELATION_SCALARS: ReadonlySet<string> = new Set(RELATION_SCALAR_KEYS);
-
-/** Membership test for the five scalar keys; built from the list so the two cannot drift apart. */
-function isRelationScalarKey(key: string): key is JsonRelationScalarKey {
-  return RELATION_SCALARS.has(key);
-}
-
-const RELATION_PROJECTED: ReadonlySet<string> = new Set([
-  ...RELATION_SCALAR_KEYS,
   'Entity1',
   'Entity2',
   'Fields1',
   'Fields2',
-  'Position',
-]);
+];
+
+const RELATION_SCALARS: ReadonlySet<string> = new Set(RELATION_SCALAR_KEYS);
+
+/** Membership test for the nine projected keys; built from the list so the two cannot drift apart. */
+function isRelationScalarKey(key: string): key is JsonRelationScalarKey {
+  return RELATION_SCALARS.has(key);
+}
+
+const RELATION_PROJECTED: ReadonlySet<string> = new Set([...RELATION_SCALAR_KEYS, 'Position']);
 
 /** The three Manager keys with their own collections (§9.3, §9.4). */
 const MANAGER_PROJECTED: ReadonlySet<string> = new Set(['PageInfo', 'DomainInfo', 'CommonField']);
@@ -284,18 +292,20 @@ function occurrencesOf(section: ClassifiedSection, key: string): KeyOccurrence[]
  * last-wins rule is not re-negotiated here by walking backwards to something readable (R26). Never
  * an earlier valid occurrence in place of a terminal unreadable one.
  *
- * The occurrence itself always remains readable elsewhere: for a `[Relation]` scalar and for an
- * object's `PName`/`LName`/`Comment`, in `scalars` (every declaration, in file order); for a key
- * that is not projected at all, in `attributes` and the diagnostic list. A projected *fact* slot is
- * the exception the paragraph below records.
+ * The occurrence itself always remains readable elsewhere: for any key a section *projects*, in
+ * `scalars` (every declaration, in file order) — the five `[Relation]` interpreted scalars, the
+ * object `JsonValue` slots and every single-fact slot; for a key that is not projected at all, in
+ * `attributes` and the diagnostic list.
  *
- * **The one remaining gap (finding 5-d, narrowed in 6-B).** Objects and relations no longer have
- * it: both keep every declaration of their projected scalars. What is still only a count is a
- * *fact-shaped* slot — an entity's `UsingCommonColumns`, a view's `Query`/`LNameByComment` and a
- * subtype's `SharedMode`/`CompleteCategory`/`ZOrder` — because those carry provenance or a default
- * rather than a plain `JsonValue`, so they need their own record shape. (`IndexInfo`/`Index`
- * scalars are not a gap at all: each declaration is its own array record.) Recorded here so the
- * remainder is a decision, not an accident.
+ * **Finding 5-d is closed for projected keys (6-B).** Every key a slot carries is now also a
+ * `scalars` record, so a repeated declaration never survives only as an `S_DUPLICATE_KEY` count.
+ * Retention is by *key*, not by slot shape: `JsonProjectedScalar` is one record type for a
+ * `JsonValue` slot, a `JsonUsingCommonColumns`, a `JsonLNameByComment`, a `JsonSubtypeScalar`, a
+ * `JsonRelationEndpoint` and a `JsonRelationColumnList` alike.
+ *
+ * What is still not modelled is not a retention gap and is recorded for later units: page and
+ * domain element coverage, the FORMAT gate and `enc-05`'s key count, the `limits` family, and the
+ * §12/§13 wording. A rename of `scalars` itself would be a contract bump and is not this unit's.
  */
 function declaredOf<T extends DecodedValue>(
   section: ClassifiedSection,
@@ -811,12 +821,14 @@ function jsonRelationColumnList(list: RelationColumnList): JsonRelationColumnLis
  * `S_DUPLICATE_KEY` count. `value` is the same token shape `attributes` uses, so an occurrence that
  * did not decode is kept as `invalid` with its reason rather than disappearing (R26).
  *
- * One function for every kind that has projected scalars — the three objects and `[Relation]` — so
- * the record shape cannot drift between them; `isScalarKey` is the kind's own membership test and
- * `Key` its key union, so a record cannot name a key the kind does not project.
+ * One function for every kind that has projected keys — the three objects and `[Relation]` — so the
+ * record shape cannot drift between them; `isScalarKey` is the kind's own membership test and `Key`
+ * its key union, so a record cannot name a key the kind does not project. The record is shared by
+ * every slot shape: a `JsonValue`, an `Entity1`/`Fields1` endpoint or column list, a subtype fact —
+ * all of them are a declaration with a line, so all of them belong here.
  *
- * Only `parsed` entries are read: a defaulted key has no line, and none of these keys has a
- * documented default (§4.2), so nothing can be fabricated here.
+ * Only `parsed` entries are read: a defaulted key has no line, and of these keys only
+ * `UsingCommonColumns` has a documented default (§4.2), so nothing can be fabricated here.
  */
 function jsonProjectedScalars<Key extends string>(
   section: ClassifiedSection,
@@ -841,7 +853,7 @@ function jsonProjectedScalars<Key extends string>(
   return scalars;
 }
 
-/** The five projected `[Relation]` scalars, through the shared record builder. */
+/** The nine projected `[Relation]` keys, through the shared record builder. */
 function jsonRelationScalars(section: ClassifiedSection): JsonRelationScalar[] {
   return jsonProjectedScalars(section, isRelationScalarKey);
 }

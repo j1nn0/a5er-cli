@@ -68,6 +68,40 @@
               "kind": "string",
               "value": "view_with_lname"
             }
+          },
+          {
+            "key": "Query",
+            "keyRaw": "Query",
+            "origin": "declared",
+            "raw": "\"SELECT id FROM subtype_member\"",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 8,
+              "endLine": 8,
+              "keyLine": 8
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "SELECT id FROM subtype_member"
+            }
+          },
+          {
+            "key": "LNameByComment",
+            "keyRaw": "LNameByComment",
+            "origin": "declared",
+            "raw": "1",
+            "span": {
+              "sectionIndex": 2,
+              "startLine": 9,
+              "endLine": 9,
+              "keyLine": 9
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "boolean",
+              "value": true
+            }
           }
         ],
         "query": "SELECT id FROM subtype_member",
@@ -200,6 +234,23 @@
               "status": "decoded",
               "kind": "string",
               "value": "plain_view"
+            }
+          },
+          {
+            "key": "Query",
+            "keyRaw": "Query",
+            "origin": "declared",
+            "raw": "\"SELECT id FROM subtype_member\"",
+            "span": {
+              "sectionIndex": 3,
+              "startLine": 14,
+              "endLine": 14,
+              "keyLine": 14
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "SELECT id FROM subtype_member"
             }
           }
         ],

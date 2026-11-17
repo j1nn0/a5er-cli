@@ -102,14 +102,28 @@ import { stage } from './helpers/stage.js';
 const GOLDEN_DIR = fileURLToPath(new URL('./fixtures/json-goldens/', import.meta.url));
 
 /**
- * The projected object scalars, per kind — this repo's statement of the registry's key sets, kept
- * in the test so a golden cannot gain a key the format does not define for that section.
+ * The projected keys, per kind — this repo's statement of the registry's key sets, kept in the test
+ * so a golden cannot gain a key the format does not define for that section. The three `JsonValue`
+ * slots and the single-fact slots are projected the same way, so they are listed together.
  */
 const OBJECT_SCALAR_KEYS: Readonly<Record<JsonObject['kind'], readonly string[]>> = {
-  entity: ['PName', 'LName', 'Comment'],
-  view: ['PName', 'LName', 'Comment'],
-  subtype: ['PName'],
+  entity: ['PName', 'LName', 'Comment', 'UsingCommonColumns'],
+  view: ['PName', 'LName', 'Comment', 'Query', 'LNameByComment'],
+  subtype: ['PName', 'SharedMode', 'CompleteCategory', 'ZOrder'],
 };
+
+/** The nine `[Relation]` keys with a typed slot, in registry order. */
+const RELATION_SCALAR_KEYS: readonly string[] = [
+  'PName',
+  'RelationType1',
+  'RelationType2',
+  'Cardinarity1',
+  'Cardinarity2',
+  'Entity1',
+  'Entity2',
+  'Fields1',
+  'Fields2',
+];
 
 /** The five committed byte fixtures, as their modules export them. */
 const BYTE_FIXTURES: Readonly<Record<string, Uint8Array>> = {
@@ -360,7 +374,11 @@ function assertEnvelopeInvariants(envelope: JsonEnvelope): void {
       expect(scalar.origin, `${objectWhere}.scalars.origin`).toBe('declared');
       expect(scalar.span.sectionIndex, `${objectWhere}.scalars.span`).toBe(object.sectionIndex);
       expect(scalar.keyRaw.length, `${objectWhere}.scalars.keyRaw`).toBeGreaterThan(0);
-      expect(scalar.raw.length, `${objectWhere}.scalars.raw`).toBeGreaterThan(0);
+      // `raw` is the value text exactly as written and may legitimately be empty (`Query=`,
+      // `UsingCommonColumns=`): an empty token is still a declaration with a line, so it is kept.
+      // Nothing in this corpus writes one (checked across all 44 fixtures), and the record is
+      // compared against the authored golden anyway, so no `raw.length > 0` rule is asserted here.
+      expect(typeof scalar.raw, `${objectWhere}.scalars.raw`).toBe('string');
       // One source line, one record: no projected scalar is repeated as an attribute.
       const alsoAttribute = object.attributes.some(
         (attribute) =>
@@ -387,6 +405,51 @@ function assertEnvelopeInvariants(envelope: JsonEnvelope): void {
         true,
       );
     }
+
+    // The single-fact slots are the same rule in a different shape: a *declared* fact must be one of
+    // the retained records (raw + line), and a defaulted or absent one must have no record at all.
+    const checkFact = (
+      key: string,
+      label: string,
+      raw: string | null,
+      span: JsonSpan | null,
+    ): void => {
+      if (!scalarKeys.includes(key)) return;
+      const retained = object.scalars.filter((scalar) => scalar.key === key);
+      if (span === null) {
+        expect(retained, `${objectWhere}.${label}: an undeclared fact has no record`).toEqual([]);
+        return;
+      }
+      const declared = retained.some(
+        (scalar) => scalar.raw === raw && scalar.span.startLine === span.startLine,
+      );
+      expect(declared, `${objectWhere}.${label}: selected fact is a retained declaration`).toBe(
+        true,
+      );
+    };
+    if (object.kind === 'entity') {
+      const columns = object.effectiveColumns.usingCommonColumns;
+      checkFact('UsingCommonColumns', 'usingCommonColumns', columns.raw, columns.span);
+    }
+    if (object.kind === 'view') {
+      checkFact('Query', 'query', object.queryRaw ?? '', object.querySpan);
+      checkFact(
+        'LNameByComment',
+        'lnameByComment',
+        object.lnameByComment.raw,
+        object.lnameByComment.span,
+      );
+    }
+    if (object.kind === 'subtype') {
+      checkFact('SharedMode', 'sharedMode', object.sharedMode.raw, object.sharedMode.span);
+      checkFact(
+        'CompleteCategory',
+        'completeCategory',
+        object.completeCategory.raw,
+        object.completeCategory.span,
+      );
+      checkFact('ZOrder', 'zOrder', object.zOrder.raw, object.zOrder.span);
+    }
   }
 
   for (const relation of envelope.schema?.relations ?? []) {
@@ -401,11 +464,15 @@ function assertEnvelopeInvariants(envelope: JsonEnvelope): void {
       [...lines].sort((left, right) => left - right),
     );
     for (const scalar of relation.scalars) {
+      expect(RELATION_SCALAR_KEYS, `${where}.scalars.key`).toContain(scalar.key);
       expect(scalar.origin, `${where}.scalars.origin`).toBe('declared');
       expect(scalar.span.sectionIndex, `${where}.scalars.span`).toBe(relation.sectionIndex);
       expect(scalar.keyRaw.length, `${where}.scalars.keyRaw`).toBeGreaterThan(0);
-      expect(scalar.raw.length, `${where}.scalars.raw`).toBeGreaterThan(0);
+      // Same policy as above: `Fields1=` is a legal empty token and must not be filtered out.
+      expect(typeof scalar.raw, `${where}.scalars.raw`).toBe('string');
     }
+    // One record per declaration: the history never projects the same line twice.
+    expect(new Set(lines).size, `${where}.scalars: one record per line`).toBe(lines.length);
 
     // Last-wins selects one of those declarations: a slot that matches none would be a fabricated
     // provenance, and a slot without a span would break §12 rule 3.
@@ -428,6 +495,28 @@ function assertEnvelopeInvariants(envelope: JsonEnvelope): void {
       );
       expect(declared, `${where}: selected value is a retained declaration`).toBe(true);
     }
+
+    // The four declaration-shaped slots: their raw text and line must be the terminal occurrence's,
+    // and a key the fixture never declares must have neither a slot nor a record.
+    const checkRecord = (
+      key: string,
+      label: string,
+      slot: { readonly raw: string; readonly span: JsonSpan } | null,
+    ): void => {
+      const retained = relation.scalars.filter((scalar) => scalar.key === key).at(-1);
+      if (slot === null) {
+        expect(retained, `${where}.${label}: no declaration, no record`).toBeUndefined();
+        return;
+      }
+      expect(retained?.raw, `${where}.${label}: terminal declaration`).toBe(slot.raw);
+      expect(retained?.span.startLine, `${where}.${label}: terminal line`).toBe(
+        slot.span.startLine,
+      );
+    };
+    checkRecord('Entity1', 'from', relation.from);
+    checkRecord('Entity2', 'to', relation.to);
+    checkRecord('Fields1', 'fromColumns', relation.fromColumns);
+    checkRecord('Fields2', 'toColumns', relation.toColumns);
   }
 }
 
@@ -915,12 +1004,14 @@ describe('json goldens — the named acceptance cases', () => {
   });
 
   it('relation goldens carry a record span and every declared scalar (per-file review)', () => {
-    // The seven goldens stage 6-A rewrote, justified file by file from the fixture text. `section`
-    // is the `[Relation]`/`[Relationship]` header's ordinal, `header` its line, and each scalar
-    // tuple is (line, as-written value text) for an occurrence of one of the five interpreted keys
-    // — `PName`, `RelationType1`, `RelationType2`, `Cardinarity1`, `Cardinarity2` — in that section.
-    // No fixture relation declares a `PName`, so every anchor is the header line, and the slot
-    // values are the fixture's own `2`/`4`/`"P"`/`"Z"` (txt-09's section is empty).
+    // The seven goldens stage 6-A rewrote and stage 6-B unit 2 extended, justified file by file from
+    // the fixture text. `section` is the `[Relation]`/`[Relationship]` header's ordinal, `header`
+    // its line, and each scalar tuple is (line, as-written value text) for an occurrence of one of
+    // the nine projected keys — the five interpreted scalars (`PName`, `RelationType1/2`,
+    // `Cardinarity1/2`) and the four declarations unit 2 added (`Entity1`, `Entity2`, `Fields1`,
+    // `Fields2`), which the fixture writes first. No fixture relation declares a `PName`, so every
+    // anchor is the header line, and the values are the fixture's own (`"users"`, `"id"`, `2`, `"P"`,
+    // …; txt-09's section is empty).
     const review = [
       {
         id: 'fmt-01',
@@ -930,6 +1021,10 @@ describe('json goldens — the named acceptance cases', () => {
             header: 23,
             headerRaw: '[Relation]',
             scalars: [
+              [24, '"users"'],
+              [25, '"orders"'],
+              [26, '"id"'],
+              [27, '"user_id"'],
               [28, '2'],
               [29, '4'],
               [30, '"P"'],
@@ -946,6 +1041,10 @@ describe('json goldens — the named acceptance cases', () => {
             header: 12,
             headerRaw: '[Relation]',
             scalars: [
+              [13, '"orders"'],
+              [14, '"ghost_table"'],
+              [15, '"user_id"'],
+              [16, '"ghost_column"'],
               [17, '1'],
               [18, '3'],
               [19, '"Z"'],
@@ -962,6 +1061,10 @@ describe('json goldens — the named acceptance cases', () => {
             header: 19,
             headerRaw: '[Relation]',
             scalars: [
+              [20, '"parent_a"'],
+              [21, '"child_b"'],
+              [22, '"a,b"'],
+              [23, '"x,y,z"'],
               [24, '2'],
               [25, '4'],
               [26, '"P"'],
@@ -978,6 +1081,10 @@ describe('json goldens — the named acceptance cases', () => {
             header: 40,
             headerRaw: '[Relation]',
             scalars: [
+              [41, '"users"'],
+              [42, '"orders"'],
+              [43, '"id"'],
+              [44, '"user_id"'],
               [45, '2'],
               [46, '4'],
               [47, '"P"'],
@@ -994,6 +1101,10 @@ describe('json goldens — the named acceptance cases', () => {
             header: 17,
             headerRaw: '[Relation]',
             scalars: [
+              [18, '"parent_t"'],
+              [19, '"child_t"'],
+              [20, '"id"'],
+              [21, '"parent_id"'],
               [22, '2'],
               [23, '4'],
               [24, '"P"'],
@@ -1005,6 +1116,10 @@ describe('json goldens — the named acceptance cases', () => {
             header: 28,
             headerRaw: '[Relationship]',
             scalars: [
+              [29, '"parent_t"'],
+              [30, '"child_t"'],
+              [31, '"id"'],
+              [32, '"parent_id"'],
               [33, '2'],
               [34, '4'],
               [35, '"P"'],
@@ -1021,6 +1136,10 @@ describe('json goldens — the named acceptance cases', () => {
             header: 18,
             headerRaw: '[Relation]',
             scalars: [
+              [19, '"table_a"'],
+              [20, '"table_b"'],
+              [21, '"a,b"'],
+              [22, '"x,y"'],
               [23, '2'],
               [24, '4'],
               [25, '"P"'],
@@ -1031,7 +1150,14 @@ describe('json goldens — the named acceptance cases', () => {
       },
       {
         id: 'txt-09',
-        relations: [{ section: 3, header: 11, headerRaw: '[Relation]', scalars: [] }],
+        relations: [
+          {
+            section: 3,
+            header: 11,
+            headerRaw: '[Relation]',
+            scalars: [],
+          },
+        ],
       },
     ] as const;
 

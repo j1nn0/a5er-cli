@@ -940,6 +940,92 @@
         },
         "scalars": [
           {
+            "key": "Entity1",
+            "keyRaw": "Entity1",
+            "origin": "declared",
+            "raw": "\"parent_t\"",
+            "span": {
+              "sectionIndex": 4,
+              "startLine": 18,
+              "endLine": 18,
+              "keyLine": 18
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "parent_t"
+            }
+          },
+          {
+            "key": "Entity2",
+            "keyRaw": "Entity2",
+            "origin": "declared",
+            "raw": "\"child_t\"",
+            "span": {
+              "sectionIndex": 4,
+              "startLine": 19,
+              "endLine": 19,
+              "keyLine": 19
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "child_t"
+            }
+          },
+          {
+            "key": "Fields1",
+            "keyRaw": "Fields1",
+            "origin": "declared",
+            "raw": "\"id\"",
+            "span": {
+              "sectionIndex": 4,
+              "startLine": 20,
+              "endLine": 20,
+              "keyLine": 20
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "complex",
+              "value": {
+                "parts": [
+                  {
+                    "value": "id",
+                    "quoted": true,
+                    "hadEscape": false
+                  }
+                ],
+                "trailingElementsOmitted": false
+              }
+            }
+          },
+          {
+            "key": "Fields2",
+            "keyRaw": "Fields2",
+            "origin": "declared",
+            "raw": "\"parent_id\"",
+            "span": {
+              "sectionIndex": 4,
+              "startLine": 21,
+              "endLine": 21,
+              "keyLine": 21
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "complex",
+              "value": {
+                "parts": [
+                  {
+                    "value": "parent_id",
+                    "quoted": true,
+                    "hadEscape": false
+                  }
+                ],
+                "trailingElementsOmitted": false
+              }
+            }
+          },
+          {
             "key": "RelationType1",
             "keyRaw": "RelationType1",
             "origin": "declared",
@@ -1289,6 +1375,92 @@
           }
         },
         "scalars": [
+          {
+            "key": "Entity1",
+            "keyRaw": "Entity1",
+            "origin": "declared",
+            "raw": "\"parent_t\"",
+            "span": {
+              "sectionIndex": 5,
+              "startLine": 29,
+              "endLine": 29,
+              "keyLine": 29
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "parent_t"
+            }
+          },
+          {
+            "key": "Entity2",
+            "keyRaw": "Entity2",
+            "origin": "declared",
+            "raw": "\"child_t\"",
+            "span": {
+              "sectionIndex": 5,
+              "startLine": 30,
+              "endLine": 30,
+              "keyLine": 30
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "string",
+              "value": "child_t"
+            }
+          },
+          {
+            "key": "Fields1",
+            "keyRaw": "Fields1",
+            "origin": "declared",
+            "raw": "\"id\"",
+            "span": {
+              "sectionIndex": 5,
+              "startLine": 31,
+              "endLine": 31,
+              "keyLine": 31
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "complex",
+              "value": {
+                "parts": [
+                  {
+                    "value": "id",
+                    "quoted": true,
+                    "hadEscape": false
+                  }
+                ],
+                "trailingElementsOmitted": false
+              }
+            }
+          },
+          {
+            "key": "Fields2",
+            "keyRaw": "Fields2",
+            "origin": "declared",
+            "raw": "\"parent_id\"",
+            "span": {
+              "sectionIndex": 5,
+              "startLine": 32,
+              "endLine": 32,
+              "keyLine": 32
+            },
+            "value": {
+              "status": "decoded",
+              "kind": "complex",
+              "value": {
+                "parts": [
+                  {
+                    "value": "parent_id",
+                    "quoted": true,
+                    "hadEscape": false
+                  }
+                ],
+                "trailingElementsOmitted": false
+              }
+            }
+          },
           {
             "key": "RelationType1",
             "keyRaw": "RelationType1",

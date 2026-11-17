@@ -439,13 +439,28 @@ export interface JsonProjectedScalar<Key extends string> {
 }
 
 /**
- * The scalar keys the three object kinds project into `JsonValue` slots (§4.5).
+ * The keys the three object kinds project into a typed slot, and therefore keep in `scalars`.
+ *
+ * Two shapes live here: the three `JsonValue` slots (§4.5's `PName`/`LName`/`Comment`) and the six
+ * single-fact slots the objects own — an entity's `UsingCommonColumns`, a view's `Query` and
+ * `LNameByComment`, a subtype's `SharedMode`/`CompleteCategory`/`ZOrder`. Both are retained the
+ * same way, because both lose every overwritten declaration otherwise (§12 rule 4, R26).
  *
  * The union is across kinds, not a claim that every kind can declare every key: `serialize.ts`
- * keeps one key set per kind, and `[Subtype]` has `PName` alone because the registry declares no
- * `LName` and no `Comment` for it. Everything else the kind registers is an attribute.
+ * keeps one key set per kind, `[Subtype]` has `PName` plus its three fact keys because the registry
+ * declares no `LName`, no `Comment` and no `Query` for it, and an entity never has `Query`.
+ * Everything else a kind registers is an attribute.
  */
-export type JsonObjectScalarKey = 'PName' | 'LName' | 'Comment';
+export type JsonObjectScalarKey =
+  | 'PName'
+  | 'LName'
+  | 'Comment'
+  | 'UsingCommonColumns'
+  | 'Query'
+  | 'LNameByComment'
+  | 'SharedMode'
+  | 'CompleteCategory'
+  | 'ZOrder';
 
 /** One declared occurrence of an object scalar, the same record a relation scalar uses. */
 export type JsonObjectScalar = JsonProjectedScalar<JsonObjectScalarKey>;
@@ -470,10 +485,14 @@ interface JsonObjectBase {
   /**
    * Every declared occurrence of this kind's projected scalars, in file order.
    *
-   * The three slots above hold the occurrence §4.2's last-wins rule selects; this list is the
-   * history behind them, so an overwritten `PName`, `LName` or `Comment` keeps its text and its
-   * line instead of surviving only as an `S_DUPLICATE_KEY` count (§12 rule 4, R26). A key the kind
-   * does not project is never here — `[Subtype]` has `PName` alone.
+   * The slots above hold the occurrence §4.2's last-wins rule selects; this list is the history
+   * behind them, so an overwritten `PName`, `LName`, `Comment`, `UsingCommonColumns`, `Query`,
+   * `LNameByComment`, `SharedMode`, `CompleteCategory` or `ZOrder` keeps its text and its line
+   * instead of surviving only as an `S_DUPLICATE_KEY` count (§12 rule 4, R26).
+   *
+   * A key the kind does not project is never here, and neither is a *defaulted* value: an entity
+   * with no `UsingCommonColumns` has `effectiveColumns.usingCommonColumns.origin: 'defaulted'`
+   * and `span: null`, and a default has no line to point at (§4.2), so it is not history.
    */
   readonly scalars: readonly JsonObjectScalar[];
   /** Every `Position` occurrence, in declaration order, shapes included (§P11). */
@@ -552,17 +571,24 @@ export interface JsonRelationColumnList {
 }
 
 /**
- * The `[Relation]` scalar keys the envelope projects into a typed slot (§9.2, P9, K7).
+ * The `[Relation]` keys the envelope projects into a typed slot (§9.2, P9, K7).
  *
  * Exactly the keys `serialize.ts` excludes from `attributes` because a structured slot carries
- * them; every other `[Relation]` key is an attribute.
+ * them; every other `[Relation]` key is an attribute. The five interpreted scalars are `JsonValue`
+ * slots (`PName`, `RelationType1/2`, `Cardinarity1/2`) and the four declarations `Entity1`/`Entity2`
+ * and `Fields1`/`Fields2` are the nested `from`/`to` and `fromColumns`/`toColumns` records; all
+ * nine are retained in `scalars`, so a repeated endpoint or column list keeps its own line too.
  */
 export type JsonRelationScalarKey =
   | 'PName'
   | 'RelationType1'
   | 'RelationType2'
   | 'Cardinarity1'
-  | 'Cardinarity2';
+  | 'Cardinarity2'
+  | 'Entity1'
+  | 'Entity2'
+  | 'Fields1'
+  | 'Fields2';
 
 /** One declared occurrence of a projected `[Relation]` scalar, the record `JsonProjectedScalar` defines. */
 export type JsonRelationScalar = JsonProjectedScalar<JsonRelationScalarKey>;
@@ -578,7 +604,7 @@ export type JsonRelationScalar = JsonProjectedScalar<JsonRelationScalarKey>;
  * **Provenance (§12 rules 3 and 4).** `span` anchors the relation record — its last `PName` line,
  * else its header line, the convention `JsonObjectBase.span` follows — and is deliberately *not*
  * any value's line. Each interpreted scalar carries its own provenance through `JsonValue`, and
- * `scalars` keeps every declared occurrence of the five projected keys, duplicates included. The
+ * `scalars` keeps every declared occurrence of the nine projected keys, duplicates included — the
  * typed slots hold the last-wins selection §4.2 defines; `scalars` is the history behind it, so a
  * consumer can see both what the file means and what it wrote.
  */
@@ -598,7 +624,7 @@ export interface JsonRelation {
   /** `Cardinarity1` — the format's own misspelling, kept as written (K7). */
   readonly cardinarity1: JsonValue<string> | null;
   readonly cardinarity2: JsonValue<string> | null;
-  /** Every declared occurrence of the five projected keys, in file order, duplicates included. */
+  /** Every declared occurrence of the nine projected keys, in file order, duplicates included. */
   readonly scalars: readonly JsonRelationScalar[];
   readonly columnsAligned: boolean | null;
   readonly positions: readonly JsonPosition[];
