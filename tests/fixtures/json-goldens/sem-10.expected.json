@@ -312,7 +312,9 @@
         ]
       }
     ],
+    "pageReferences": [],
     "domains": [],
+    "domainReferences": [],
     "commonFields": [],
     "manager": {
       "attributes": []

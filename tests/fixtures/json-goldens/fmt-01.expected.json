@@ -1724,7 +1724,102 @@
         ]
       }
     ],
+    "pageReferences": [
+      {
+        "sectionIndex": 2,
+        "sectionKind": "Entity",
+        "declared": "Main",
+        "raw": "\"Main\"",
+        "span": {
+          "sectionIndex": 2,
+          "startLine": 14,
+          "endLine": 14,
+          "keyLine": 14
+        },
+        "status": "resolved",
+        "resolvedPage": {
+          "name": "Main",
+          "span": {
+            "sectionIndex": 1,
+            "startLine": 5,
+            "endLine": 5,
+            "keyLine": 5
+          }
+        },
+        "candidates": []
+      },
+      {
+        "sectionIndex": 3,
+        "sectionKind": "Entity",
+        "declared": "Main",
+        "raw": "\"Main\"",
+        "span": {
+          "sectionIndex": 3,
+          "startLine": 21,
+          "endLine": 21,
+          "keyLine": 21
+        },
+        "status": "resolved",
+        "resolvedPage": {
+          "name": "Main",
+          "span": {
+            "sectionIndex": 1,
+            "startLine": 5,
+            "endLine": 5,
+            "keyLine": 5
+          }
+        },
+        "candidates": []
+      },
+      {
+        "sectionIndex": 4,
+        "sectionKind": "Relation",
+        "declared": "Main",
+        "raw": "\"Main\"",
+        "span": {
+          "sectionIndex": 4,
+          "startLine": 32,
+          "endLine": 32,
+          "keyLine": 32
+        },
+        "status": "resolved",
+        "resolvedPage": {
+          "name": "Main",
+          "span": {
+            "sectionIndex": 1,
+            "startLine": 5,
+            "endLine": 5,
+            "keyLine": 5
+          }
+        },
+        "candidates": []
+      },
+      {
+        "sectionIndex": 5,
+        "sectionKind": "View",
+        "declared": "Main",
+        "raw": "\"Main\"",
+        "span": {
+          "sectionIndex": 5,
+          "startLine": 37,
+          "endLine": 37,
+          "keyLine": 37
+        },
+        "status": "resolved",
+        "resolvedPage": {
+          "name": "Main",
+          "span": {
+            "sectionIndex": 1,
+            "startLine": 5,
+            "endLine": 5,
+            "keyLine": 5
+          }
+        },
+        "candidates": []
+      }
+    ],
     "domains": [],
+    "domainReferences": [],
     "commonFields": [],
     "manager": {
       "attributes": []

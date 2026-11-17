@@ -657,6 +657,107 @@ export interface JsonDomain {
   readonly shape: 'documented' | 'unexpected-element-count';
   readonly rawElements: readonly JsonRawElement[];
 }
+/**
+ * One declaration a page reference matched case-insensitively (§4.2 `CaseInsensitiveRef`, P9/F5).
+ *
+ * Only its own spelling and its line: the declaration itself is in `pages`, and repeating all of
+ * `PageInfo` here would give one declaration two addresses.
+ */
+export interface JsonPageCandidate {
+  readonly name: string;
+  readonly span: JsonSpan;
+}
+/** The facts every page reference carries, whatever it resolved to (§4.6, P9). */
+interface JsonPageReferenceBase {
+  readonly sectionIndex: number;
+  readonly sectionKind: SectionKind;
+  /** The reference exactly as written; never rewritten to a declared spelling. */
+  readonly declared: string;
+  /** The page element exactly as written, quotes included, straight from the scanned line. */
+  readonly raw: string;
+  /** The reference's own line: `pagesOf` already applied its `?? position.span` fallback. */
+  readonly span: JsonSpan;
+}
+/** A reference that matched exactly one declaration: the only arm that names a target. */
+export interface JsonResolvedPageReference extends JsonPageReferenceBase {
+  readonly status: 'resolved';
+  readonly resolvedPage: JsonPageCandidate;
+  readonly candidates: readonly [];
+}
+/**
+ * A reference that two or more declarations matched case-insensitively (P11 forbids the file this).
+ *
+ * Every match is kept in file order and **no** target is selected, so an ambiguous reference
+ * cannot be read as resolved (R29).
+ */
+export interface JsonAmbiguousPageReference extends JsonPageReferenceBase {
+  readonly status: 'ambiguous';
+  readonly resolvedPage: null;
+  readonly candidates: readonly JsonPageCandidate[];
+}
+/** A reference to a page nobody declared: no target and no candidate, never a guessed one. */
+export interface JsonDanglingPageReference extends JsonPageReferenceBase {
+  readonly status: 'dangling';
+  readonly resolvedPage: null;
+  readonly candidates: readonly [];
+}
+/**
+ * One `Position` page reference and its resolution outcome (§4.2, §4.6, P9, F5).
+ *
+ * A discriminated union on `status`, so "ambiguous" and "dangling" cannot be mistaken for a
+ * resolved page: only the `resolved` arm has a `resolvedPage`. The placement's own token stays
+ * where it was (`positions[].page`); this record adds the outcome, not a second copy of it.
+ */
+export type JsonPageReference =
+  | JsonResolvedPageReference
+  | JsonAmbiguousPageReference
+  | JsonDanglingPageReference;
+/** One declaration a domain reference matched, with its own spelling and line. */
+export interface JsonDomainCandidate {
+  readonly name: string;
+  readonly span: JsonSpan;
+}
+/**
+ * How a `Field`'s データ型 relates to the declared domains (P7, P12), as `TypeClassification`
+ * decided it — projected, never re-decided here.
+ *
+ * `kind`/`status` mirror the semantic union so a consumer narrows exactly as the model does: the
+ * `resolved` arm carries the one declaration it matched, the `ambiguous` arm carries **every**
+ * match and no target. The semantic `plain` arm has no record to project: a `Field` type that
+ * names no domain is simply absent from `domainReferences`, because `データ型` may be a real type
+ * or a domain name and the format carries no marker to tell them apart (P7, §9.4).
+ */
+export type JsonTypeResolution =
+  | { readonly kind: 'system'; readonly name: string; readonly known: boolean }
+  | {
+      readonly kind: 'user';
+      readonly status: 'resolved';
+      readonly name: string;
+      readonly resolvedDomain: JsonDomainCandidate;
+    }
+  | {
+      readonly kind: 'user';
+      readonly status: 'ambiguous';
+      readonly name: string;
+      readonly candidates: readonly JsonDomainCandidate[];
+    };
+/**
+ * One `Field` whose type names a domain (system or user), in file order (§9.4, P12).
+ *
+ * **Absence is `plain`.** A `Field` whose データ型 names no declared domain has no record in
+ * `domainReferences` at all; that is the documented shape of "a plain type, as far as this stage
+ * can tell", not a missing entry (§9.4's "no dangling claims" rule).
+ */
+export interface JsonDomainReference {
+  readonly sectionIndex: number;
+  /** The column's physical name (`Field` element 2), so the record can be found again. */
+  readonly column: string;
+  /** データ型 as the file wrote it — never substituted with the declared spelling. */
+  readonly dataType: string;
+  /** The `Field` line itself; `null` would be a synthesised record, and none are. */
+  readonly span: JsonSpan;
+  readonly classification: JsonTypeResolution;
+}
 
 /** One `[Manager].CommonField` declaration (P12), every slot kept as declared. */
 export interface JsonCommonField {
@@ -690,12 +791,23 @@ export interface JsonManager {
   readonly attributes: readonly JsonAttribute[];
 }
 
-/** The resolved model of §4.5, as the envelope carries it. */
+/**
+ * The resolved model of §4.5, as the envelope carries it.
+ *
+ * `pageReferences` and `domainReferences` sit beside their declarations on purpose: the declaration
+ * lists say what the file *names*, the reference lists say what a placement or a column *asked for*
+ * and how that request came out. They are projections of the semantic reference records, one each,
+ * in file order — never a second resolution.
+ */
 export interface JsonSchema {
   readonly objects: readonly JsonObject[];
   readonly relations: readonly JsonRelation[];
   readonly pages: readonly JsonPage[];
+  /** Every `Position` page reference, in file order, with its resolution outcome (§9.4, P9). */
+  readonly pageReferences: readonly JsonPageReference[];
   readonly domains: readonly JsonDomain[];
+  /** Every `Field` type that names a domain, in file order; a plain type has no record (§9.4). */
+  readonly domainReferences: readonly JsonDomainReference[];
   readonly commonFields: readonly JsonCommonField[];
   readonly manager: JsonManager;
 }

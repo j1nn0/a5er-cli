@@ -680,10 +680,12 @@ brief.
   a domain name becomes `kind: 'user'`; `@…` tokens become `kind: 'system'`. Neither resolves to a
   SQL type (P12). `DecodeDomain` is parsed as an integer despite its `Boolean` type in the spec (K8).
   The `user` arm is **discriminated** on `status` (R29): `resolved` carries the one declaration's
-  spelling as `resolvedDomain`, and `ambiguous` — two or more declarations sharing the name
-  case-insensitively, which P12 forbids — carries **every** candidate with its span and has no
-  `resolvedDomain` field at all, so the first declaration can never be published as the target.
-  Either way `name` is the type text as the file wrote it.
+  spelling as `resolvedDomain` and its line as `resolvedSpan`, and `ambiguous` — two or more
+  declarations sharing the name case-insensitively, which P12 forbids — carries **every** candidate
+  with its span and has no `resolvedDomain`/`resolvedSpan` field at all, so the first declaration can
+  never be published as the target. Either way `name` is the type text as the file wrote it. The
+  `Field`-level records are projected 1:1 as `schema.domainReferences` (§12): a `Field` whose データ型
+  names no domain has **no record there**, which is how the plain arm above is expressed.
 - **Common fields**: `effectiveColumns` = declared `Field`s, plus applicable `CommonField`s when
   `UsingCommonColumns` is 1 — which it is by default when absent, as `origin: 'defaulted'` (P12;
   §11 defines no code for the default, so `origin` is what reports it). Common columns are marked `source: 'common'` so a consumer can tell
@@ -705,7 +707,10 @@ brief.
 - **Pages**: `PageInfo` must have at least one entry; zero is `V_MISSING_REQUIRED_KEY` (error).
   Page names resolve **case-insensitively** (F5): the spec's own sample pairs `PageInfo="Main"`
   with `Position="MAIN"`. Unresolved page references are `V_DANGLING_PAGE` (warning) and the
-  original spelling is preserved in `CaseInsensitiveRef.declared`.
+  original spelling is preserved in `CaseInsensitiveRef.declared`. Each `Position` page reference is
+  one `pageReferences` record (§12) carrying that `declared` token, the token's own `raw` text, its
+  line and a `status`: `resolved` names the matched declaration's spelling and line, `ambiguous`
+  lists **every** matching declaration (file order, no chosen target) and `dangling` names none.
 
 ### 9.5 Colours (F8, K10)
 
@@ -859,7 +864,8 @@ a Phase 2 command-level concern.
     "encoding": { "detected": "utf-8", "bom": true, "declared": "UTF8", "mismatch": false },
     "format": { "declared": null, "effective": null, "known": false }
   },
-  "schema": { "objects": [], "relations": [], "pages": [], "domains": [], "commonFields": [] },
+  "schema": { "objects": [], "relations": [], "pages": [], "pageReferences": [],
+              "domains": [], "domainReferences": [], "commonFields": [] },
   "unsupported": [
     { "kind": "unknown-section", "sectionKind": "unknown", "sectionHeader": "[Memo]",
       "key": null, "reason": "no-registry-entry",

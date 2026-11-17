@@ -967,7 +967,48 @@
         ]
       }
     ],
+    "pageReferences": [
+      {
+        "sectionIndex": 2,
+        "sectionKind": "Entity",
+        "declared": "Main",
+        "raw": "\"Main\"",
+        "span": {
+          "sectionIndex": 2,
+          "startLine": 10,
+          "endLine": 10,
+          "keyLine": 10
+        },
+        "status": "resolved",
+        "resolvedPage": {
+          "name": "Main",
+          "span": {
+            "sectionIndex": 1,
+            "startLine": 4,
+            "endLine": 4,
+            "keyLine": 4
+          }
+        },
+        "candidates": []
+      },
+      {
+        "sectionIndex": 3,
+        "sectionKind": "Relation",
+        "declared": "GhostPage",
+        "raw": "\"GhostPage\"",
+        "span": {
+          "sectionIndex": 3,
+          "startLine": 21,
+          "endLine": 21,
+          "keyLine": 21
+        },
+        "status": "dangling",
+        "resolvedPage": null,
+        "candidates": []
+      }
+    ],
     "domains": [],
+    "domainReferences": [],
     "commonFields": [],
     "manager": {
       "attributes": []

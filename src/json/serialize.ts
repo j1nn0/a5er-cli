@@ -67,8 +67,12 @@ import type {
   EffectiveColumn,
   EntityColumns,
 } from '../semantic/common-columns.js';
-import type { DomainDeclaration } from '../semantic/domains.js';
-import type { PageDeclaration } from '../semantic/pages.js';
+import type {
+  DomainDeclaration,
+  DomainReference,
+  TypeClassification,
+} from '../semantic/domains.js';
+import type { PageDeclaration, PageReference } from '../semantic/pages.js';
 import type {
   ResolvedRelation,
   RelationColumn,
@@ -95,6 +99,7 @@ import type {
   JsonComplexValue,
   JsonDiagnostic,
   JsonDomain,
+  JsonDomainReference,
   JsonEffectiveColumn,
   JsonEntityColumns,
   JsonEntityObject,
@@ -109,6 +114,7 @@ import type {
   JsonObjectPosition,
   JsonObjectScalarKey,
   JsonPage,
+  JsonPageReference,
   JsonPosition,
   JsonPrimaryKey,
   JsonPrimaryKeyColumn,
@@ -125,6 +131,7 @@ import type {
   JsonSource,
   JsonSpan,
   JsonSubtypeObject,
+  JsonTypeResolution,
   JsonUnsupported,
   JsonUnsupportedPosition,
   JsonViewObject,
@@ -902,6 +909,92 @@ function jsonPage(page: PageDeclaration): JsonPage {
     rawElements: jsonRawElements(page.rawElements),
   };
 }
+/**
+ * One `Position` page reference: what the placement asked for, its own line, and the outcome.
+ *
+ * Read from `pagesOf`'s record, not re-resolved: `status`, the target and the candidates were
+ * decided once, over the whole file, and the serializer only shapes them.
+ */
+function jsonPageReference(reference: PageReference): JsonPageReference {
+  const base = {
+    sectionIndex: reference.sectionIndex,
+    sectionKind: reference.sectionKind,
+    declared: reference.declared,
+    raw: reference.raw,
+    span: jsonSpan(reference.span),
+  };
+  switch (reference.status) {
+    case 'resolved': {
+      const target = reference.resolvedPage;
+      const targetSpan = reference.resolvedSpan;
+      // `pagesOf` sets the two members together; a resolved reference without them would be a
+      // semantic bug, and inventing a target here would hide it.
+      if (target === null || targetSpan === null) {
+        throw new Error('a resolved page reference carries no target declaration');
+      }
+      return {
+        ...base,
+        status: 'resolved',
+        resolvedPage: { name: target, span: jsonSpan(targetSpan) },
+        candidates: [],
+      };
+    }
+    case 'ambiguous':
+      return {
+        ...base,
+        status: 'ambiguous',
+        resolvedPage: null,
+        candidates: reference.candidates.map((candidate) => ({
+          name: candidate.name,
+          span: jsonSpan(candidate.span),
+        })),
+      };
+    case 'dangling':
+      return { ...base, status: 'dangling', resolvedPage: null, candidates: [] };
+  }
+}
+/** The semantic classification, arm for arm; nothing is re-decided and no SQL type is inferred. */
+function jsonTypeResolution(classification: TypeClassification): JsonTypeResolution {
+  switch (classification.kind) {
+    case 'system':
+      return { kind: 'system', name: classification.name, known: classification.known };
+    case 'user':
+      if (classification.status === 'resolved') {
+        return {
+          kind: 'user',
+          status: 'resolved',
+          name: classification.name,
+          resolvedDomain: {
+            name: classification.resolvedDomain,
+            span: jsonSpan(classification.resolvedSpan),
+          },
+        };
+      }
+      return {
+        kind: 'user',
+        status: 'ambiguous',
+        name: classification.name,
+        candidates: classification.candidates.map((candidate) => ({
+          name: candidate.name,
+          span: jsonSpan(candidate.span),
+        })),
+      };
+    case 'plain':
+      // Unreachable: `domainsOf` keeps only system and user references (`referencesOf` drops the
+      // plain arm), and a plain `Field` type is documented as absent, not as an empty record.
+      throw new Error('a plain type has no domain reference to project');
+  }
+}
+/** One `Field` that names a domain, with the classification the semantic layer decided (§9.4). */
+function jsonDomainReference(reference: DomainReference): JsonDomainReference {
+  return {
+    sectionIndex: reference.sectionIndex,
+    column: reference.column,
+    dataType: reference.dataType,
+    span: jsonSpan(reference.span),
+    classification: jsonTypeResolution(reference.classification),
+  };
+}
 
 function jsonDomain(domain: DomainDeclaration): JsonDomain {
   return {
@@ -956,7 +1049,9 @@ function jsonSchema(input: LoadedIntegrationInput): JsonSchema {
     objects: jsonObjects(input),
     relations: semantics.relations.map((relation) => jsonRelation(relation, classification)),
     pages: semantics.pages.map(jsonPage),
+    pageReferences: semantics.pageReferences.map(jsonPageReference),
     domains: semantics.domains.map(jsonDomain),
+    domainReferences: semantics.domainReferences.map(jsonDomainReference),
     commonFields: semantics.commonFields.map(jsonCommonField),
     manager: { attributes: jsonManagerAttributes(classification) },
   };

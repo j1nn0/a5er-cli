@@ -29,6 +29,7 @@ import type { Classification } from '../schema/registry.js';
 import type { ComplexPart } from '../syntax/complex.js';
 import { decodeInteger, partRaw, unescapeEscaped } from '../schema/values.js';
 import type { RawElement } from '../schema/position.js';
+import type { SectionKind } from '../syntax/sections.js';
 
 /** One `PageInfo` declaration, as written. */
 export interface PageDeclaration {
@@ -55,17 +56,42 @@ export interface DuplicatePage {
   readonly declarations: readonly PageDeclaration[];
 }
 
-/** One page reference from a `Position`, with the declaration it resolved to. */
+/**
+ * One declaration that matched a reference case-insensitively, as evidence.
+ *
+ * Only the two facts a consumer needs to find the declaration again: its own spelling and the line
+ * it was written on. The rest of the `PageInfo` is already in `pages`.
+ */
+export interface PageCandidate {
+  readonly name: string;
+  readonly span: Span;
+}
+/**
+ * One page reference from a `Position`, with the declaration it resolved to.
+ *
+ * The three candidates *are* resolution metadata carried beside the decision, not a second
+ * resolution: `raw` is the token the `Position` wrote, `resolvedSpan` is the line of the one
+ * declaration a `resolved` reference matched, and `candidates` is every declaration an `ambiguous`
+ * reference matched (the same declarations `duplicates` groups, in file order). Neither an
+ * ambiguous nor a dangling reference names a target — `resolvedPage`/`resolvedSpan` stay `null` —
+ * so no consumer can read a chosen page out of a reference the file left open (R29).
+ */
 export interface PageReference {
   readonly sectionIndex: number;
   /** The section kind that placed the object, so the reference is traceable to a node type. */
-  readonly sectionKind: string;
+  readonly sectionKind: SectionKind;
   /** The reference exactly as written; never rewritten to the declared spelling. */
   readonly declared: string;
+  /** The page element exactly as written, before the escape/quote layer was decoded. */
+  readonly raw: string;
   readonly span: Span;
   readonly status: 'resolved' | 'dangling' | 'ambiguous';
   /** The declared spelling it resolved to, or `null` when the reference is not usable. */
   readonly resolvedPage: string | null;
+  /** The line of that declaration; `null` unless `status` is `resolved`. */
+  readonly resolvedSpan: Span | null;
+  /** Every declaration the reference matched, in file order; empty unless `status` is ambiguous. */
+  readonly candidates: readonly PageCandidate[];
 }
 
 export interface PageResult {
@@ -143,8 +169,9 @@ function duplicatesOf(pages: readonly PageDeclaration[]): DuplicatePage[] {
 /** A page reference held by one decoded `Position`. */
 interface RawReference {
   readonly sectionIndex: number;
-  readonly sectionKind: string;
+  readonly sectionKind: SectionKind;
   readonly declared: string;
+  readonly raw: string;
   readonly span: Span;
 }
 
@@ -164,6 +191,7 @@ function referencesOf(classification: Classification): RawReference[] {
         sectionIndex: section.index,
         sectionKind: section.kind,
         declared: position.page.value,
+        raw: position.page.raw,
         span: position.page.span ?? position.span,
       });
     }
@@ -206,13 +234,22 @@ export function pagesOf(classification: Classification): PageResult {
     const resolved = matches[0];
     const status: PageReference['status'] =
       matches.length === 0 ? 'dangling' : matches.length === 1 ? 'resolved' : 'ambiguous';
+    const selected = status === 'resolved' ? resolved : undefined;
     references.push({
       sectionIndex: reference.sectionIndex,
       sectionKind: reference.sectionKind,
       declared: reference.declared,
+      raw: reference.raw,
       span: reference.span,
       status,
-      resolvedPage: status === 'resolved' && resolved !== undefined ? resolved.name : null,
+      resolvedPage: selected === undefined ? null : selected.name,
+      resolvedSpan: selected === undefined ? null : selected.span,
+      // Every declaration an ambiguous reference matched, in file order — the same records,
+      // `duplicatePages` groups, so the list cannot disagree with the evidence beside it.
+      candidates:
+        status === 'ambiguous'
+          ? matches.map((match) => ({ name: match.name, span: match.span }))
+          : [],
     });
   }
 

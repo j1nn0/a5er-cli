@@ -490,7 +490,33 @@
         ]
       }
     ],
+    "pageReferences": [
+      {
+        "sectionIndex": 2,
+        "sectionKind": "Entity",
+        "declared": "Main",
+        "raw": "\"Main\"",
+        "span": {
+          "sectionIndex": 2,
+          "startLine": 13,
+          "endLine": 13,
+          "keyLine": 13
+        },
+        "status": "resolved",
+        "resolvedPage": {
+          "name": "Main",
+          "span": {
+            "sectionIndex": 1,
+            "startLine": 4,
+            "endLine": 4,
+            "keyLine": 4
+          }
+        },
+        "candidates": []
+      }
+    ],
     "domains": [],
+    "domainReferences": [],
     "commonFields": [],
     "manager": {
       "attributes": []

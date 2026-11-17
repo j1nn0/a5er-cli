@@ -2245,7 +2245,148 @@
         ]
       }
     ],
+    "pageReferences": [
+      {
+        "sectionIndex": 2,
+        "sectionKind": "Entity",
+        "declared": "Main",
+        "raw": "\"Main\"",
+        "span": {
+          "sectionIndex": 2,
+          "startLine": 15,
+          "endLine": 15,
+          "keyLine": 15
+        },
+        "status": "resolved",
+        "resolvedPage": {
+          "name": "Main",
+          "span": {
+            "sectionIndex": 1,
+            "startLine": 5,
+            "endLine": 5,
+            "keyLine": 5
+          }
+        },
+        "candidates": []
+      },
+      {
+        "sectionIndex": 3,
+        "sectionKind": "Entity",
+        "declared": "Main",
+        "raw": "\"Main\"",
+        "span": {
+          "sectionIndex": 3,
+          "startLine": 23,
+          "endLine": 23,
+          "keyLine": 23
+        },
+        "status": "resolved",
+        "resolvedPage": {
+          "name": "Main",
+          "span": {
+            "sectionIndex": 1,
+            "startLine": 5,
+            "endLine": 5,
+            "keyLine": 5
+          }
+        },
+        "candidates": []
+      },
+      {
+        "sectionIndex": 4,
+        "sectionKind": "Entity",
+        "declared": "Detail",
+        "raw": "\"Detail\"",
+        "span": {
+          "sectionIndex": 4,
+          "startLine": 28,
+          "endLine": 28,
+          "keyLine": 28
+        },
+        "status": "resolved",
+        "resolvedPage": {
+          "name": "Detail",
+          "span": {
+            "sectionIndex": 1,
+            "startLine": 6,
+            "endLine": 6,
+            "keyLine": 6
+          }
+        },
+        "candidates": []
+      },
+      {
+        "sectionIndex": 5,
+        "sectionKind": "View",
+        "declared": "Main",
+        "raw": "\"Main\"",
+        "span": {
+          "sectionIndex": 5,
+          "startLine": 33,
+          "endLine": 33,
+          "keyLine": 33
+        },
+        "status": "resolved",
+        "resolvedPage": {
+          "name": "Main",
+          "span": {
+            "sectionIndex": 1,
+            "startLine": 5,
+            "endLine": 5,
+            "keyLine": 5
+          }
+        },
+        "candidates": []
+      },
+      {
+        "sectionIndex": 6,
+        "sectionKind": "View",
+        "declared": "Detail",
+        "raw": "\"Detail\"",
+        "span": {
+          "sectionIndex": 6,
+          "startLine": 38,
+          "endLine": 38,
+          "keyLine": 38
+        },
+        "status": "resolved",
+        "resolvedPage": {
+          "name": "Detail",
+          "span": {
+            "sectionIndex": 1,
+            "startLine": 6,
+            "endLine": 6,
+            "keyLine": 6
+          }
+        },
+        "candidates": []
+      },
+      {
+        "sectionIndex": 7,
+        "sectionKind": "Relation",
+        "declared": "Main",
+        "raw": "\"Main\"",
+        "span": {
+          "sectionIndex": 7,
+          "startLine": 49,
+          "endLine": 49,
+          "keyLine": 49
+        },
+        "status": "resolved",
+        "resolvedPage": {
+          "name": "Main",
+          "span": {
+            "sectionIndex": 1,
+            "startLine": 5,
+            "endLine": 5,
+            "keyLine": 5
+          }
+        },
+        "candidates": []
+      }
+    ],
     "domains": [],
+    "domainReferences": [],
     "commonFields": [],
     "manager": {
       "attributes": []

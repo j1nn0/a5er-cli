@@ -47,6 +47,17 @@
  * twice, so every `scalars` here is the section's own single-declaration history, not an empty
  * placeholder. `serialize()` was not used to author any of it (test-strategy §3.6).
  *
+ * **The 42 schema-bearing goldens (stage 6-B unit 3).** Every envelope with a `schema` gained two
+ * members, `pageReferences` and `domainReferences`, so those 42 goldens were edited by hand — 60
+ * page references and 1 domain reference. Each record was authored from its own fixture: the
+ * `Position`/`Field` line for the reference span and raw text, the `PageInfo`/`DomainInfo` line for
+ * every declaration it names. Not one of them came from `serialize()`: the whole list is re-derived
+ * from the fixture text plus P9/P11/P12 (`resolved`/`ambiguous`/`dangling`; `@`-system domains and
+ * the ten of P12; an unmatched type stays plain and is therefore absent), then compared with the
+ * serializer by the sweep above. `enc-04` and `hst-02` are `failed` with `schema: null` and were not
+ * touched. `sem-09` and `sem-10` declare no `Position` at all, so their lists are empty, not
+ * missing. The per-file line table lives in the acceptance case at the end of this file.
+ *
  * **Comparison rules.** After `JSON.parse`, objects are compared structurally and arrays keep
  * file order; key arrays are compared recursively as well, so construction order is deterministic
  * without a textual diff. `source.path` is the only scrubbed field; `source.sha256` is asserted
@@ -81,7 +92,13 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadSource } from '../src/decode/load.js';
-import type { JsonEnvelope, JsonObject, JsonSpan } from '../src/json/index.js';
+import type {
+  JsonDomainReference,
+  JsonEnvelope,
+  JsonObject,
+  JsonPageReference,
+  JsonSpan,
+} from '../src/json/index.js';
 import { serialize } from '../src/json/index.js';
 import { classify } from '../src/schema/registry.js';
 import { derivePartialSemantics } from '../src/semantic/partial.js';
@@ -1200,6 +1217,225 @@ describe('json goldens — the named acceptance cases', () => {
         expect(relation.cardinarity1?.raw, `${where}.cardinarity1`).toBe(lastRaw('Cardinarity1'));
         expect(relation.cardinarity2?.raw, `${where}.cardinarity2`).toBe(lastRaw('Cardinarity2'));
       }
+    }
+  });
+});
+
+describe('json goldens — page and domain references (stage 6-B unit 3)', () => {
+  /**
+   * One page reference as a reviewer checks it against the fixture: section ordinal, the physical
+   * line the `Position` wrote, and the outcome as `<status>` or `<status> <declared spelling>@<line>`
+   * for every declaration it matched. The line after `@` is the declaration's own `PageInfo` line.
+   */
+  function pageOutcome(reference: JsonPageReference): string {
+    switch (reference.status) {
+      case 'resolved':
+        return `resolved ${reference.resolvedPage.name}@${String(reference.resolvedPage.span.keyLine)}`;
+      case 'ambiguous':
+        return `ambiguous ${reference.candidates
+          .map((candidate) => `${candidate.name}@${String(candidate.span.keyLine)}`)
+          .join(',')}`;
+      case 'dangling':
+        return 'dangling';
+    }
+  }
+  /** One domain reference the same way: system with its `known` flag, or user with its match(es). */
+  function domainOutcome(reference: JsonDomainReference): string {
+    const { classification } = reference;
+    switch (classification.kind) {
+      case 'system':
+        return `system ${classification.name} ${classification.known ? 'known' : 'unknown'}`;
+      case 'user':
+        return classification.status === 'resolved'
+          ? `user resolved ${classification.resolvedDomain.name}@${String(
+              classification.resolvedDomain.span.keyLine,
+            )}`
+          : `user ambiguous ${classification.candidates
+              .map((candidate) => `${candidate.name}@${String(candidate.span.keyLine)}`)
+              .join(',')}`;
+    }
+  }
+  it('carries every reference, on its own line, with the outcome the fixture implies', () => {
+    // Justified file by file from the fixture text: `section` is the `Position`/`Field` line's
+    // section ordinal, `line` that line, and the outcome names the `PageInfo`/`DomainInfo` line it
+    // resolved to (or the two it could not choose between, or none). Every fixture but `txt-06`
+    // resolves; `txt-06` declares `PageInfo="Main"` twice, once per `[Manager]`, so its one
+    // placement is ambiguous over both lines; `enc-03`/`enc-05` declare no page at all.
+    const review = [
+      { id: 'enc-02', pages: [[1, 7, 'resolved Main@10']], domains: [] },
+      { id: 'enc-03', pages: [[1, 7, 'dangling']], domains: [] },
+      { id: 'enc-05', pages: [[1, 5, 'dangling']], domains: [] },
+      {
+        id: 'fmt-01',
+        pages: [
+          [2, 14, 'resolved Main@5'],
+          [3, 21, 'resolved Main@5'],
+          [4, 32, 'resolved Main@5'],
+          [5, 37, 'resolved Main@5'],
+        ],
+        domains: [],
+      },
+      { id: 'fmt-02', pages: [[1, 8, 'resolved Main@11']], domains: [] },
+      { id: 'fmt-03', pages: [[2, 13, 'resolved Main@4']], domains: [] },
+      { id: 'fmt-04', pages: [[1, 5, 'resolved Main@8']], domains: [] },
+      { id: 'fmt-05', pages: [[2, 14, 'resolved Main@5']], domains: [] },
+      { id: 'hst-01', pages: [[2, 10, 'resolved Main@4']], domains: [] },
+      { id: 'hst-04', pages: [[2, 9, 'resolved Main@4']], domains: [] },
+      { id: 'hst-05', pages: [[2, 7, 'resolved Main@3']], domains: [] },
+      {
+        id: 'sem-01',
+        pages: [
+          [2, 10, 'resolved Main@4'],
+          [3, 21, 'dangling'],
+        ],
+        domains: [],
+      },
+      { id: 'sem-02', pages: [[2, 9, 'resolved Main@4']], domains: [] },
+      {
+        id: 'sem-03',
+        pages: [
+          [2, 10, 'resolved Main@4'],
+          [3, 17, 'resolved Main@4'],
+          [4, 28, 'resolved Main@4'],
+        ],
+        domains: [],
+      },
+      { id: 'sem-04', pages: [[2, 12, 'resolved Main@4']], domains: [] },
+      {
+        id: 'sem-05',
+        pages: [
+          [2, 9, 'resolved Main@4'],
+          [3, 15, 'resolved Main@4'],
+        ],
+        domains: [],
+      },
+      {
+        id: 'sem-06',
+        pages: [
+          [2, 10, 'resolved Main@4'],
+          [3, 15, 'resolved Main@4'],
+        ],
+        domains: [],
+      },
+      {
+        id: 'sem-07',
+        pages: [
+          [2, 12, 'resolved Main@4'],
+          [3, 18, 'resolved Main@4'],
+        ],
+        domains: [[2, 11, 'system @INT known']],
+      },
+      {
+        id: 'sem-08',
+        pages: [
+          [2, 9, 'resolved Main@4'],
+          [3, 14, 'resolved Main@4'],
+        ],
+        domains: [],
+      },
+      { id: 'sem-09', pages: [], domains: [] },
+      { id: 'sem-10', pages: [], domains: [] },
+      { id: 'sem-11', pages: [[2, 8, 'resolved Main@4']], domains: [] },
+      {
+        id: 'txt-01',
+        pages: [
+          [2, 15, 'resolved Main@5'],
+          [3, 23, 'resolved Main@5'],
+          [4, 28, 'resolved Detail@6'],
+          [5, 33, 'resolved Main@5'],
+          [6, 38, 'resolved Detail@6'],
+          [7, 49, 'resolved Main@5'],
+        ],
+        domains: [],
+      },
+      {
+        id: 'txt-02',
+        pages: [
+          [2, 9, 'resolved Main@4'],
+          [3, 15, 'resolved Main@4'],
+          [4, 26, 'resolved Main@4'],
+          [5, 37, 'resolved Main@4'],
+        ],
+        domains: [],
+      },
+      {
+        id: 'txt-03',
+        pages: [
+          [2, 10, 'resolved Main@4'],
+          [3, 16, 'resolved Main@4'],
+          [4, 27, 'resolved Main@4'],
+        ],
+        domains: [],
+      },
+      { id: 'txt-04', pages: [[1, 7, 'resolved Main@13']], domains: [] },
+      { id: 'txt-05', pages: [[2, 11, 'resolved Main@5']], domains: [] },
+      { id: 'txt-06', pages: [[2, 10, 'ambiguous Main@5,Main@14']], domains: [] },
+      { id: 'txt-07', pages: [[1, 6, 'resolved Main@9']], domains: [] },
+      { id: 'txt-08', pages: [[2, 9, 'resolved Main@4']], domains: [] },
+      { id: 'txt-09', pages: [[2, 9, 'resolved Main@4']], domains: [] },
+      { id: 'val-01', pages: [[1, 7, 'resolved Main@10']], domains: [] },
+      { id: 'val-02', pages: [[1, 9, 'resolved Main@12']], domains: [] },
+      { id: 'val-03', pages: [[1, 6, 'resolved Main@9']], domains: [] },
+      { id: 'val-04', pages: [[2, 9, 'resolved Main@4']], domains: [] },
+      { id: 'val-05', pages: [[1, 6, 'resolved Main@9']], domains: [] },
+      { id: 'val-06', pages: [[1, 8, 'resolved Main@11']], domains: [] },
+      { id: 'val-07', pages: [[2, 13, 'resolved Main@4']], domains: [] },
+      { id: 'val-08', pages: [[2, 10, 'resolved Main@4']], domains: [] },
+      { id: 'val-09', pages: [[2, 10, 'resolved Main@4']], domains: [] },
+      { id: 'val-10', pages: [[2, 10, 'resolved Main@4']], domains: [] },
+      { id: 'val-11', pages: [[2, 9, 'resolved Main@4']], domains: [] },
+    ] as const;
+    // Every schema-bearing golden is in the table, and only those: the two failed envelopes have
+    // no `schema` to review.
+    const expectedIds = GOLDEN_CASES.map((spec) => spec.id).filter(
+      (id) => id !== 'enc-04' && id !== 'hst-02',
+    );
+    expect(review.map((row) => row.id)).toEqual([...expectedIds].sort());
+    for (const row of review) {
+      const envelope = readGolden(row.id);
+      expect(
+        (envelope.schema?.pageReferences ?? []).map((reference) => [
+          reference.sectionIndex,
+          reference.span.keyLine,
+          pageOutcome(reference),
+        ]),
+        `${row.id}.pageReferences`,
+      ).toEqual(row.pages.map((entry) => [...entry]));
+      expect(
+        (envelope.schema?.domainReferences ?? []).map((reference) => [
+          reference.sectionIndex,
+          reference.span.keyLine,
+          domainOutcome(reference) as string,
+        ]),
+        `${row.id}.domainReferences`,
+      ).toEqual(row.domains.map((entry) => [...entry]));
+    }
+  });
+  it('never turns a plain type, or a page token, into a record the model does not have', () => {
+    // The two lists are 1:1 with the semantic records: no reference is invented for a `Field` that
+    // names no domain (`Serial` is everywhere), and no page reference is dropped.
+    for (const spec of GOLDEN_CASES) {
+      const envelope = readGolden(spec.id);
+      if (envelope.schema === null) continue;
+      const positions = [
+        ...envelope.schema.objects.flatMap((object) => object.positions ?? []),
+        ...envelope.schema.relations.flatMap((relation) => relation.positions ?? []),
+      ].filter((position) => position.kind !== 'unsupported');
+      expect(envelope.schema.pageReferences, spec.id).toHaveLength(positions.length);
+      // Every domain record names a domain (system or declared user name); a plain type is absent.
+      const names = new Set(
+        envelope.schema.domains
+          .filter((domain) => domain.name !== '')
+          .map((domain) => domain.name.toLowerCase()),
+      );
+      for (const reference of envelope.schema.domainReferences) {
+        const { classification } = reference;
+        const named =
+          classification.kind === 'system' || names.has(classification.name.toLowerCase());
+        expect(named, `${spec.id}: ${reference.dataType}`).toBe(true);
+      }
+      // Nothing was dropped and the references added no diagnostic of their own.
+      expect(envelope.completeness?.dropped ?? 0, spec.id).toBe(0);
     }
   });
 });

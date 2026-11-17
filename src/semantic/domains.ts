@@ -69,6 +69,11 @@ export type TypeClassification =
       readonly name: string;
       /** The declared spelling of the one domain this names (P12: names are unique without case). */
       readonly resolvedDomain: string;
+      /**
+       * The line that declaration was written on, so a consumer can find it in `domains` without
+       * matching names again. Metadata beside the decision: nothing is resolved from it.
+       */
+      readonly resolvedSpan: Span;
     }
   /**
    * Two or more declarations share this name case-insensitively. The format forbids it, so the
@@ -159,7 +164,13 @@ export function classifyType(
   if (first === undefined) return { kind: 'plain' };
   if (matches.length > 1)
     return { kind: 'user', status: 'ambiguous', name: dataType, candidates: matches };
-  return { kind: 'user', status: 'resolved', name: dataType, resolvedDomain: first.name };
+  return {
+    kind: 'user',
+    status: 'resolved',
+    name: dataType,
+    resolvedDomain: first.name,
+    resolvedSpan: first.span,
+  };
 }
 
 /** One element of a `DomainInfo` as written. */

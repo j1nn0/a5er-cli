@@ -579,7 +579,56 @@
         ]
       }
     ],
+    "pageReferences": [
+      {
+        "sectionIndex": 2,
+        "sectionKind": "Entity",
+        "declared": "Main",
+        "raw": "\"Main\"",
+        "span": {
+          "sectionIndex": 2,
+          "startLine": 9,
+          "endLine": 9,
+          "keyLine": 9
+        },
+        "status": "resolved",
+        "resolvedPage": {
+          "name": "Main",
+          "span": {
+            "sectionIndex": 1,
+            "startLine": 4,
+            "endLine": 4,
+            "keyLine": 4
+          }
+        },
+        "candidates": []
+      },
+      {
+        "sectionIndex": 3,
+        "sectionKind": "Subtype",
+        "declared": "Main",
+        "raw": "\"Main\"",
+        "span": {
+          "sectionIndex": 3,
+          "startLine": 15,
+          "endLine": 15,
+          "keyLine": 15
+        },
+        "status": "resolved",
+        "resolvedPage": {
+          "name": "Main",
+          "span": {
+            "sectionIndex": 1,
+            "startLine": 4,
+            "endLine": 4,
+            "keyLine": 4
+          }
+        },
+        "candidates": []
+      }
+    ],
     "domains": [],
+    "domainReferences": [],
     "commonFields": [],
     "manager": {
       "attributes": []

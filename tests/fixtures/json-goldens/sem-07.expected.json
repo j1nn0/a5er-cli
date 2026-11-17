@@ -868,6 +868,54 @@
         ]
       }
     ],
+    "pageReferences": [
+      {
+        "sectionIndex": 2,
+        "sectionKind": "Entity",
+        "declared": "Main",
+        "raw": "\"Main\"",
+        "span": {
+          "sectionIndex": 2,
+          "startLine": 12,
+          "endLine": 12,
+          "keyLine": 12
+        },
+        "status": "resolved",
+        "resolvedPage": {
+          "name": "Main",
+          "span": {
+            "sectionIndex": 1,
+            "startLine": 4,
+            "endLine": 4,
+            "keyLine": 4
+          }
+        },
+        "candidates": []
+      },
+      {
+        "sectionIndex": 3,
+        "sectionKind": "Entity",
+        "declared": "Main",
+        "raw": "\"Main\"",
+        "span": {
+          "sectionIndex": 3,
+          "startLine": 18,
+          "endLine": 18,
+          "keyLine": 18
+        },
+        "status": "resolved",
+        "resolvedPage": {
+          "name": "Main",
+          "span": {
+            "sectionIndex": 1,
+            "startLine": 4,
+            "endLine": 4,
+            "keyLine": 4
+          }
+        },
+        "candidates": []
+      }
+    ],
     "domains": [
       {
         "name": "int_domain",
@@ -906,6 +954,24 @@
             "quoted": true
           }
         ]
+      }
+    ],
+    "domainReferences": [
+      {
+        "sectionIndex": 2,
+        "column": "value_int",
+        "dataType": "@INT",
+        "span": {
+          "sectionIndex": 2,
+          "startLine": 11,
+          "endLine": 11,
+          "keyLine": 11
+        },
+        "classification": {
+          "kind": "system",
+          "name": "@INT",
+          "known": true
+        }
       }
     ],
     "commonFields": [

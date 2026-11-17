@@ -186,6 +186,9 @@ describe('a domain reference resolves or is ambiguous, never half of each (R29)'
       status: 'resolved',
       name: 'int_domain',
       resolvedDomain: 'int_domain',
+      // The one declaration's own line travels with its spelling, so a consumer can find it in
+      // `domains` without matching names again.
+      resolvedSpan: result.domains[0]?.span,
     });
     // A resolved reference has no `candidates` member at all — there is nothing to choose between.
     expect(classification === undefined ? null : 'candidates' in classification).toBe(false);

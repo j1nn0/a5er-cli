@@ -158,3 +158,57 @@ describe('page references resolve case-insensitively, verbatim (P9, F5)', () => 
     ]);
   });
 });
+describe('reference metadata travels with the decision (stage 6-B unit 3)', () => {
+  it('keeps the raw token and the resolved declaration’s own line', () => {
+    const semantics = pagesOfText(
+      '[Manager]\nPageInfo="Main",3,"A4","$FFFFFF"\n[Entity]\nPName="e"\nPosition="main",1,1\n',
+    );
+    const reference = semantics.references[0];
+    expect(reference).toMatchObject({
+      declared: 'main',
+      // The token as the file wrote it, quotes included — the declared spelling is not pasted in.
+      raw: '"main"',
+      status: 'resolved',
+      resolvedPage: 'Main',
+      resolvedSpan: semantics.pages[0]?.span,
+      candidates: [],
+    });
+  });
+  it('carries every matching declaration on an ambiguous reference, and no target', () => {
+    const semantics = pagesOfText(
+      '[Manager]\nPageInfo="Main",3,"A4","$FFFFFF"\nPageInfo="main",2,"A3","$000000"\n' +
+        '[Entity]\nPName="e"\nPosition="MAIN",1,1\n',
+    );
+    const reference = semantics.references[0];
+    expect(reference?.status).toBe('ambiguous');
+    expect(reference?.resolvedPage).toBeNull();
+    expect(reference?.resolvedSpan).toBeNull();
+    // File order, every declaration, each with its own spelling and line — the same records
+    // `duplicates` groups, so neither list can name a member the other does not.
+    expect(
+      reference?.candidates.map((candidate) => [candidate.name, candidate.span.keyLine]),
+    ).toEqual([
+      ['Main', 2],
+      ['main', 3],
+    ]);
+    expect(reference?.candidates).toEqual(
+      semantics.duplicates[0]?.declarations.map((page) => ({ name: page.name, span: page.span })),
+    );
+  });
+  it('keeps an unmatched token verbatim with no target and no candidate', () => {
+    const semantics = pagesOfText(
+      '[Manager]\nPageInfo="Main",3,"A4","$FFFFFF"\n[Entity]\nPName="e"\nPosition="Ghost",1,1\n',
+    );
+    const reference = semantics.references[0];
+    expect(reference).toMatchObject({
+      declared: 'Ghost',
+      raw: '"Ghost"',
+      status: 'dangling',
+      resolvedPage: null,
+      resolvedSpan: null,
+      candidates: [],
+    });
+    // The metadata changes nothing about what is reported.
+    expect(semantics.danglingReferences).toEqual([reference]);
+  });
+});

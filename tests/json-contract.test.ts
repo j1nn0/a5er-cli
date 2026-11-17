@@ -168,7 +168,9 @@ describe('json envelope — determinism and key order', () => {
       'objects',
       'relations',
       'pages',
+      'pageReferences',
       'domains',
+      'domainReferences',
       'commonFields',
       'manager',
     ]);
@@ -1468,6 +1470,235 @@ describe('json envelope — single-fact scalar provenance (stage 6-B unit 2)', (
       for (const raw of ['"alpha"', '"beta"', '"select 1"', 'maybe', 'abc']) {
         expect(json).toContain(raw);
       }
+    });
+  });
+});
+describe('json envelope — page and domain references (stage 6-B unit 3)', () => {
+  /**
+   * One document that names every outcome the two reference lists can carry.
+   *
+   * Three `PageInfo` declarations (`Main`, and the case-variant pair `Dup`/`dup`), three
+   * `DomainInfo` declarations (`int_domain`, and the case-variant pair `Name`/`name`), and one
+   * `Field` per outcome. Nothing here is taken from a golden: every expected line number is the
+   * line the token is written on below, and the assertions re-read that line by number.
+   */
+  const text = [
+    '# A5:ER FORMAT:21', // 1
+    '', // 2
+    '[Manager]', // 3 — section 1
+    'PageInfo="Main",3,"A4Landscape","$FFFFFF"', // 4
+    'PageInfo="Dup",3,"A4","$000000"', // 5
+    'PageInfo="dup",2,"A3","$FFFFFF"', // 6
+    'DomainInfo="int_domain","INTEGER","",""', // 7
+    'DomainInfo="Name","TEXT","",""', // 8
+    'DomainInfo="name","VARCHAR","",""', // 9
+    '', // 10
+    '[Entity]', // 11 — section 2
+    'PName="orders"', // 12
+    'Field="ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,""', // 13 — plain
+    'Field="NM","nm","@INT","",,"","",$FFFFFFFF,""', // 14 — system, known
+    'Field="AMT","amt","@NOPE","",,"","",$FFFFFFFF,""', // 15 — system, unknown
+    'Field="LV","lv","INT_DOMAIN","",,"","",$FFFFFFFF,""', // 16 — resolved
+    'Field="DN","dn","NAME","",,"","",$FFFFFFFF,""', // 17 — ambiguous
+    'Field="TX","tx","Integer","",,"","",$FFFFFFFF,""', // 18 — plain
+    'Position="MAIN",10,10', // 19 — resolved to `Main`
+    '', // 20
+    '[Entity]', // 21 — section 3
+    'PName="dup_use"', // 22
+    'Field="ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,""', // 23
+    'Position="Dup",20,20', // 24 — ambiguous over lines 5 and 6
+    '', // 25
+    '[Relation]', // 26 — section 4
+    'Entity1="orders"', // 27
+    'Entity2="dup_use"', // 28
+    'Fields1="id"', // 29
+    'Fields2="id"', // 30
+    'RelationType1=2', // 31
+    'RelationType2=4', // 32
+    'Position="Ghost",0,1,1,1,R,R,""', // 33 — dangling
+    '', // 34
+  ].join('\n');
+  it('projects every placement, its own line and the page it resolved to', () => {
+    withDocument(text, (path, input) => {
+      const envelope = serialize(input, { command: 'inspect', path });
+      const references = envelope.schema?.pageReferences ?? [];
+      // One record per `Position`, in file order — the unsupported shapes are the only skip, and
+      // this document has none.
+      expect(
+        references.map((reference) => [reference.span.keyLine, reference.sectionIndex]),
+      ).toEqual([
+        [19, 2],
+        [24, 3],
+        [33, 4],
+      ]);
+      const [main, duplicate, ghost] = references;
+      if (main === undefined || duplicate === undefined || ghost === undefined) {
+        throw new Error('a placement lost its reference record');
+      }
+      // A case-insensitive match reports both spellings: the request as written and the one
+      // declaration that matched it, with that declaration's own line.
+      expect(main).toEqual({
+        sectionIndex: 2,
+        sectionKind: 'Entity',
+        declared: 'MAIN',
+        raw: '"MAIN"',
+        span: oneLineSpan(2, 19),
+        status: 'resolved',
+        resolvedPage: { name: 'Main', span: oneLineSpan(1, 4) },
+        candidates: [],
+      });
+      // `Dup` is written exactly like the first declaration; the reference is still ambiguous,
+      // so the first match is never published as the target.
+      expect(duplicate).toEqual({
+        sectionIndex: 3,
+        sectionKind: 'Entity',
+        declared: 'Dup',
+        raw: '"Dup"',
+        span: oneLineSpan(3, 24),
+        status: 'ambiguous',
+        resolvedPage: null,
+        candidates: [
+          { name: 'Dup', span: oneLineSpan(1, 5) },
+          { name: 'dup', span: oneLineSpan(1, 6) },
+        ],
+      });
+      expect(ghost).toEqual({
+        sectionIndex: 4,
+        sectionKind: 'Relation',
+        declared: 'Ghost',
+        raw: '"Ghost"',
+        span: oneLineSpan(4, 33),
+        status: 'dangling',
+        resolvedPage: null,
+        candidates: [],
+      });
+      // The declaration lists are untouched: the same three pages, the same three lines.
+      expect(envelope.schema?.pages.map((page) => [page.name, page.span.keyLine])).toEqual([
+        ['Main', 4],
+        ['Dup', 5],
+        ['dup', 6],
+      ]);
+    });
+  });
+  it('projects every domain-naming type, and leaves an ordinary type absent', () => {
+    withDocument(text, (path, input) => {
+      const envelope = serialize(input, { command: 'inspect', path });
+      const references = envelope.schema?.domainReferences ?? [];
+      // Four of the six `Field` types name a domain; `Serial` and `Integer` name none and have no
+      // record at all — absence *is* `plain` (P7).
+      expect(references.map((reference) => reference.dataType)).toEqual([
+        '@INT',
+        '@NOPE',
+        'INT_DOMAIN',
+        'NAME',
+      ]);
+      expect(
+        references.map((reference) => [
+          reference.column,
+          reference.span.keyLine,
+          reference.sectionIndex,
+        ]),
+      ).toEqual([
+        ['nm', 14, 2],
+        ['amt', 15, 2],
+        ['lv', 16, 2],
+        ['dn', 17, 2],
+      ]);
+      const [known, unknown, resolved, ambiguous] = references;
+      if (
+        known === undefined ||
+        unknown === undefined ||
+        resolved === undefined ||
+        ambiguous === undefined
+      ) {
+        throw new Error('a domain reference is missing');
+      }
+      expect(known.classification).toEqual({ kind: 'system', name: '@INT', known: true });
+      expect(unknown.classification).toEqual({ kind: 'system', name: '@NOPE', known: false });
+      // The declared spelling is the type as written; the resolved one is the declaration's.
+      expect(resolved.classification).toEqual({
+        kind: 'user',
+        status: 'resolved',
+        name: 'INT_DOMAIN',
+        resolvedDomain: { name: 'int_domain', span: oneLineSpan(1, 7) },
+      });
+      expect(ambiguous.classification).toEqual({
+        kind: 'user',
+        status: 'ambiguous',
+        name: 'NAME',
+        candidates: [
+          { name: 'Name', span: oneLineSpan(1, 8) },
+          { name: 'name', span: oneLineSpan(1, 9) },
+        ],
+      });
+      // No target on an ambiguous reference, and no plain record anywhere.
+      expect(
+        ambiguous.classification.kind === 'user' && 'resolvedDomain' in ambiguous.classification,
+      ).toBe(false);
+      expect(references.some((reference) => reference.dataType === 'Integer')).toBe(false);
+      expect(references.some((reference) => reference.dataType === 'Serial')).toBe(false);
+      // The declaration list is untouched as well.
+      expect(envelope.schema?.domains.map((domain) => [domain.name, domain.span.keyLine])).toEqual([
+        ['int_domain', 7],
+        ['Name', 8],
+        ['name', 9],
+      ]);
+    });
+  });
+  it('adds records without moving one counter, one diagnostic or one placement', () => {
+    withDocument(text, (path, input) => {
+      const envelope = serialize(input, { command: 'inspect', path });
+      const integration = integrate(input);
+      const lines = text.split('\n');
+      for (const reference of envelope.schema?.pageReferences ?? []) {
+        // Every record addresses one physical line, and the token it claims is written there.
+        expect(reference.span).toEqual(
+          oneLineSpan(reference.sectionIndex, reference.span.startLine),
+        );
+        expect(lines[reference.span.keyLine - 1]).toContain(reference.raw);
+      }
+      for (const reference of envelope.schema?.domainReferences ?? []) {
+        expect(reference.span).toEqual(
+          oneLineSpan(reference.sectionIndex, reference.span.startLine),
+        );
+        const body = lines[reference.span.keyLine - 1] ?? '';
+        // The line carries the column and the type the record claims; the record invents neither.
+        expect(body).toContain(`"${reference.column}"`);
+        expect(body).toContain(reference.dataType);
+      }
+      const pageLines = (envelope.schema?.pageReferences ?? []).map(
+        (reference) => reference.span.keyLine,
+      );
+      expect(new Set(pageLines).size).toBe(pageLines.length);
+      // The outcome is the semantic layer's, and the envelope's diagnostics/status are Integration's
+      // unchanged: the reference records report nothing by themselves.
+      expect(envelope.status).toBe(integration.status);
+      expect(envelope.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
+        integration.diagnostics.map((diagnostic) => diagnostic.code),
+      );
+      expect(envelope.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+        'D_BOM_MISSING',
+        'V_DANGLING_PAGE',
+      ]);
+      expect(
+        envelope.diagnostics.find((diagnostic) => diagnostic.code === 'V_DANGLING_PAGE'),
+      ).toMatchObject({
+        severity: 'warning',
+        details: { page: 'Ghost', section: 'Relation' },
+        span: oneLineSpan(4, 33),
+      });
+      // Nothing was dropped and nothing was re-counted: the two new lists are projections of
+      // records the counters already accounted for.
+      expect(envelope.completeness).toEqual({
+        sections: { total: 4, parsed: 4, preservedRaw: 0, unknown: 0 },
+        keys: { total: 24, parsed: 24, preservedRaw: 0 },
+        lines: { total: 33, accounted: 33, dropped: 0 },
+        dropped: 0,
+      });
+      // Both spellings reach the JSON text: the request and the declaration.
+      const json = toJsonString(envelope);
+      expect(json).toContain('"MAIN"');
+      expect(json).toContain('"int_domain"');
     });
   });
 });

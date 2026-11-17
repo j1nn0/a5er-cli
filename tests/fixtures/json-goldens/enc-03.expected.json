@@ -191,7 +191,25 @@
     ],
     "relations": [],
     "pages": [],
+    "pageReferences": [
+      {
+        "sectionIndex": 1,
+        "sectionKind": "Entity",
+        "declared": "Main",
+        "raw": "\"Main\"",
+        "span": {
+          "sectionIndex": 1,
+          "startLine": 7,
+          "endLine": 7,
+          "keyLine": 7
+        },
+        "status": "dangling",
+        "resolvedPage": null,
+        "candidates": []
+      }
+    ],
     "domains": [],
+    "domainReferences": [],
     "commonFields": [],
     "manager": {
       "attributes": []
