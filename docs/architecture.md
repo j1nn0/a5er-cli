@@ -615,6 +615,9 @@ never two objects.
   finding per object on its first contributing `Field` line, and the declared ordinals are left
   exactly as written: no renumbering, no filled gap. An ordinal that is not an exact integer
   contributes nothing rather than a rounded one.
+- **A repeated scalar reads last, including when the last one is broken.** `RelationType1=2`
+  followed by `RelationType1=bad` means the cardinality is *unknown*, not `2`: the shadowed value is
+  evidence, not the value (R26), and the repetition is already `S_DUPLICATE_KEY`.
 - **Required keys are reported per subject, not per key.** A section missing three required keys is
   one `V_MISSING_REQUIRED_KEY` listing all three, pointing at the object's `PName` line (the section
   header when it has none); a column missing its 色 is one finding on its `Field` line (§7.2). No
@@ -640,7 +643,12 @@ never two objects.
   `[Subtype]` membership is undocumented (K11, F7), so either would be an unverifiable endpoint and
   is reported dangling instead. A column is checked against the entity on its side; when that
   endpoint did not resolve, the column cannot be checked either and is reported as dangling — one
-  finding per unresolved name, with both sides' lists kept complete (U8). `Cardinarity1` / `Cardinarity2` keep the misspelled spelling the format actually
+  finding per unresolved name, with both sides' lists kept complete (U8). Two refinements the
+  fixtures forced: an **ambiguous** endpoint (two entities share the name) leaves its columns
+  *unverified* rather than dangling — the entity exists, it just cannot be chosen (R25) — and every
+  column **slot** is kept, including an empty one, so `"a,,b"` cannot pass for a two-column list
+  (R28). `columnsAligned` is three-valued: `null` when a side is missing, which is *unknown*, never
+  "aligned" (R27). `Cardinarity1` / `Cardinarity2` keep the misspelled spelling the format actually
   writes (K7): the registry keys, the JSON fields and `keyRaw` all read `Cardinarity1` /
   `Cardinarity2`, and no corrected alias is invented. `RelationType1` / `RelationType2` absent
   → warning `V_MISSING_REQUIRED_KEY` and `value: null`; the spec contradicts itself here (K6,
@@ -671,10 +679,20 @@ brief.
   `kind: 'system-domain'`. Neither resolves to a SQL type (P12). `DecodeDomain` is parsed as an
   integer despite its `Boolean` type in the spec (K8).
 - **Common fields**: `effectiveColumns` = declared `Field`s, plus applicable `CommonField`s when
-  `UsingCommonColumns` is 1 — which it is by default when absent, as `origin: 'defaulted'` with
-  an info diagnostic (P12). Common columns are marked `source: 'common'` so a consumer can tell
+  `UsingCommonColumns` is 1 — which it is by default when absent, as `origin: 'defaulted'` (P12;
+  §11 defines no code for the default, so `origin` is what reports it). Common columns are marked `source: 'common'` so a consumer can tell
   them from declared ones. `NotNull` is the CommonField spelling of NOT NULL and is normalised
   to the same boolean (P5).
+  Three boundary rules, all recorded rather than guessed: a `UsingCommonColumns` token that does not
+  decode leaves the composition **undecided** (`indeterminate`) instead of falling back to the
+  default, because §4.2's default is for an *absent* key; a physical name that arrives from both
+  sources keeps **both** columns in declaration order and reports the collision, never the last-wins
+  of a key the format never said was duplicated; and §11 has no code for any of this, so domains and
+  common columns are reported in the model only.
+  A `Field` data type that matches no declared domain stays **plain**: `データ型` may be a real type
+  or a user domain name and the format carries no marker to tell them apart (P7), so calling
+  `Integer` a dangling domain would be a guess. A domain's own データ型 is kept as a *kind* (`system`,
+  `name`, `empty`) and never followed — no transitive resolution (P12).
 - **Pages**: `PageInfo` must have at least one entry; zero is `V_MISSING_REQUIRED_KEY` (error).
   Page names resolve **case-insensitively** (F5): the spec's own sample pairs `PageInfo="Main"`
   with `Position="MAIN"`. Unresolved page references are `V_DANGLING_PAGE` (warning) and the

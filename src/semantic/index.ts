@@ -29,6 +29,27 @@ export type {
   PrimaryKeyResult,
 } from './primary-key.js';
 export { primaryKeysOf } from './primary-key.js';
+export type {
+  CommonColumnDeclaration,
+  CommonColumnResult,
+  CommonNotNullToken,
+  ColumnSource,
+  ColumnCollision,
+  DuplicateCommonColumn,
+  EffectiveColumn,
+  EntityColumns,
+  UsingCommonColumnsFact,
+} from './common-columns.js';
+export { commonColumnsOf } from './common-columns.js';
+export type {
+  DomainDeclaration,
+  DomainReference,
+  DomainResult,
+  DomainTypeKind,
+  DuplicateDomain,
+  TypeClassification,
+} from './domains.js';
+export { classifyType, domainsOf, domainTypeKindOf, SYSTEM_DOMAINS } from './domains.js';
 export type { DuplicatePage, PageDeclaration, PageReference, PageResult } from './pages.js';
 export { pagesOf } from './pages.js';
 export type {
@@ -41,6 +62,7 @@ export type {
   RelationEndpoint,
   RelationResult,
   ResolvedRelation,
+  UnverifiedColumn,
 } from './relations.js';
 export { relationsOf } from './relations.js';
 export type { MissingRequiredKeys, MissingSubject } from './required.js';

@@ -16,10 +16,14 @@
  *   F7), so neither can be an endpoint this stage can verify. A relation naming a view is reported
  *   as dangling rather than quietly accepted: an accepted endpoint that cannot declare columns
  *   would mean an unchecked mapping.
- * - **An unresolved endpoint makes its columns unresolvable.** `sem-01`'s `Entity2="ghost_table"`
- *   with `Fields2="ghost_column"` is one `V_DANGLING_ENTITY` *and* one `V_DANGLING_COLUMN`: the
- *   column cannot be checked against an entity that does not exist, and reporting only the entity
- *   would leave the reader believing the mapping was fine.
+ * - **A missing endpoint makes its columns unverifiable — and that is reported as dangling.**
+ *   `sem-01`'s `Entity2="ghost_table"` with `Fields2="ghost_column"` is one `V_DANGLING_ENTITY`
+ *   *and* one `V_DANGLING_COLUMN`: the column cannot be checked against an entity that does not
+ *   exist, and reporting only the entity would leave the reader believing the mapping was fine.
+ * - **Ambiguity is not absence (R25).** When two `[Entity]` sections share one `PName`, the endpoint
+ *   exists — it just cannot be chosen. Its columns are then *unverified*, not dangling: reporting
+ *   them as missing would claim a defect the file does not have. They are kept in
+ *   `unverifiedColumns` with their raw text and line, and no diagnostic is emitted for them.
  * - **Nothing is truncated to make the two sides line up.** `V_FIELD_COUNT_MISMATCH` reports the
  *   difference and both lists stay complete (U8). No constraint name is invented: the format stores
  *   printf *templates* in `[Manager]`, not names (D7).
@@ -30,15 +34,24 @@ import type { Classification, ClassifiedSection } from '../schema/registry.js';
 import { partRaw, unescapeEscaped } from '../schema/values.js';
 import { integerOf, pnameCounts, pnameOf, textOf } from './access.js';
 
-/** One column of a relation side, as declared. */
+/**
+ * One slot of a relation side, as declared.
+ *
+ * A slot exists for every position the writer emitted, including an empty one: `Fields1="a,,b"` has
+ * three slots and two names (R28), and collapsing the empty slot would turn a 3:2 pairing into a
+ * false 2:2 match. `pname` is `''` for such a slot — an empty element names no column, so it is not
+ * a dangling column either.
+ */
 export interface RelationColumn {
-  /** The column's physical name, escapes applied and nothing else changed. */
+  /** The column's physical name, escapes applied and nothing else changed; `''` for an empty slot. */
   readonly pname: string;
   /** The declared element text it came from (`"a,b"` yields two columns and one shared raw). */
   readonly raw: string;
   readonly span: Span;
-  /** Position inside the `Fields1`/`Fields2` list. */
+  /** Position inside the `Fields1`/`Fields2` list, counting empty slots. */
   readonly index: number;
+  /** True when the slot is empty: no name was declared there (R28). */
+  readonly empty: boolean;
 }
 
 /** How one endpoint name resolved. */
@@ -84,8 +97,12 @@ export interface ResolvedRelation {
   /** `Cardinarity1/2` — the format's own misspelling, kept as written (K7). */
   readonly cardinarity1: string | null;
   readonly cardinarity2: string | null;
-  /** `true` when both sides declare the same number of columns (U8). */
-  readonly columnsAligned: boolean;
+  /**
+   * Whether the two sides map the same number of slots (U8), three-valued (R27):
+   * `true` when both lists are present and the same length, `false` when both are present and they
+   * differ, and `null` when a side is absent — a missing list is *unknown*, not "aligned".
+   */
+  readonly columnsAligned: boolean | null;
 }
 
 /** A reference to an entity that does not resolve the way the relation needs. */
@@ -94,6 +111,21 @@ export interface EndpointReference {
   readonly endpoint: 'Entity1' | 'Entity2';
   readonly declared: string;
   readonly span: Span;
+}
+
+/**
+ * A mapped column whose endpoint exists but cannot be chosen, so the column cannot be checked (R25).
+ *
+ * Kept separate from `DanglingColumn` on purpose: there the entity is missing, here it is ambiguous,
+ * and only the first is a defect the file actually contains.
+ */
+export interface UnverifiedColumn {
+  readonly sectionIndex: number;
+  readonly endpoint: 'Entity1' | 'Entity2';
+  readonly column: string;
+  readonly span: Span;
+  /** How many `[Entity]` sections declare the endpoint's name. */
+  readonly candidates: number;
 }
 
 /** A mapped column that cannot be verified against the entity on its side. */
@@ -121,6 +153,8 @@ export interface RelationResult {
   /** Endpoints naming an entity that more than one section declares; reported, not resolved (P6). */
   readonly ambiguousEntities: readonly EndpointReference[];
   readonly danglingColumns: readonly DanglingColumn[];
+  /** Columns of an ambiguous endpoint: unverified, not missing (R25). */
+  readonly unverifiedColumns: readonly UnverifiedColumn[];
   readonly countMismatches: readonly FieldCountMismatch[];
 }
 
@@ -130,7 +164,12 @@ export interface RelationResult {
  * The value is a Complex token whose elements are quoted *lists*: `"a,b"` is one element holding two
  * column names (P9's カラムリスト rule, proven by val-02 and txt-03). Splitting the raw value on
  * commas would cut inside the quotes, so the tokeniser runs first and only element contents are
- * split — and an empty element (`""`) contributes no column.
+ * split.
+ *
+ * **Every slot is kept (R28).** An empty position stays in the list with `pname: ''` and its index,
+ * so the arity the file declared is the arity this stage compares. The one exception follows the
+ * field decoder's rule: a slot left blank by a trailing separator was never written (§7.1's
+ * `trailingElementsOmitted`), so it is not a slot.
  */
 function columnsOf(
   section: ClassifiedSection,
@@ -146,15 +185,16 @@ function columnsOf(
     const value = decoded.value.value;
     if (typeof value !== 'object') continue;
 
+    const parts = value.trailingElementsOmitted ? value.parts.slice(0, -1) : value.parts;
     const columns: RelationColumn[] = [];
-    for (const part of value.parts) {
+    for (const part of parts) {
       for (const name of part.value.split(',')) {
-        if (name === '') continue;
         columns.push({
           pname: unescapeEscaped(name),
           raw: partRaw(part),
           span: occurrence.span,
           index: columns.length,
+          empty: name === '',
         });
       }
     }
@@ -207,6 +247,7 @@ export function relationsOf(classification: Classification): RelationResult {
   const danglingEntities: EndpointReference[] = [];
   const ambiguousEntities: EndpointReference[] = [];
   const danglingColumns: DanglingColumn[] = [];
+  const unverifiedColumns: UnverifiedColumn[] = [];
   const countMismatches: FieldCountMismatch[] = [];
 
   for (const section of classification.sections) {
@@ -229,9 +270,10 @@ export function relationsOf(classification: Classification): RelationResult {
       relationType2: integerOf(section, 'RelationType2'),
       cardinarity1: textOf(section, 'Cardinarity1')?.value ?? null,
       cardinarity2: textOf(section, 'Cardinarity2')?.value ?? null,
+      // R27: a side that is not there is `null` — unknown — never "aligned".
       columnsAligned:
         fromColumns === null || toColumns === null
-          ? true
+          ? null
           : fromColumns.columns.length === toColumns.columns.length,
     });
 
@@ -268,7 +310,20 @@ export function relationsOf(classification: Classification): RelationResult {
           ? null
           : entityColumns(classification, endpoint.resolvedEntity);
       for (const column of list.columns) {
+        // R28: an empty slot names no column, so it is neither resolved nor dangling.
+        if (column.empty) continue;
         if (declared !== null && declared.has(column.pname)) continue;
+        if (endpoint.status === 'ambiguous') {
+          // R25: the entity exists but cannot be chosen; the column is unverified, not missing.
+          unverifiedColumns.push({
+            sectionIndex: section.index,
+            endpoint: endpoint.key,
+            column: column.pname,
+            span: column.span,
+            candidates: endpoint.candidates,
+          });
+          continue;
+        }
         danglingColumns.push({
           sectionIndex: section.index,
           endpoint: endpoint.key,
@@ -292,5 +347,12 @@ export function relationsOf(classification: Classification): RelationResult {
     }
   }
 
-  return { relations, danglingEntities, ambiguousEntities, danglingColumns, countMismatches };
+  return {
+    relations,
+    danglingEntities,
+    ambiguousEntities,
+    danglingColumns,
+    unverifiedColumns,
+    countMismatches,
+  };
 }

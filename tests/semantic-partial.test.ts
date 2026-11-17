@@ -60,16 +60,18 @@ describe('every fixture yields exactly the V_ codes this unit owns', () => {
 
 describe('the boundary is part of the result (§9, §17)', () => {
   it('names every §9 area this stage does not model', () => {
-    expect(semanticsOf('fmt-01').unresolved).toEqual([
+    expect(semanticsOf('fmt-01').unresolved).toEqual(['view-columns', 'subtype-membership']);
+    // Each area left the list when it was implemented; the two that remain need a decision the
+    // specification does not provide (P10's view columns, K11's subtype membership).
+    expect(UNRESOLVED_AREAS).toHaveLength(2);
+    for (const done of [
+      'relation-endpoints',
+      'page-resolution',
       'domain-resolution',
       'common-columns',
-      'view-columns',
-      'subtype-membership',
-    ]);
-    // Relations and pages were removed from the list when they were implemented.
-    expect(UNRESOLVED_AREAS).toHaveLength(4);
-    expect(UNRESOLVED_AREAS).not.toContain('relation-endpoints');
-    expect(UNRESOLVED_AREAS).not.toContain('page-resolution');
+    ]) {
+      expect(UNRESOLVED_AREAS).not.toContain(done);
+    }
   });
 
   it('does not claim a resolved schema: no effective columns, no envelope counters', () => {

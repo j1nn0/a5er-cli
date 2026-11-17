@@ -128,8 +128,10 @@ describe('relations resolve against [Entity] names only (§9.2, P9)', () => {
     expect(result.ambiguousEntities.map((entry) => entry.declared)).toEqual(['twin', 'twin']);
     expect(result.danglingEntities).toEqual([]);
     expect(result.relations[0]?.from).toMatchObject({ status: 'ambiguous', resolvedEntity: null });
-    // An ambiguous endpoint cannot verify its columns either, and that is reported as dangling.
-    expect(result.danglingColumns).toHaveLength(2);
+    // R25: ambiguity is not absence. The columns are unverified, never reported as dangling.
+    expect(result.danglingColumns).toEqual([]);
+    expect(result.unverifiedColumns.map((entry) => entry.column)).toEqual(['id', 'id']);
+    expect(result.unverifiedColumns[0]).toMatchObject({ candidates: 2 });
   });
 });
 
@@ -174,7 +176,7 @@ describe('columns come from the tokeniser, not from a raw split (P9, F3)', () =>
     expect(result.danglingColumns.map((entry) => entry.column)).toEqual(['nope', 'missing']);
   });
 
-  it('treats an empty column list as no columns at all', () => {
+  it('keeps an empty element as an empty slot, not as a missing column (R28)', () => {
     const result = relationsOfText(
       MANAGER +
         ONE_ENTITY +
@@ -182,9 +184,14 @@ describe('columns come from the tokeniser, not from a raw split (P9, F3)', () =>
         '[Relation]\nEntity1="parent"\nEntity2="child"\nFields1="id"\nFields2=""\n' +
         'RelationType1=1\nRelationType2=3\nPosition="M",0,1,1,1,R,R,""\n',
     );
+    const slots = result.relations[0]?.toColumns?.columns ?? [];
 
-    expect(result.relations[0]?.toColumns?.columns).toEqual([]);
-    expect(result.countMismatches[0]).toMatchObject({ fromCount: 1, toCount: 0 });
+    // One slot on each side: the arity matches, and an empty name is neither resolved nor dangling.
+    expect(slots).toHaveLength(1);
+    expect(slots[0]).toMatchObject({ pname: '', raw: '""', index: 0, empty: true });
+    expect(result.relations[0]?.columnsAligned).toBe(true);
+    expect(result.countMismatches).toEqual([]);
+    expect(result.danglingColumns).toEqual([]);
   });
 });
 
@@ -242,5 +249,200 @@ describe('relations keep their declared cardinality as written (K7)', () => {
     expect(result.relations[0]?.to).toBeNull();
     expect(result.danglingEntities).toEqual([]);
     expect(result.countMismatches).toEqual([]);
+  });
+});
+
+// ── R25–R28 regressions ────────────────────────────────────────────────────
+
+describe('R25 — an ambiguous endpoint is unverified, not missing', () => {
+  it('keeps the columns of a duplicated-name endpoint out of the dangling list', () => {
+    const result = relationsOfText(
+      MANAGER +
+        '[Entity]\nPName="twin"\nField="I","id","Serial","NOT NULL",0,"","",$FFFFFFFF,""\nPosition="M",1,1\n' +
+        '[Entity]\nPName="twin"\nField="I","id2","Serial","NOT NULL",0,"","",$FFFFFFFF,""\nPosition="M",2,2\n' +
+        '[Relation]\nEntity1="twin"\nEntity2="twin"\nFields1="id"\nFields2="id2"\n' +
+        'RelationType1=1\nRelationType2=3\nPosition="M",0,1,1,1,R,R,""\n',
+    );
+
+    // Both names exist and each *could* hold the column, so neither is a missing column.
+    expect(result.danglingEntities).toEqual([]);
+    expect(result.danglingColumns).toEqual([]);
+    expect(result.ambiguousEntities).toHaveLength(2);
+    expect(result.unverifiedColumns.map((entry) => entry.column)).toEqual(['id', 'id2']);
+    expect(result.unverifiedColumns.every((entry) => entry.candidates === 2)).toBe(true);
+  });
+
+  it('still reports a truly missing column as dangling (sem-01 behaviour preserved)', () => {
+    const result = relationsOfText(
+      MANAGER +
+        ONE_ENTITY +
+        CHILD +
+        '[Relation]\nEntity1="parent"\nEntity2="child"\nFields1="id"\nFields2="absent"\n' +
+        'RelationType1=1\nRelationType2=3\nPosition="M",0,1,1,1,R,R,""\n',
+    );
+
+    expect(result.danglingEntities).toEqual([]);
+    expect(result.unverifiedColumns).toEqual([]);
+    expect(result.danglingColumns.map((entry) => entry.column)).toEqual(['absent']);
+    expect(result.danglingColumns[0]?.entity).toBe('child');
+  });
+});
+
+describe('R26 — a repeated scalar is last-wins even when the last one is broken', () => {
+  it('returns null for RelationType1=2 followed by an unusable token', () => {
+    const result = relationsOfText(
+      MANAGER +
+        ONE_ENTITY +
+        CHILD +
+        '[Relation]\nEntity1="parent"\nEntity2="child"\nFields1="id"\nFields2="p_id"\n' +
+        'RelationType1=2\nRelationType1=bad\nRelationType2=3\nPosition="M",0,1,1,1,R,R,""\n',
+    );
+
+    // The earlier `2` is shadowed evidence, not the value: reading it back would resurrect it.
+    expect(result.relations[0]?.relationType1).toBeNull();
+    expect(result.relations[0]?.relationType2).toBe(3);
+  });
+
+  it('returns the value when the last occurrence is the valid one', () => {
+    const result = relationsOfText(
+      MANAGER +
+        ONE_ENTITY +
+        CHILD +
+        '[Relation]\nEntity1="parent"\nEntity2="child"\nFields1="id"\nFields2="p_id"\n' +
+        'RelationType1=bad\nRelationType1=2\nRelationType2=3\nPosition="M",0,1,1,1,R,R,""\n',
+    );
+
+    expect(result.relations[0]?.relationType1).toBe(2);
+  });
+
+  it('keeps both occurrences and the registry duplicate finding in the classification', () => {
+    const classification = classify(
+      scanSource({
+        text:
+          '[Manager]\nPageInfo="M",3,"A4","$FFFFFF"\n' +
+          '[Relation]\nEntity1="a"\nEntity2="b"\nFields1="x"\nFields2="y"\n' +
+          'RelationType1=2\nRelationType1=bad\nPosition="M",0,1,1,1,R,R,""\n',
+        format: 21,
+      }),
+    );
+    const relation = classification.sections.find((section) => section.kind === 'Relation');
+    const occurrences = relation?.entries.filter(
+      (entry) => entry.kind === 'parsed' && entry.occurrence.spec.key === 'RelationType1',
+    );
+
+    expect(occurrences).toHaveLength(2);
+    expect(
+      classification.diagnostics.filter((diagnostic) => diagnostic.code === 'S_DUPLICATE_KEY'),
+    ).toHaveLength(1);
+  });
+
+  it('applies the same rule to a text key: the last occurrence decides', () => {
+    const result = relationsOfText(
+      MANAGER +
+        ONE_ENTITY +
+        CHILD +
+        '[Relation]\nEntity1="parent"\nEntity2="child"\nFields1="id"\nFields2="p_id"\n' +
+        'RelationType1=1\nRelationType2=3\nCardinarity1="P"\nCardinarity1="Z"\n' +
+        'Position="M",0,1,1,1,R,R,""\n',
+    );
+
+    expect(result.relations[0]?.cardinarity1).toBe('Z');
+  });
+});
+
+describe('R27 — an absent column list is unknown, not aligned', () => {
+  it('reports null and no mismatch when one side is missing (synthetic edge)', () => {
+    const result = relationsOfText(
+      MANAGER +
+        ONE_ENTITY +
+        CHILD +
+        '[Relation]\nEntity1="parent"\nEntity2="child"\nFields1="id"\n' +
+        'RelationType1=1\nRelationType2=3\nPosition="M",0,1,1,1,R,R,""\n',
+    );
+
+    expect(result.relations[0]?.columnsAligned).toBeNull();
+    expect(result.countMismatches).toEqual([]);
+  });
+
+  it('reports true for equal lists and false plus a mismatch for different ones', () => {
+    const equal = relationsOfText(
+      MANAGER +
+        ONE_ENTITY +
+        CHILD +
+        '[Relation]\nEntity1="parent"\nEntity2="child"\nFields1="id"\nFields2="p_id"\n' +
+        'RelationType1=1\nRelationType2=3\nPosition="M",0,1,1,1,R,R,""\n',
+    );
+    const different = relationsOfText(
+      MANAGER +
+        ONE_ENTITY +
+        CHILD +
+        '[Relation]\nEntity1="parent"\nEntity2="child"\nFields1="id"\nFields2="p_id,id"\n' +
+        'RelationType1=1\nRelationType2=3\nPosition="M",0,1,1,1,R,R,""\n',
+    );
+
+    expect(equal.relations[0]?.columnsAligned).toBe(true);
+    expect(equal.countMismatches).toEqual([]);
+    expect(different.relations[0]?.columnsAligned).toBe(false);
+    expect(different.countMismatches).toHaveLength(1);
+  });
+});
+
+describe('R28 — every slot is kept, so an empty one cannot make a false match', () => {
+  it('counts an empty middle slot, turning a false 2:2 into a real 3:2 (synthetic edge)', () => {
+    const result = relationsOfText(
+      MANAGER +
+        ONE_ENTITY +
+        CHILD +
+        '[Relation]\nEntity1="parent"\nEntity2="child"\nFields1="id,,id"\nFields2="p_id,id"\n' +
+        'RelationType1=1\nRelationType2=3\nPosition="M",0,1,1,1,R,R,""\n',
+    );
+    const slots = result.relations[0]?.fromColumns?.columns ?? [];
+
+    expect(slots.map((slot) => slot.pname)).toEqual(['id', '', 'id']);
+    expect(slots.map((slot) => slot.index)).toEqual([0, 1, 2]);
+    expect(slots.map((slot) => slot.empty)).toEqual([false, true, false]);
+    // The empty slot names nothing, so it is not a dangling column...
+    expect(result.danglingColumns).toEqual([]);
+    // ...but it is a slot, so the arity difference is real and reported.
+    expect(result.countMismatches[0]).toMatchObject({ fromCount: 3, toCount: 2 });
+  });
+
+  it('keeps leading and trailing empty positions inside a quoted list', () => {
+    const result = relationsOfText(
+      MANAGER +
+        ONE_ENTITY +
+        CHILD +
+        '[Relation]\nEntity1="parent"\nEntity2="child"\nFields1=",id,id2,"\nFields2="p_id"\n' +
+        'RelationType1=1\nRelationType2=3\nPosition="M",0,1,1,1,R,R,""\n',
+    );
+    const slots = result.relations[0]?.fromColumns?.columns ?? [];
+
+    // The whole value is one quoted element, so its inner commas are list separators: four
+    // positions, two of them empty (P9's カラムリスト).
+    expect(slots.map((slot) => slot.pname)).toEqual(['', 'id', 'id2', '']);
+    expect(slots.map((slot) => slot.empty)).toEqual([true, false, false, true]);
+    expect(result.countMismatches[0]).toMatchObject({ fromCount: 4, toCount: 1 });
+  });
+
+  it('drops only the slot a trailing *element* separator leaves blank (§7.1)', () => {
+    const result = relationsOfText(
+      MANAGER +
+        ONE_ENTITY +
+        CHILD +
+        '[Relation]\nEntity1="parent"\nEntity2="child"\nFields1="id",\nFields2="p_id"\n' +
+        'RelationType1=1\nRelationType2=3\nPosition="M",0,1,1,1,R,R,""\n',
+    );
+    const slots = result.relations[0]?.fromColumns?.columns ?? [];
+
+    // `"id",` is one element plus an omitted tail: one column, and aligned with the other side.
+    expect(slots.map((slot) => slot.pname)).toEqual(['id']);
+    expect(result.relations[0]?.columnsAligned).toBe(true);
+  });
+
+  it('still reads a quoted comma list as two columns (val-02 shape)', () => {
+    const relation = semanticsOf('txt-03').relations[0];
+
+    expect(relation?.fromColumns?.columns.map((slot) => slot.empty)).toEqual([false, false]);
+    expect(relation?.fromColumns?.columns.map((slot) => slot.pname)).toEqual(['a', 'b']);
   });
 });

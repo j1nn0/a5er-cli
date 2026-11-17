@@ -3,9 +3,16 @@
  *
  * Three modules need the same three questions — "what is this object's `PName`?", "what did this
  * scalar key say?" and "was this integer key decoded?" — and each of them has exactly one correct
- * answer: the **last** occurrence (§4.2 last-wins), only when it decoded, and only from a `parsed`
- * entry (a raw-preserved line is evidence, not a value). Keeping the answer here is what stops the
- * three call sites from quietly disagreeing.
+ * answer: the **last** occurrence (§4.2 last-wins), read only from a `parsed` entry (a raw-preserved
+ * line is evidence, not a value). Keeping the answer here is what stops the three call sites from
+ * quietly disagreeing.
+ *
+ * **Last-wins means last, including when it is broken (R26).** A reader that walked backwards until
+ * it found something decodable would silently resurrect a value the file had overwritten: for
+ * `RelationType1=2` followed by `RelationType1=bad`, the relation's cardinality is *unknown*, not
+ * `2`. So each reader takes the final occurrence and answers `null` when that one did not decode —
+ * the occurrence itself, its raw text and its line remain in the classified section, and the
+ * registry's `S_DUPLICATE_KEY` already reported the repetition.
  */
 
 import type { Span } from '../model/span.js';
@@ -29,27 +36,23 @@ function occurrencesOf(section: ClassifiedSection, key: string) {
 
 /** The last declared text value of `key`, or `null` when it is absent or did not decode to text. */
 export function textOf(section: ClassifiedSection, key: string): TextReading | null {
-  let found: TextReading | null = null;
-  for (const { occurrence, span } of occurrencesOf(section, key)) {
-    const decoded = occurrence.decoded;
-    if (!decoded.ok) continue;
-    const value = decoded.value.value;
-    if (typeof value !== 'string') continue;
-    found = { value, raw: occurrence.raw, span };
-  }
-  return found;
+  const last = occurrencesOf(section, key).at(-1);
+  if (last === undefined) return null;
+  const decoded = last.occurrence.decoded;
+  if (!decoded.ok) return null;
+  const value = decoded.value.value;
+  if (typeof value !== 'string') return null;
+  return { value, raw: last.occurrence.raw, span: last.span };
 }
 
 /** The last declared integer value of `key`, or `null` when it is absent or not an integer. */
 export function integerOf(section: ClassifiedSection, key: string): number | null {
-  let found: number | null = null;
-  for (const { occurrence } of occurrencesOf(section, key)) {
-    const decoded = occurrence.decoded;
-    if (!decoded.ok) continue;
-    const value = decoded.value.value;
-    if (typeof value === 'number') found = value;
-  }
-  return found;
+  const last = occurrencesOf(section, key).at(-1);
+  if (last === undefined) return null;
+  const decoded = last.occurrence.decoded;
+  if (!decoded.ok) return null;
+  const value = decoded.value.value;
+  return typeof value === 'number' ? value : null;
 }
 
 /** The object's `PName`, or `null` when it never declared one (that is a required-key finding). */

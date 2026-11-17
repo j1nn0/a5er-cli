@@ -15,6 +15,11 @@
  * | the two sides of a relation map different counts | `V_FIELD_COUNT_MISMATCH` | U8 |
  * | a placement names no declared page | `V_DANGLING_PAGE` | P9, P11, F5 |
  *
+ * Domains and common columns are resolved too (§9.4, P12), but nothing about them has a closed
+ * diagnostic code in §11, so they are reported in the model only — a dangling domain name, an
+ * ambiguous domain, a duplicate common column and a column collision are all carried as records, and
+ * none of them invents a code.
+ *
  * **This is not a resolved schema, and it does not claim to be.** `PartialSemantics` is named for
  * the boundary: everything §9 lists and this unit does not do is in `unresolved`, so a consumer can
  * see what is missing instead of assuming an absent field means "nothing there". Relations and
@@ -44,6 +49,14 @@ import type {
 import { relationsOf } from './relations.js';
 import type { DuplicatePage, PageDeclaration, PageReference } from './pages.js';
 import { pagesOf } from './pages.js';
+import type { DomainDeclaration, DomainReference, DuplicateDomain } from './domains.js';
+import { domainsOf } from './domains.js';
+import type {
+  CommonColumnDeclaration,
+  DuplicateCommonColumn,
+  EntityColumns,
+} from './common-columns.js';
+import { commonColumnsOf } from './common-columns.js';
 import type { MissingRequiredKeys } from './required.js';
 import { missingRequiredKeysOf } from './required.js';
 
@@ -53,11 +66,7 @@ import { missingRequiredKeysOf } from './required.js';
  * Named so that "no finding" can never be read as "nothing wrong": a consumer that wants these
  * must wait for the resolution unit, and a reader of `PartialSemantics` can see the list.
  */
-export type UnresolvedArea =
-  | 'domain-resolution'
-  | 'common-columns'
-  | 'view-columns'
-  | 'subtype-membership';
+export type UnresolvedArea = 'view-columns' | 'subtype-membership';
 
 /**
  * What the resolution unit still owes, in one place (§9.4–§9.6, §17).
@@ -66,12 +75,7 @@ export type UnresolvedArea =
  * columns resolve against `[Entity]` names in `relations.ts`) and `page-resolution` (`Position`
  * references resolve case-insensitively against `PageInfo` in `pages.ts`).
  */
-export const UNRESOLVED_AREAS: readonly UnresolvedArea[] = [
-  'domain-resolution',
-  'common-columns',
-  'view-columns',
-  'subtype-membership',
-];
+export const UNRESOLVED_AREAS: readonly UnresolvedArea[] = ['view-columns', 'subtype-membership'];
 
 /** The bounded semantic result: four findings, their diagnostics, and the open boundary. */
 export interface PartialSemantics {
@@ -96,6 +100,16 @@ export interface PartialSemantics {
   readonly duplicatePages: readonly DuplicatePage[];
   /** Every `Position` page reference, verbatim, with what it resolved to (§P9). */
   readonly pageReferences: readonly PageReference[];
+  /** `[Manager].DomainInfo` declarations and every `Field` type that names one (§9.4, P12). */
+  readonly domains: readonly DomainDeclaration[];
+  readonly duplicateDomains: readonly DuplicateDomain[];
+  readonly domainReferences: readonly DomainReference[];
+  /** The common columns and every entity's composed column list (§9.4, P12). */
+  readonly commonFields: readonly CommonColumnDeclaration[];
+  readonly duplicateCommonFields: readonly DuplicateCommonColumn[];
+  readonly entityColumns: readonly EntityColumns[];
+  /** Entities whose `UsingCommonColumns` could not be decided, so `effective` is not final. */
+  readonly indeterminateColumnLists: readonly EntityColumns[];
   /** Ordered by line (§12 rule 7). */
   readonly diagnostics: readonly Diagnostic[];
   /** The §9 work this stage does not do. Never empty, by design. */
@@ -122,6 +136,8 @@ export function derivePartialSemantics(classification: Classification): PartialS
   const legacyOnlyIndexes = legacyOnlyIndexesOf(classification);
   const relations = relationsOf(classification);
   const pages = pagesOf(classification);
+  const domains = domainsOf(classification);
+  const columns = commonColumnsOf(classification);
 
   const diagnostics: Diagnostic[] = [];
 
@@ -242,6 +258,13 @@ export function derivePartialSemantics(classification: Classification): PartialS
     pages: pages.pages,
     duplicatePages: pages.duplicates,
     pageReferences: pages.references,
+    domains: domains.domains,
+    duplicateDomains: domains.duplicates,
+    domainReferences: domains.references,
+    commonFields: columns.commonFields,
+    duplicateCommonFields: columns.duplicates,
+    entityColumns: columns.entities,
+    indeterminateColumnLists: columns.indeterminate,
     diagnostics,
     unresolved: UNRESOLVED_AREAS,
   };
