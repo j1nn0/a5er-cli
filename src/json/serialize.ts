@@ -144,7 +144,15 @@ export interface SerializeContext {
   readonly command: JsonCommand;
   /** The path the caller read; echoed, never resolved any further. */
   readonly path: string;
-  /** The limits the read ran under; omitted means the documented defaults (§10.2). */
+  /**
+   * The limits the read ran under; omitted means "the documented defaults" (§10.2).
+   *
+   * **Caller precondition.** The read does not carry its effective limits, so this is the only
+   * source of `limits.maxBytes` in the envelope: pass the same object that loaded the input, or the
+   * envelope states a cap the read never used. Omission is a claim that `DEFAULT_LIMITS` applied —
+   * honest for the fixtures staged here, and pinned by `tests/json-contract.test.ts` for both
+   * branches (§12, §17 TBD-O3).
+   */
   readonly limits?: Limits;
 }
 

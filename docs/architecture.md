@@ -759,16 +759,25 @@ admits more than one reading. `$FFFFFFFF` is reported as the default colour, not
 
 ### 10.2 Limits fail closed
 
-| Limit | Default (TBD-O3) | On breach |
-|---|---|---|
-| `maxBytes` | 64 MiB | `E_LIMIT_BYTES` — fatal, no schema |
-| `maxLines` | 2,000,000 | `E_LIMIT_LINES` — fatal |
-| `maxLineLength` | 4 MiB, measured in **UTF-16 code units** (a surrogate pair counts 2) | `E_LIMIT_LINE_LENGTH` — fatal |
-| `readBudgetMs` | none in v1 | — |
+| Limit | Default (TBD-O3) | Unit | On breach |
+|---|---|---|---|
+| `maxBytes` | 64 MiB (67,108,864 bytes) | bytes of the whole file, BOM included, judged from `fstat` **before** any buffer is allocated | `E_LIMIT_BYTES` — fatal, no schema |
+| `maxLines` | 2,000,000 | physical lines of decoded text | `E_LIMIT_LINES` — fatal |
+| `maxLineLength` | 4,194,304 (4 Mi) | **UTF-16 code units** of one line — the same unit as `String.length`, so a surrogate pair counts 2 | `E_LIMIT_LINE_LENGTH` — fatal |
 
-There is **no partial-success mode**: if the reader stops early, the result is a failed
-envelope, never a shorter schema. This is the `not-attempted` pattern recorded in
-`parser-evaluation.md` §2.2, adopted as a hard rule.
+There is no wall-clock read budget: `Limits` has exactly these three numeric fields, and nothing in
+the reader consults a clock. A millisecond budget would make the tool's answer depend on the
+machine, which is what a deterministic reader cannot do; if a legitimate input ever needs one, it is
+a Phase 2 decision and not a hidden timer.
+
+There is **no partial-success mode**: a refused read yields a failed envelope, never a shorter
+schema. This is the `not-attempted` pattern recorded in `parser-evaluation.md` §2.2, adopted as a
+hard rule. Two different things can stop a read, and the envelope keeps them apart:
+
+- a **limit refusal** (`E_LIMIT_BYTES`, `E_LIMIT_LINES`, `E_LIMIT_LINE_LENGTH`) rejects the *whole*
+  file — nothing was accepted and nothing is partial, so `limits.truncated` is `false`;
+- a **physical short read** (`E_TRUNCATED_INPUT`) is the operating system returning fewer bytes than
+  the file's own `fstat` declared. Only this one reports `limits.truncated: true` (§12).
 
 A line is a physical line of the decoded text, as §4.1 defines it: `\r\n`, `\n` or a bare `\r`
 terminates one, and a **trailing** terminator does not create an extra empty line. `maxLines`
@@ -802,6 +811,12 @@ Four families, distinguished by **who can fix them** and **whether schema can be
 | Syntax | `S_` | Unknown/duplicate/malformed constructs, element-count anomalies | yes | 0 |
 | Semantic | `V_` | Structural or referential defects found by validation | yes | 0, or 3 for `validate` |
 
+The Exit column is `ExitPolicy` (`inspect` ∈ {0, 1}, `validate` ∈ {0, 1, 3}), which is
+**Integration data, not an envelope member** (§12). Everything a file can cause is in that table;
+the one exit code outside it is `2` for *command-line misuse* (an unrecognised token), which the
+command layer decides before any input is read and which belongs to stage 7. A file never produces
+`2`, and no `E_`/`D_`/`S_`/`V_` code maps to it.
+
 ```ts
 export type Severity = 'fatal' | 'error' | 'warning' | 'info'
 
@@ -829,7 +844,8 @@ Initial code list (frozen enough to test against, not a promise of completeness)
 | Code | Severity | Meaning |
 |---|---|---|
 | `E_IO`, `E_NOT_A_FILE`, `E_EMPTY_INPUT`, `E_BINARY_INPUT` | fatal | cannot treat input as text |
-| `E_TRUNCATED_INPUT`, `E_LIMIT_BYTES`, `E_LIMIT_LINES`, `E_LIMIT_LINE_LENGTH` | fatal | stopped early — never partial |
+| `E_TRUNCATED_INPUT` | fatal | the OS returned fewer bytes than the file declared — a partial read, refused |
+| `E_LIMIT_BYTES`, `E_LIMIT_LINES`, `E_LIMIT_LINE_LENGTH` | fatal | a documented limit refused the whole file — nothing was partially accepted |
 | `E_UNDECODABLE`, `E_CODEC_UNAVAILABLE` | fatal | no strict decoder succeeded |
 | `E_UNRECOGNIZED_DOCUMENT`, `E_FILE_CHANGED_DURING_READ` | fatal | not an a5er, or unstable input |
 | `D_BOM_MISSING`, `D_ENCODING_ASSUMED` | info | spec-preferred form absent |
@@ -952,6 +968,27 @@ Contract rules:
    reconstruct causality. `unsupported` stays separate because it is evidence, not a
    judgement about correctness.
 
+**`limits`.** Two facts, and the second is narrower than its name suggests:
+
+- `maxBytes` is the byte cap the read ran under (§10.2). It is **caller-supplied**: the read does
+  not carry its effective limits into `DecodedSource`, so `serialize()` echoes
+  `context.limits.maxBytes`, and an omitted context is a claim that the documented defaults were
+  used. The precondition is therefore on the caller — pass the same limits object that loaded the
+  input — and it is pinned by a test rather than enforced at runtime (§17 TBD-O3). The other two
+  limits are not projected: only the byte cap bounds what a consumer can re-allocate.
+- `truncated` is `true` for exactly one condition: a **physical short read**, i.e. an
+  `E_TRUNCATED_INPUT` in `diagnostics`. A limit refusal (`E_LIMIT_BYTES`, `E_LIMIT_LINES`,
+  `E_LIMIT_LINE_LENGTH`) rejects the whole file and is `false`; so is every other fatal
+  (`E_IO`, `E_UNDECODABLE`, `E_BINARY_INPUT`, `E_FILE_CHANGED_DURING_READ`), because nothing
+  partial ever leaves the reader. The field is derived from the diagnostic sequence and from
+  nothing else, so it cannot disagree with the reason the read stopped.
+
+**Exit codes are not an envelope member.** The envelope has the ten fields above and no
+`exitPolicy`; adding one would be a contract change for information the command layer already owns.
+`ExitPolicy` stays Integration data (`inspect` ∈ {0, 1}, `validate` ∈ {0, 1, 3}), and the one code
+that is not a policy answer — `2` for command-line misuse — is decided by the command layer before
+any input is read (§11, §17 TBD-O7).
+
 A single object, abbreviated, to show span/raw/origin co-location:
 
 ```json
@@ -1042,8 +1079,8 @@ schema key — never a partial diagram.
 | 8 | Multi-column relation and multi-column index | columns split correctly | `["user_name","birthday"]`, not three fragments |
 | 9 | Unknown section and unknown key | preserved + diagnosed (info) | `unsupported` non-empty, `dropped === 0`, status ok |
 | 10 | Duplicate scalar key, missing required key | last wins + warning; missing → error/warning | both spans present; no crash |
-| 11 | Truncated read (limit or mid-file) | fatal, no partial schema | `status: "failed"`, `schema` absent, `limits.truncated === true` |
-| 12 | File above `maxBytes` | fatal before allocation | `E_LIMIT_BYTES`, constant memory |
+| 11 | Mid-file short read (the OS returns fewer bytes than `fstat` declared) | fatal, no partial schema | `status: "failed"`, `source`/`schema`/`completeness` **present as `null`** (the keys are there), `E_TRUNCATED_INPUT`, `limits.truncated === true` |
+| 12 | File above `maxBytes` (or a line/length limit breach) | fatal before allocation | `E_LIMIT_BYTES`/`E_LIMIT_LINES`/`E_LIMIT_LINE_LENGTH`, constant memory, `limits.truncated === false` — the whole file was refused, nothing was truncated |
 | 13 | Schema-valid but referentially broken (dangling entity, column, page) | parses fully, warns | all three `V_DANGLING_*` codes; status degraded |
 | 14 | Input immutability | file unchanged after every command | mtime and sha256 identical before/after |
 | 15 | Hostile bytes: NUL-laden, CR/LF/CRLF mixed, no trailing newline, BOM mid-file, 1 MB single line | no crash, no mojibake, correct line spans | binary → fatal; others parse with diagnostics |
@@ -1156,12 +1193,12 @@ not as spec behaviour. None of U1–U15 is presented as settled by these decisio
 | ID | Open point | Default until decided | Owner |
 |---|---|---|---|
 | TBD-O1 | Byte offsets in spans (only if a consumer needs binary extraction) | Absent | Phase 2, stage 1 |
-| TBD-O2 | Streaming threshold for very large files | None; `maxBytes` only | Phase 2, stage 2 |
-| TBD-O3 | Final limit defaults (`maxBytes`, `maxLines`, `maxLineLength`) | The values in §10.2 | Phase 2, stage 2 |
+| TBD-O2 | Streaming threshold for very large files | None; `maxBytes` only. The cap is judged from `fstat` before any allocation, so the peak cost of a refused file is one `stat` — but a file *at* the cap is still materialised whole. Not exercised above 4 KiB in any test | Phase 2, stage 2 |
+| TBD-O3 | Final limit defaults (`maxBytes`, `maxLines`, `maxLineLength`) | The values in §10.2. Two gaps are recorded here rather than papered over: the envelope's `limits.maxBytes` is the **caller-supplied** cap, not one carried by the read (§12), and the 64 MiB default breach is never executed — the `E_LIMIT_BYTES` path is proven with a 4 KiB cap and a fake `fstat` | Phase 2, stage 2 |
 | TBD-O4 | Whether a JSON Schema file ships with the CLI | Not in v0.1.0 | Phase 2, stage 7 |
 | TBD-O5 | `contractVersion` bump policy and its relation to package semver | Independent versioning | Phase 2, stage 7 |
 | TBD-O6 | Whether the AST is exposed behind a flag (`--ast`) | Not exposed | Phase 2, stage 7 |
-| TBD-O7 | Exit code for non-`validate` commands when `error`-severity diagnostics exist | 0 (only `validate` returns 3) | Phase 2, stage 7 |
+| TBD-O7 | Exit code for non-`validate` commands when `error`-severity diagnostics exist | 0 (only `validate` returns 3). The mapping is `ExitPolicy` in `validate/`; command-line misuse (`2`) is decided by the command layer and is not part of it; neither appears in the envelope (§11, §12) | Phase 2, stage 7 |
 | TBD-O8 | Whether `export` exists as a command or `inspect --format` covers it | Not decided | Phase 3 |
 
 ---

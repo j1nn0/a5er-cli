@@ -278,15 +278,15 @@ it differs, per TBD-O7).
 | 1 | UTF-8 with BOM | `fmt-01` | ok | 0 | none | 2 entities + 1 view + 1 relation parsed; `encoding.bom === true`; every node has a span |
 | 2 | UTF-8 without BOM | `enc-02` | ok | 0 | `D_BOM_MISSING` (info) | same schema as `fmt-01`; diagnostic present exactly once |
 | 3 | Shift_JIS under `ENCODING:UTF8` | `enc-03` | degraded | 0 | `D_ENCODING_MISMATCH` (warning) | Japanese logical names decode exactly; **no U+FFFD anywhere in the envelope**; `encoding.detected === "shift_jis"` |
-| 4 | Undecodable bytes | `enc-04` | failed | 1 | `E_UNDECODABLE` | `schema` absent, `limits.truncated === false`, no partial objects |
+| 4 | Undecodable bytes | `enc-04` | failed | 1 | `E_UNDECODABLE` | `source`/`schema`/`completeness` present but `null`, `limits.truncated === false`, no partial objects |
 | 5 | Japanese names, comments, escapes | `val-01` | ok | 0 | none | `\Q` → `"`, `\q` → `'`, `\\`, `\t`, `\n` round-trip; a literal `\"` stays `\"`; comment text byte-identical to the decoded source |
 | 6 | Multi-table, multi-view | `txt-01` | ok | 0 | none | 3 objects, 2 views, 2 pages; `[View]` objects report `effectiveColumns.status === "unknown"` |
 | 7 | Composite PK | `val-06` | ok | 0 | none | `primaryKey.origin === "inferred"`; column order `0,1,2`; `derivedFrom` cites three key lines |
 | 8 | Multi-column relation and index | `txt-03`, `val-02` | ok | 0 | none | `Fields1` → `["a","b"]`; index columns `["user_name","birthday"]` (not three fragments); order preserved |
 | 9 | Unknown section and key | `txt-04` | ok | 0 | `S_UNKNOWN_SECTION`, `S_UNKNOWN_KEY` (info) | `unsupported` has 3 entries with spans; `completeness.dropped === 0`; raw lines preserved verbatim |
 | 10 | Duplicate scalar, missing identity | `txt-05`, `sem-08` | degraded | 0 | `S_DUPLICATE_KEY` (warning); `V_DUPLICATE_OBJECT_NAME` (error) | last occurrence wins; both spans retained; both objects still emitted; `validate` on `sem-08` exits 3 |
-| 11 | Truncated read | `res-01`, `res-02` | failed | 1 | `res-01`: `E_LIMIT_BYTES` (the cap fired); `res-02`: `E_TRUNCATED_INPUT` (the seam returned short) | `schema` absent in both; `limits.truncated === true` for `res-01`; no stdout JSON is a "shorter schema" |
-| 12 | Above `maxBytes` | `res-03` | failed | 1 | `E_LIMIT_BYTES` | fatal before allocation; stderr carries the diagnostic; stdout envelope still valid JSON |
+| 11 | Stopped read — two different shapes | `res-01`, `res-02` | failed | 1 | `res-01`: `E_LIMIT_BYTES` (the 4 KiB cap refused the whole file); `res-02`: `E_TRUNCATED_INPUT` (the IO seam returned fewer bytes than `fstat` declared) | `source`/`schema`/`completeness` are `null` in both; **`limits.truncated === false` for `res-01`** (a limit refusal truncates nothing) and `=== true` for `res-02`; no stdout JSON is a "shorter schema" |
+| 12 | Above a limit | `res-03` | failed | 1 | `E_LIMIT_BYTES`, `E_LIMIT_LINES`, `E_LIMIT_LINE_LENGTH` (one per member) | refused from the stat / during decode before any consumer sees text; `limits.truncated === false`; stderr carries the diagnostic; stdout envelope still valid JSON |
 | 13 | Referentially broken | `sem-01` | degraded | 0 | `V_DANGLING_ENTITY`, `V_DANGLING_COLUMN`, `V_DANGLING_PAGE` (warning) | all three codes, each with its own span; schema fully emitted |
 | 14 | Immutability | `imm-01` | — | 0 | none | sha256, size and `mtimeMs` identical before and after every command; handle opened read-only |
 | 15 | Hostile bytes | `hst-01`, `hst-02`, `hst-03`, `hst-04`, `hst-05` | mixed | 0/1 | `E_BINARY_INPUT` for `hst-02`; others none | no crash, no hang, no mojibake; file text never appears in `code` or `message`, only in `details` (≤ 200 chars); mixed EOL produces **no** diagnostic (documented: the format defines no line endings, U4) |
@@ -495,8 +495,8 @@ assertion until Phase 2 owns the decision.
 | TBD-T1 | Coverage percentage gate | Reported only in v1 |
 | TBD-T2 | When guard tests G-4/G-5 become lint rules | Requires a linter decision |
 | TBD-T3 | macOS / other runners | Not a target in v1 |
-| TBD-O2 | Streaming threshold | `res-03` uses injectable limits, so no large fixture is needed |
-| TBD-O3 | Final limit defaults | Tests override limits per case; defaults are asserted once, in a config test |
+| TBD-O2 | Streaming threshold | `res-03` builds each breach in memory (including 64 MiB + 1) and only the small members are read; no read at or above `maxBytes` is exercised except `res-01` with a 4 KiB cap |
+| TBD-O3 | Final limit defaults | Tests override limits per case; the defaults are asserted in `json-contract.test.ts` (envelope `limits` and the omission branch) and per golden, not in a config test. The envelope's `limits.maxBytes` is caller-supplied — pass the same limits that loaded the input (`architecture.md` §12) |
 | TBD-O6 | `--ast` flag | AST assertions go through the library API, not the CLI |
 
 ---

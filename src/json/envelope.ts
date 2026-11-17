@@ -864,10 +864,22 @@ export interface JsonSource {
   };
 }
 
-/** The limits the read ran under (§10.2) and the one truncation fact the envelope reports. */
+/**
+ * The limits the read ran under (§10.2) and the one truncation fact the envelope reports.
+ *
+ * `maxBytes` is **caller-supplied** (`SerializeContext.limits`), not carried by the read: the
+ * precondition is that the caller passes the same object that loaded the input, and omitting it is
+ * a claim that the documented defaults were used (§12, §17 TBD-O3). The other two limits are not
+ * projected — only the byte cap bounds what a consumer can re-allocate.
+ */
 export interface JsonLimits {
   readonly maxBytes: number;
-  /** §10.4's fail-closed stop, decided only by an `E_TRUNCATED_INPUT` in `diagnostics`. */
+  /**
+   * True for exactly one condition: a **physical short read** (§10.2), i.e. an
+   * `E_TRUNCATED_INPUT` in `diagnostics`. A limit refusal (`E_LIMIT_BYTES`, `E_LIMIT_LINES`,
+   * `E_LIMIT_LINE_LENGTH`) refuses the whole file and is `false`, as is every other fatal —
+   * nothing partial ever leaves the reader, so nothing else may claim truncation.
+   */
   readonly truncated: boolean;
 }
 

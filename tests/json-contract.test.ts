@@ -32,7 +32,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadSource } from '../src/decode/load.js';
-import { DEFAULT_LIMITS } from '../src/io/limits.js';
+import type { FileSystem, SourceHandle, SourceStat } from '../src/io/fs.js';
+import type { Limits } from '../src/io/limits.js';
+import { DEFAULT_LIMITS, withLimits } from '../src/io/limits.js';
 import {
   CONTRACT_VERSION,
   TOOL_NAME,
@@ -48,6 +50,7 @@ import { derivePartialSemantics } from '../src/semantic/partial.js';
 import { scanSource } from '../src/syntax/scanner.js';
 import type { IntegrationInput, LoadedIntegrationInput } from '../src/validate/index.js';
 import { integrate } from '../src/validate/index.js';
+import { CAPPED_READ_LIMIT_BYTES, GENERATED_BUILDERS } from './helpers/generated.js';
 import { stage } from './helpers/stage.js';
 
 /** §12's envelope fields, in the order `serialize` constructs them (construction = emission). */
@@ -2047,5 +2050,301 @@ describe('json envelope — FORMAT declarations (stage 6-B unit 4)', () => {
         expect(indexes?.legacy[0]?.role, where).toBe(row.legacyRole);
       });
     }
+  });
+});
+
+describe('json envelope — limits and the failure contract (stage 6-B unit 5)', () => {
+  /**
+   * A minimal, complete document. Every line is short and the file parses, so the only variable in
+   * these tests is the limit the reader or the decoder is given.
+   */
+  const DOCUMENT = [
+    '# A5:ER FORMAT:21',
+    '',
+    '[Manager]',
+    'PageInfo="Main",3,"A4Landscape","$FFFFFF"',
+    '',
+    '[Entity]',
+    'PName="e"',
+    'Field="ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,""',
+    'Position="Main",1,1',
+    '',
+  ].join('\n');
+  /** Physical lines, by the same rule §10.2 uses: a trailing terminator adds no line. */
+  function lineCountOf(text: string): number {
+    const parts = text.split('\n');
+    return text.endsWith('\n') ? parts.length - 1 : parts.length;
+  }
+  /** The longest line in UTF-16 code units — the unit `maxLineLength` counts. */
+  function longestLineOf(text: string): number {
+    return Math.max(...text.split('\n').map((line) => line.length));
+  }
+  /**
+   * The four real stages under an explicit limit, so a *successful* read can be serialized.
+   *
+   * `inputFromPath` above always loads under the defaults; the limit tests need the same pipeline
+   * with a cap, and a fatal read has no scan to build, so this returns `null` for it.
+   */
+  function pipelineWithLimits(
+    path: string,
+    limits: Partial<Limits>,
+  ): LoadedIntegrationInput | null {
+    const load = loadSource(path, { limits });
+    if (!load.ok) return null;
+    const scan = scanSource(load.source);
+    const classification = classify(scan);
+    return { load, scan, classification, semantics: derivePartialSemantics(classification) };
+  }
+  /** Write bytes as a staged `.a5er`, so the real reader can be pointed at them. */
+  function withBytes(bytes: Uint8Array, run: (path: string, sizeBytes: number) => void): void {
+    const directory = mkdtempSync(join(tmpdir(), 'a5er-limits-'));
+    const path = join(directory, 'document.a5er');
+    try {
+      const buffer = Buffer.from(bytes);
+      writeFileSync(path, buffer);
+      run(path, buffer.byteLength);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+  /**
+   * A read boundary whose `fstat` promises bytes its `read` never returns.
+   *
+   * This is the only way to reach `E_TRUNCATED_INPUT` deterministically (§10.2, R12): a real file
+   * cannot shrink between the stat and the read on demand, and the seam exists so the state is
+   * injected instead of raced. The fake reports the *real* file's size, so nothing about the input
+   * is fictional — only the read is.
+   */
+  function shortReadFileSystem(sizeBytes: number): FileSystem {
+    const stat: SourceStat = { sizeBytes, mtimeMs: 1, ino: 1, isRegularFile: true };
+    const handle: SourceHandle = {
+      stat: () => stat,
+      read: () => Buffer.alloc(0),
+      close: () => undefined,
+    };
+    return { open: () => handle };
+  }
+  /** The shared fatal arm: ten fields, no source/schema/counts, still strict JSON. */
+  function assertFatalShape(envelope: JsonEnvelope, where: string): void {
+    expect(Object.keys(envelope), where).toEqual([...ENVELOPE_KEYS]);
+    // No `exitPolicy` and no eleventh field: the policy is Integration's, not the envelope's.
+    expect(envelope.status, where).toBe('failed');
+    expect(envelope.source, where).toBeNull();
+    expect(envelope.schema, where).toBeNull();
+    expect(envelope.completeness, where).toBeNull();
+    expect(envelope.unsupported, where).toEqual([]);
+    // The keys exist with a `null` value — they are not absent (§14 row 11).
+    expect(envelope, where).toHaveProperty('schema', null);
+    // A rejected read still serializes: automation must never have to tell "no output" from a
+    // crash (§12 rule 1), and the strict replacer must not have dropped or rewritten anything.
+    const text = toJsonString(envelope);
+    expect(JSON.parse(text).status, where).toBe('failed');
+    expect(JSON.parse(text).limits, where).toEqual(envelope.limits);
+  }
+  it('refuses the whole file on a limit breach, and never calls that truncation', () => {
+    const size = Buffer.byteLength(DOCUMENT);
+    const lines = lineCountOf(DOCUMENT);
+    const longest = longestLineOf(DOCUMENT);
+    const cases = [
+      {
+        label: 'maxBytes',
+        limits: { maxBytes: size - 1 },
+        code: 'E_LIMIT_BYTES',
+        details: { sizeBytes: size, maxBytes: size - 1 },
+      },
+      {
+        label: 'maxLines',
+        limits: { maxLines: lines - 1 },
+        code: 'E_LIMIT_LINES',
+        details: { lines, maxLines: lines - 1 },
+      },
+      {
+        label: 'maxLineLength',
+        limits: { maxLineLength: longest - 1 },
+        code: 'E_LIMIT_LINE_LENGTH',
+        details: { maxLineLength: longest - 1, longestLine: longest },
+      },
+    ] as const;
+    withBytes(Buffer.from(DOCUMENT, 'utf8'), (path) => {
+      for (const row of cases) {
+        const context = { ...DEFAULT_LIMITS, ...row.limits };
+        const load = loadSource(path, { limits: row.limits });
+        if (load.ok) throw new Error(`${row.label}: the limit did not fire`);
+        const input: IntegrationInput = { load };
+        const envelope = serialize(input, { command: 'inspect', path, limits: context });
+        // Exactly one finding: the limit that fired, with its own concrete numbers.
+        expect(envelope.diagnostics.length, row.label).toBe(1);
+        expect(envelope.diagnostics[0]?.code, row.label).toBe(row.code);
+        expect(envelope.diagnostics[0]?.severity, row.label).toBe('fatal');
+        expect(envelope.diagnostics[0]?.details, row.label).toEqual(row.details);
+        expect(envelope.diagnostics[0]?.construct, row.label).toBe('Source');
+        assertFatalShape(envelope, row.label);
+        // A limit refusal rejects the whole file: nothing was accepted, so nothing is truncated.
+        expect(envelope.limits, row.label).toEqual({
+          maxBytes: context.maxBytes,
+          truncated: false,
+        });
+        // The policy for a fatal input, from Integration, is the same for every case.
+        expect(integrate(input).exitPolicy, row.label).toEqual({ inspect: 1, validate: 1 });
+        expect(integrate(input).completeness, row.label).toBeNull();
+      }
+    });
+  });
+  it('reports `truncated` only for a physical short read', () => {
+    withBytes(Buffer.from(DOCUMENT, 'utf8'), (path, sizeBytes) => {
+      const load = loadSource(path, { fileSystem: shortReadFileSystem(sizeBytes) });
+      if (load.ok) throw new Error('a short read was accepted');
+      const input: IntegrationInput = { load };
+      const envelope = serialize(input, { command: 'inspect', path });
+      expect(envelope.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+        'E_TRUNCATED_INPUT',
+      ]);
+      expect(envelope.diagnostics[0]?.severity).toBe('fatal');
+      // The size the *file* declared, not the number of bytes that arrived.
+      expect(envelope.diagnostics[0]?.details).toEqual({ declaredSizeBytes: sizeBytes });
+      assertFatalShape(envelope, 'short read');
+      expect(envelope.limits).toEqual({
+        maxBytes: DEFAULT_LIMITS.maxBytes,
+        truncated: true,
+      });
+      expect(integrate(input).exitPolicy).toEqual({ inspect: 1, validate: 1 });
+      // The same bytes through the real reader parse: the flag follows the read, not the file.
+      const real = pipelineWithLimits(path, {});
+      if (real === null) throw new Error('the staged document must load');
+      const healthy = serialize(real, { command: 'inspect', path });
+      expect(healthy.status).toBe('ok');
+      expect(healthy.limits).toEqual({
+        maxBytes: DEFAULT_LIMITS.maxBytes,
+        truncated: false,
+      });
+    });
+  });
+  it('accepts a document exactly at each limit and refuses the unit past it', () => {
+    const size = Buffer.byteLength(DOCUMENT);
+    const lines = lineCountOf(DOCUMENT);
+    const longest = longestLineOf(DOCUMENT);
+    withBytes(Buffer.from(DOCUMENT, 'utf8'), (path) => {
+      const at = [
+        { label: 'maxBytes', limits: { maxBytes: size } },
+        { label: 'maxLines', limits: { maxLines: lines } },
+        { label: 'maxLineLength', limits: { maxLineLength: longest } },
+      ] as const;
+      for (const row of at) {
+        // Equality is inside the limit: the comparison is `>` in every one of the three checks.
+        const input = pipelineWithLimits(path, row.limits);
+        if (input === null) {
+          throw new Error(`${row.label}: a document exactly at the limit was refused`);
+        }
+        const envelope = serialize(input, {
+          command: 'inspect',
+          path,
+          limits: { ...DEFAULT_LIMITS, ...row.limits },
+        });
+        expect(envelope.status, row.label).toBe('ok');
+        expect(
+          envelope.diagnostics.map((diagnostic) => diagnostic.code),
+          row.label,
+        ).toEqual(['D_BOM_MISSING']);
+        expect(envelope.schema?.objects, row.label).toHaveLength(1);
+        expect(envelope.limits.truncated, row.label).toBe(false);
+      }
+    });
+  });
+  it('counts `maxLineLength` in UTF-16 code units, not bytes', () => {
+    // Four astral characters: 8 code units, 16 UTF-8 bytes. Every other line is shorter, so the
+    // reported `longestLine` can only come from this one.
+    const emoji = '😀😀😀😀';
+    const text = [
+      '# A5:ER FORMAT:21',
+      '',
+      '[Manager]',
+      'PageInfo="M"',
+      '',
+      '[Entity]',
+      'PName="e"',
+      `Comment="${emoji}"`,
+      'Position="M",1,1',
+      '',
+    ].join('\n');
+    const commentLine = `Comment="${emoji}"`;
+    const unitCount = commentLine.length;
+    const byteCount = Buffer.byteLength(commentLine);
+    // Four astral characters: 8 code units, 16 UTF-8 bytes — so the byte count is 8 larger.
+    expect(byteCount, 'UTF-8 bytes').toBe(unitCount + 8);
+    expect(unitCount, 'the emoji line is the longest').toBe(longestLineOf(text));
+    withBytes(Buffer.from(text, 'utf8'), (path) => {
+      const accepted = loadSource(path, { limits: { maxLineLength: unitCount } });
+      expect(accepted.ok, 'exactly at the code-unit limit').toBe(true);
+      const refused = loadSource(path, { limits: { maxLineLength: unitCount - 1 } });
+      if (refused.ok) throw new Error('one code unit past the limit was accepted');
+      expect(refused.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+        'E_LIMIT_LINE_LENGTH',
+      ]);
+      // Code units: a byte count would have reported `unitCount + 8`, not `unitCount`.
+      expect(refused.diagnostics[0]?.details).toEqual({
+        maxLineLength: unitCount - 1,
+        longestLine: unitCount,
+      });
+    });
+  });
+  it('echoes the caller-supplied cap, so the context must repeat what the read used', () => {
+    const built = GENERATED_BUILDERS['res-01']?.() ?? [];
+    const first = built[0];
+    if (first === undefined) throw new Error('res-01 built no file');
+    // The res-01 shape: a document larger than a 4 KiB cap, refused from its stat before any read.
+    expect(first.bytes.byteLength).toBeGreaterThan(CAPPED_READ_LIMIT_BYTES);
+    withBytes(first.bytes, (path, sizeBytes) => {
+      const load = loadSource(path, { limits: { maxBytes: CAPPED_READ_LIMIT_BYTES } });
+      if (load.ok) throw new Error('res-01 was accepted under a 4 KiB cap');
+      const input: IntegrationInput = { load };
+      const cap = { ...DEFAULT_LIMITS, maxBytes: CAPPED_READ_LIMIT_BYTES };
+      const honest = serialize(input, { command: 'inspect', path, limits: cap });
+      // The documented contract: pass the same limits that loaded the input.
+      expect(honest.limits).toEqual({
+        maxBytes: CAPPED_READ_LIMIT_BYTES,
+        truncated: false,
+      });
+      expect(honest.diagnostics[0]?.details).toEqual({
+        sizeBytes,
+        maxBytes: CAPPED_READ_LIMIT_BYTES,
+      });
+      assertFatalShape(honest, 'res-01');
+      // Omitting the context is the documented *claim* that the defaults applied — the envelope
+      // repeats the claim, and the diagnostic still names the cap that really fired.
+      const omitted = serialize(input, { command: 'inspect', path });
+      expect(omitted.limits).toEqual({
+        maxBytes: DEFAULT_LIMITS.maxBytes,
+        truncated: false,
+      });
+      expect(omitted.diagnostics).toEqual(honest.diagnostics);
+      // Nothing detects a mismatch: a different explicit cap is echoed verbatim, which is exactly
+      // why the precondition is documented (§12) instead of being silently "fixed".
+      const mismatched = serialize(input, {
+        command: 'inspect',
+        path,
+        limits: { ...DEFAULT_LIMITS, maxBytes: 512 },
+      });
+      expect(mismatched.limits.maxBytes).toBe(512);
+      expect(mismatched.diagnostics).toEqual(honest.diagnostics);
+    });
+  });
+  it('treats an invalid limit override as a programmer error, before any envelope', () => {
+    // `withLimits` is the only validator, and it throws: a limit is code, not input (§10.2).
+    for (const [name, value] of [
+      ['maxBytes', 0],
+      ['maxLines', -1],
+      ['maxLineLength', 1.5],
+    ] as const) {
+      expect(() => withLimits({ [name]: value }), name).toThrow(
+        new RegExp(`limit ${name} must be a positive integer`),
+      );
+    }
+    withBytes(Buffer.from(DOCUMENT, 'utf8'), (path) => {
+      // The reader propagates it instead of turning it into a diagnostic: nothing here is a file
+      // condition, so no `E_*` code may be invented for it.
+      expect(() => loadSource(path, { limits: { maxBytes: 0 } })).toThrow(
+        /limit maxBytes must be a positive integer/,
+      );
+    });
   });
 });
