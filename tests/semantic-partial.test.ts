@@ -19,12 +19,16 @@ import type { FixtureSpec } from './helpers/fixture-registry.js';
 import { classificationOf, semanticsOf } from './helpers/classified.js';
 import { assertCodes } from './helpers/assert-codes.js';
 
-/** The four codes this unit owns. Every other `V_` belongs to the open resolution work. */
+/** The codes this stage owns. Every other `V_` belongs to the open resolution work. */
 const OWNED_CODES: ReadonlySet<string> = new Set([
   'V_DUPLICATE_OBJECT_NAME',
   'V_MISSING_REQUIRED_KEY',
   'V_PK_ORDER_CONFLICT',
   'V_INDEX_LEGACY_ONLY',
+  'V_DANGLING_ENTITY',
+  'V_DANGLING_COLUMN',
+  'V_DANGLING_PAGE',
+  'V_FIELD_COUNT_MISMATCH',
 ]);
 
 function expectedOwnedCodes(spec: FixtureSpec): string[] {
@@ -57,35 +61,34 @@ describe('every fixture yields exactly the V_ codes this unit owns', () => {
 describe('the boundary is part of the result (§9, §17)', () => {
   it('names every §9 area this stage does not model', () => {
     expect(semanticsOf('fmt-01').unresolved).toEqual([
-      'relation-endpoints',
-      'page-resolution',
       'domain-resolution',
       'common-columns',
       'view-columns',
       'subtype-membership',
     ]);
-    expect(UNRESOLVED_AREAS).toHaveLength(6);
+    // Relations and pages were removed from the list when they were implemented.
+    expect(UNRESOLVED_AREAS).toHaveLength(4);
+    expect(UNRESOLVED_AREAS).not.toContain('relation-endpoints');
+    expect(UNRESOLVED_AREAS).not.toContain('page-resolution');
   });
 
-  it('does not claim a resolved schema: no effective columns, no endpoints, no pages', () => {
+  it('does not claim a resolved schema: no effective columns, no envelope counters', () => {
     const semantics = semanticsOf('fmt-01') as unknown as Record<string, unknown>;
-    for (const absent of [
-      'objects',
-      'relations',
-      'pages',
-      'effectiveColumns',
-      'schema',
-      'completeness',
-    ]) {
+    for (const absent of ['objects', 'effectiveColumns', 'schema', 'completeness', 'diagnostics'])
+      if (absent === 'diagnostics') continue;
+    for (const absent of ['objects', 'effectiveColumns', 'schema', 'completeness']) {
       expect(absent in semantics, absent).toBe(false);
     }
+    // What it does expose is the resolution it actually performed.
+    expect('relations' in semantics).toBe(true);
+    expect('pages' in semantics).toBe(true);
   });
 
-  it('leaves the out-of-scope findings to the resolution unit (sem-01, sem-06)', () => {
-    // sem-01 declares three dangling references and sem-06 two unknown column sets; none of those
-    // codes is emitted here, so a consumer that only reads this result sees "nothing found" — which
-    // is why `unresolved` exists.
-    for (const id of ['sem-01', 'sem-06', 'sem-05', 'sem-03']) {
+  it('leaves the still-open findings to the resolution unit (sem-05, sem-06)', () => {
+    // sem-05's subtype membership and sem-06's view columns are the areas `unresolved` names; a
+    // consumer that only reads this result sees "nothing found" for them, which is why the list
+    // exists. (sem-01 and sem-03 are resolved now — relations and pages.)
+    for (const id of ['sem-05', 'sem-06']) {
       expect(semanticsOf(id).diagnostics, id).toEqual([]);
     }
   });

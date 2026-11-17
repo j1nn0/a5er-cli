@@ -121,7 +121,11 @@ export type SemanticStageCode =
   | 'V_DUPLICATE_OBJECT_NAME'
   | 'V_MISSING_REQUIRED_KEY'
   | 'V_PK_ORDER_CONFLICT'
-  | 'V_INDEX_LEGACY_ONLY';
+  | 'V_INDEX_LEGACY_ONLY'
+  | 'V_DANGLING_ENTITY'
+  | 'V_DANGLING_COLUMN'
+  | 'V_DANGLING_PAGE'
+  | 'V_FIELD_COUNT_MISMATCH';
 
 /**
  * Detail values, per `architecture.md` §11.
@@ -288,6 +292,22 @@ const SEMANTIC_DEFINITIONS: Readonly<Record<SemanticStageCode, Definition>> = {
   V_INDEX_LEGACY_ONLY: {
     severity: 'warning',
     message: 'The only index data this object declares uses the legacy spelling',
+  },
+  V_DANGLING_ENTITY: {
+    severity: 'warning',
+    message: 'A relation names an entity the document does not declare',
+  },
+  V_DANGLING_COLUMN: {
+    severity: 'warning',
+    message: 'A relation maps a column the resolved entity does not declare',
+  },
+  V_DANGLING_PAGE: {
+    severity: 'warning',
+    message: 'A placement names a page the document does not declare',
+  },
+  V_FIELD_COUNT_MISMATCH: {
+    severity: 'warning',
+    message: 'The two sides of a relation map a different number of columns',
   },
 };
 

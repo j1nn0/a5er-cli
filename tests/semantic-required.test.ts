@@ -24,6 +24,17 @@ function findingsOfText(text: string) {
   return missingRequiredKeysOf(classify(scanSource({ text, format: 21 })));
 }
 
+/**
+ * The findings about a section or a column.
+ *
+ * A document with no `[Manager]` additionally reports the document-level `PageInfo` (R22), which is
+ * a different subject; tests that are about a specific section filter it out and the R22 cases
+ * assert it directly.
+ */
+function subjectFindings(text: string) {
+  return findingsOfText(text).filter((finding) => finding.subject !== 'document');
+}
+
 describe('a missing required key is reported once per subject', () => {
   it('reports PageInfo as an error on the [Manager] header (sem-09)', () => {
     const semantics = semanticsOf('sem-09');
@@ -126,14 +137,14 @@ describe('scope and granularity', () => {
 
   it('does not invent a default for a required key (K6)', () => {
     // `RelationType1` has a documented default of 1, which K6 says to reject in favour of 必須.
-    const findings = findingsOfText('[Relation]\nEntity1="a"\nEntity2="b"\nPosition="M",1,1\n');
+    const findings = subjectFindings('[Relation]\nEntity1="a"\nEntity2="b"\nPosition="M",1,1\n');
 
     expect(findings).toHaveLength(1);
     expect(findings[0]?.keys).toEqual(['Fields1', 'Fields2', 'RelationType1', 'RelationType2']);
   });
 
   it('lists several absent keys of one object in registry order', () => {
-    const findings = findingsOfText('[Comment]\nPName="note"\n');
+    const findings = subjectFindings('[Comment]\nPName="note"\n');
 
     expect(findings).toHaveLength(1);
     expect(findings[0]?.keys).toEqual(['Position', 'Width', 'Height']);
@@ -141,7 +152,7 @@ describe('scope and granularity', () => {
   });
 
   it('treats a missing identity key as an error, not a warning (synthetic edge)', () => {
-    const findings = findingsOfText('[Entity]\nComment="x"\nPosition="M",1,1\n');
+    const findings = subjectFindings('[Entity]\nComment="x"\nPosition="M",1,1\n');
 
     expect(findings).toHaveLength(1);
     expect(findings[0]?.keys).toEqual(['PName']);
@@ -149,7 +160,62 @@ describe('scope and granularity', () => {
   });
 
   it('ignores unknown sections, which have no registry to consult (§5)', () => {
-    const findings = findingsOfText('[Memo]\nNote="x"\n');
-    expect(findings).toEqual([]);
+    // An unknown section is not a page user either, so the document-level PageInfo finding is
+    // absent as well: a memo-only file reports nothing at all.
+    expect(findingsOfText('[Memo]\nNote="x"\n')).toEqual([]);
+  });
+});
+
+describe('R22 — PageInfo is required by the document, not by [Manager]', () => {
+  it('reports the absent PageInfo when a file has objects and no [Manager]', () => {
+    const findings = findingsOfText('[Entity]\nPName="no_manager"\nPosition="Main",10,10\n');
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      subject: 'document',
+      sectionKind: 'Manager',
+      keys: ['PageInfo'],
+      severity: 'error',
+      column: null,
+    });
+    // There is no manager line to point at, so the finding points at the first section header.
+    expect(findings[0]?.span).toEqual({
+      sectionIndex: 1,
+      startLine: 1,
+      endLine: 1,
+      keyLine: 1,
+    });
+  });
+
+  it('reports it once for a document with several page users', () => {
+    const findings = findingsOfText(
+      '[Entity]\nPName="a"\nPosition="M",1,1\n[View]\nPName="b"\nPosition="M",2,2\n',
+    );
+    const documentFindings = findings.filter((finding) => finding.subject === 'document');
+
+    expect(documentFindings).toHaveLength(1);
+    expect(documentFindings[0]?.keys).toEqual(['PageInfo']);
+  });
+
+  it('says nothing when a [Manager] declares its pages, and nothing for a page-free file', () => {
+    expect(
+      findingsOfText(
+        '[Manager]\nPageInfo="Main",3,"A4","$FFFFFF"\n[Entity]\nPName="a"\nPosition="Main",1,1\n',
+      ),
+    ).toEqual([]);
+    // A document that places nothing on a page does not need one.
+    expect(findingsOfText('[Memo]\nNote="x"\n')).toEqual([]);
+  });
+
+  it('still reports a [Manager] that exists but omits PageInfo (sem-09)', () => {
+    const findings = semanticsOf('sem-09').missingRequired;
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.subject).toBe('section');
+    expect(findings[0]?.keys).toEqual(['PageInfo']);
+  });
+
+  it('does not double-report for repeated [Manager] sections (txt-06)', () => {
+    expect(semanticsOf('txt-06').missingRequired).toEqual([]);
   });
 });

@@ -33,10 +33,35 @@ import type { SectionKind } from '../syntax/sections.js';
 /** The keys whose absence §11 calls an error rather than a warning. */
 const ERROR_KEYS: ReadonlySet<string> = new Set(['PName', 'PageInfo']);
 
+/**
+ * Sections whose objects are placed on a page, so the document needs at least one `PageInfo`.
+ *
+ * Every modelled section that carries a `Position` is in here: `[Manager]` is where pages are
+ * declared and is excluded because it *is* the declaration site, and an unknown section is not
+ * modelled at all (§5).
+ */
+const PAGE_USERS: ReadonlySet<SectionKind> = new Set<SectionKind>([
+  'Entity',
+  'View',
+  'Subtype',
+  'Relation',
+  'Shape',
+  'Line',
+  'Comment',
+]);
+
+/**
+ * What is missing the key.
+ *
+ * `document` exists for the one requirement that is not attached to a section the file contains:
+ * `PageInfo` is needed by any diagram that places something on a page (`§9.3`, P11), so a file with
+ * objects and no `[Manager]` at all is missing it — and there is no `[Manager]` line to point at.
+ */
+export type MissingSubject = 'document' | 'section' | 'column';
+
 /** One subject that is missing at least one key the specification requires. */
 export interface MissingRequiredKeys {
-  /** `section` for a whole section; `column` for one `Field` inside it. */
-  readonly subject: 'section' | 'column';
+  readonly subject: MissingSubject;
   readonly sectionIndex: number;
   readonly sectionKind: SectionKind;
   /** The absent key names, in registry order (or `['color']` for a column). */
@@ -75,6 +100,16 @@ function reportSpanOf(section: ClassifiedSection): Span {
   return span;
 }
 
+/** The section header as a single-line span. */
+function headerSpanOf(section: ClassifiedSection): Span {
+  return {
+    sectionIndex: section.index,
+    startLine: section.span.keyLine,
+    endLine: section.span.keyLine,
+    keyLine: section.span.keyLine,
+  };
+}
+
 /** The key names a section actually declared, whether it decoded or was preserved raw. */
 function declaredKeys(section: ClassifiedSection): Set<string> {
   const declared = new Set<string>();
@@ -93,8 +128,25 @@ function declaredKeys(section: ClassifiedSection): Set<string> {
 export function missingRequiredKeysOf(classification: Classification): MissingRequiredKeys[] {
   const findings: MissingRequiredKeys[] = [];
 
-  // `[Manager]` is one document-wide settings block that may be split over repeated sections.
+  // R22: `PageInfo` is required by the document, not by the `[Manager]` section, so a file that
+  // never declares one has no pages even though nothing in `[Manager]` is missing. When there is no
+  // `[Manager]` section there is no manager line to point at either, so the finding points at the
+  // document's first section header — a real line — rather than at a fabricated span.
   const managers = classification.sections.filter((section) => section.kind === 'Manager');
+  if (managers.length === 0) {
+    const first = classification.sections.find((section) => PAGE_USERS.has(section.kind));
+    if (first !== undefined) {
+      findings.push({
+        subject: 'document',
+        sectionIndex: first.index,
+        sectionKind: 'Manager',
+        keys: ['PageInfo'],
+        severity: 'error',
+        span: headerSpanOf(first),
+        column: null,
+      });
+    }
+  }
   if (managers.length > 0) {
     const declared = new Set<string>();
     for (const manager of managers) {

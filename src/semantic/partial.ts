@@ -8,15 +8,19 @@
  * | Finding | Code | Source |
  * |---|---|---|
  * | two objects share a physical name | `V_DUPLICATE_OBJECT_NAME` | P6 («全オブジェクトでユニーク») |
- * | a required key is absent | `V_MISSING_REQUIRED_KEY` | §5's `required`, §7.2, §11 |
+ * | a required key is absent | `V_MISSING_REQUIRED_KEY` | §5's `required`, §7.2, §9.3, §11 |
  * | the declared ordinals are not a key | `V_PK_ORDER_CONFLICT` | P8's キー順, §11 |
  * | legacy index data is the only index data | `V_INDEX_LEGACY_ONLY` | §6 row 6, D5/L6 |
+ * | a relation endpoint or column does not resolve | `V_DANGLING_ENTITY`, `V_DANGLING_COLUMN` | P9, U8 |
+ * | the two sides of a relation map different counts | `V_FIELD_COUNT_MISMATCH` | U8 |
+ * | a placement names no declared page | `V_DANGLING_PAGE` | P9, P11, F5 |
  *
  * **This is not a resolved schema, and it does not claim to be.** `PartialSemantics` is named for
  * the boundary: everything §9 lists and this unit does not do is in `unresolved`, so a consumer can
- * see what is missing instead of assuming an absent field means "nothing there". The five open
- * areas are relations, pages, domains, common columns and views — the parts of §9 that need
- * cross-object lookup and the decisions recorded in §17.
+ * see what is missing instead of assuming an absent field means "nothing there". Relations and
+ * pages are resolved here — endpoints against `[Entity]` names, page references against
+ * `[Manager].PageInfo` — while domains, common columns, view columns and subtype membership remain
+ * open (`§9.4`–`9.6`, `§17`).
  *
  * Pure: every rule reads the classification and allocates its own findings; nothing in the
  * classification is mutated, so a caller can derive twice and compare.
@@ -29,8 +33,17 @@ import type { DuplicateObjectName, ObjectIdentity } from './identity.js';
 import { identitiesOf } from './identity.js';
 import type { LegacyOnlyIndex } from './indexes.js';
 import { legacyOnlyIndexesOf } from './indexes.js';
-import type { InferredPrimaryKey, PkOrderConflict } from './primary-key.js';
+import type { InferredPrimaryKey, IndeterminateKey, PkOrderConflict } from './primary-key.js';
 import { primaryKeysOf } from './primary-key.js';
+import type {
+  DanglingColumn,
+  EndpointReference,
+  FieldCountMismatch,
+  ResolvedRelation,
+} from './relations.js';
+import { relationsOf } from './relations.js';
+import type { DuplicatePage, PageDeclaration, PageReference } from './pages.js';
+import { pagesOf } from './pages.js';
 import type { MissingRequiredKeys } from './required.js';
 import { missingRequiredKeysOf } from './required.js';
 
@@ -41,17 +54,19 @@ import { missingRequiredKeysOf } from './required.js';
  * must wait for the resolution unit, and a reader of `PartialSemantics` can see the list.
  */
 export type UnresolvedArea =
-  | 'relation-endpoints'
-  | 'page-resolution'
   | 'domain-resolution'
   | 'common-columns'
   | 'view-columns'
   | 'subtype-membership';
 
-/** Everything the resolution unit still owes, in one place (§9, §17). */
+/**
+ * What the resolution unit still owes, in one place (§9.4–§9.6, §17).
+ *
+ * Two areas left this list when they were implemented: `relation-endpoints` (endpoints and their
+ * columns resolve against `[Entity]` names in `relations.ts`) and `page-resolution` (`Position`
+ * references resolve case-insensitively against `PageInfo` in `pages.ts`).
+ */
 export const UNRESOLVED_AREAS: readonly UnresolvedArea[] = [
-  'relation-endpoints',
-  'page-resolution',
   'domain-resolution',
   'common-columns',
   'view-columns',
@@ -67,7 +82,20 @@ export interface PartialSemantics {
   /** One entry per object that declares at least one usable ordinal. */
   readonly primaryKeys: readonly InferredPrimaryKey[];
   readonly pkConflicts: readonly PkOrderConflict[];
+  /** Objects whose key cannot be verified because an ordinal did not decode (R23). */
+  readonly indeterminateKeys: readonly IndeterminateKey[];
   readonly legacyOnlyIndexes: readonly LegacyOnlyIndex[];
+  /** Every relation, with both endpoints' resolution status (§9.2). */
+  readonly relations: readonly ResolvedRelation[];
+  readonly danglingEntities: readonly EndpointReference[];
+  readonly ambiguousEntities: readonly EndpointReference[];
+  readonly danglingColumns: readonly DanglingColumn[];
+  readonly fieldCountMismatches: readonly FieldCountMismatch[];
+  /** `[Manager].PageInfo` declarations, duplicates retained (§9.3, P11). */
+  readonly pages: readonly PageDeclaration[];
+  readonly duplicatePages: readonly DuplicatePage[];
+  /** Every `Position` page reference, verbatim, with what it resolved to (§P9). */
+  readonly pageReferences: readonly PageReference[];
   /** Ordered by line (§12 rule 7). */
   readonly diagnostics: readonly Diagnostic[];
   /** The §9 work this stage does not do. Never empty, by design. */
@@ -92,6 +120,8 @@ export function derivePartialSemantics(classification: Classification): PartialS
   const missingRequired = missingRequiredKeysOf(classification);
   const primaryKey = primaryKeysOf(classification);
   const legacyOnlyIndexes = legacyOnlyIndexesOf(classification);
+  const relations = relationsOf(classification);
+  const pages = pagesOf(classification);
 
   const diagnostics: Diagnostic[] = [];
 
@@ -151,6 +181,49 @@ export function derivePartialSemantics(classification: Classification): PartialS
     );
   }
 
+  // One finding per dangling name per relation: an endpoint that names nothing, and each column
+  // that cannot be verified against the entity on its side (sem-01 has one of each).
+  for (const finding of relations.danglingEntities) {
+    diagnostics.push(
+      emitSemantic('V_DANGLING_ENTITY', {
+        details: { endpoint: finding.endpoint, declared: finding.declared },
+        span: finding.span,
+        construct: 'Relation',
+      }),
+    );
+  }
+
+  for (const finding of relations.danglingColumns) {
+    diagnostics.push(
+      emitSemantic('V_DANGLING_COLUMN', {
+        details: { endpoint: finding.endpoint, column: finding.column, entity: finding.entity },
+        span: finding.span,
+        construct: 'Relation',
+      }),
+    );
+  }
+
+  for (const finding of relations.countMismatches) {
+    diagnostics.push(
+      emitSemantic('V_FIELD_COUNT_MISMATCH', {
+        details: { from: finding.fromCount, to: finding.toCount },
+        span: finding.span,
+        construct: 'Relation',
+      }),
+    );
+  }
+
+  // One finding per placement that names a page nobody declared (sem-01's `GhostPage`).
+  for (const reference of pages.danglingReferences) {
+    diagnostics.push(
+      emitSemantic('V_DANGLING_PAGE', {
+        details: { page: reference.declared, section: reference.sectionKind },
+        span: reference.span,
+        construct: 'Position',
+      }),
+    );
+  }
+
   diagnostics.sort((left, right) => (left.span?.startLine ?? 0) - (right.span?.startLine ?? 0));
 
   return {
@@ -159,7 +232,16 @@ export function derivePartialSemantics(classification: Classification): PartialS
     missingRequired,
     primaryKeys: primaryKey.keys,
     pkConflicts: primaryKey.conflicts,
+    indeterminateKeys: primaryKey.indeterminate,
     legacyOnlyIndexes,
+    relations: relations.relations,
+    danglingEntities: relations.danglingEntities,
+    ambiguousEntities: relations.ambiguousEntities,
+    danglingColumns: relations.danglingColumns,
+    fieldCountMismatches: relations.countMismatches,
+    pages: pages.pages,
+    duplicatePages: pages.duplicates,
+    pageReferences: pages.references,
     diagnostics,
     unresolved: UNRESOLVED_AREAS,
   };

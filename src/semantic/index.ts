@@ -20,14 +20,30 @@ export { identitiesOf } from './identity.js';
 export type { LegacyOnlyIndex } from './indexes.js';
 export { legacyOnlyIndexesOf } from './indexes.js';
 export type {
+  IndeterminateKey,
   InferredPrimaryKey,
   InferredPrimaryKeyColumn,
+  InvalidOrdinal,
   PkConflictReason,
   PkOrderConflict,
   PrimaryKeyResult,
 } from './primary-key.js';
 export { primaryKeysOf } from './primary-key.js';
-export type { MissingRequiredKeys } from './required.js';
+export type { DuplicatePage, PageDeclaration, PageReference, PageResult } from './pages.js';
+export { pagesOf } from './pages.js';
+export type {
+  DanglingColumn,
+  EndpointReference,
+  EndpointStatus,
+  FieldCountMismatch,
+  RelationColumn,
+  RelationColumnList,
+  RelationEndpoint,
+  RelationResult,
+  ResolvedRelation,
+} from './relations.js';
+export { relationsOf } from './relations.js';
+export type { MissingRequiredKeys, MissingSubject } from './required.js';
 export { missingRequiredKeysOf } from './required.js';
 export type { PartialSemantics, UnresolvedArea } from './partial.js';
 export { derivePartialSemantics, UNRESOLVED_AREAS } from './partial.js';

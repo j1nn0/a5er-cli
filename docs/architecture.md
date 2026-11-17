@@ -589,12 +589,13 @@ the mismatch is reported on the decoded outcome, never used to choose it.
 Resolution runs once, over the AST, and produces `ResolvedSchema` plus diagnostics. It never
 mutates the AST.
 
-The layer lands in increments. The first one produces a **`PartialSemantics`** — object identities,
-duplicate names, absent required keys, inferred primary keys and legacy-only index data — together
-with an explicit list of the areas it does **not** model: relation endpoints, page resolution,
-domain resolution, common columns, view columns and subtype membership. The name is part of the
-contract: a consumer that reads an absent finding must also read that list, because "nothing
-reported" means "nothing checked" for everything on it.
+The layer lands in increments. The current one produces a **`PartialSemantics`** — object identities,
+duplicate names, absent required keys, inferred primary keys, legacy-only index data, resolved
+relations and resolved page references — together with an explicit list of the areas it does **not**
+model: domain resolution, common columns, view columns and subtype membership. The name is part of
+the contract: a consumer that reads an absent finding must also read that list, because "nothing
+reported" means "nothing checked" for everything on it. The list shrank when relations and pages
+landed; it is the record of what is still owed, not a description of the stage.
 
 ### 9.1 Object identity
 
@@ -619,12 +620,27 @@ never two objects.
   header when it has none); a column missing its 色 is one finding on its `Field` line (§7.2). No
   default is invented for an absent required key — K6's `RelationType1` default is exactly the case
   where 必須 wins.
+  `PageInfo` is required by the **document**, not by the `[Manager]` section: a file that places
+  objects on pages and declares no `[Manager]` at all is missing it, and since there is no manager
+  line to point at, that finding points at the document's first section header — a real line — rather
+  than at a fabricated span (R22). Repeated `[Manager]` sections are judged as one block, so a split
+  settings block is not reported twice.
+- **Pages** are resolved from `[Manager].PageInfo` (P11) and matched to `Position` references
+  case-insensitively without rewriting either side (P9, F5): the reference keeps the spelling the
+  file used and carries the declaration it resolved to. Two declarations that differ only in case are
+  a duplicate the format forbids; both are kept and references to them are reported as ambiguous,
+  because there is no diagnostic code for a duplicate page name in §11 and inventing one is not this
+  stage's decision. Geometry — coordinates, sizes, routing — is not read (P11 "not planned").
 - **Indexes** come from `IndexInfo` (`origin: 'declared'`). Legacy `Index`/`IndexOption` are
   decoded under the F2 gate with `origin: 'legacy'` and a diagnostic whenever they are the only
   index evidence (D5, L6, U7). A legacy payload whose shape does not match the observed
   `name=flag,cols` pattern is preserved raw and flagged, never guessed (U7).
 - **Relations** carry parent/child physical names, column lists, cardinality and IDEF1X
-  strings. `Cardinarity1` / `Cardinarity2` keep the misspelled spelling the format actually
+  strings. Endpoints resolve against `[Entity]` `PName` only: a `[View]` declares no columns and
+  `[Subtype]` membership is undocumented (K11, F7), so either would be an unverifiable endpoint and
+  is reported dangling instead. A column is checked against the entity on its side; when that
+  endpoint did not resolve, the column cannot be checked either and is reported as dangling — one
+  finding per unresolved name, with both sides' lists kept complete (U8). `Cardinarity1` / `Cardinarity2` keep the misspelled spelling the format actually
   writes (K7): the registry keys, the JSON fields and `keyRaw` all read `Cardinarity1` /
   `Cardinarity2`, and no corrected alias is invented. `RelationType1` / `RelationType2` absent
   → warning `V_MISSING_REQUIRED_KEY` and `value: null`; the spec contradicts itself here (K6,

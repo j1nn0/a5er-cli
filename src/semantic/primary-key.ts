@@ -32,16 +32,37 @@ export interface InferredPrimaryKeyColumn {
   readonly span: Span;
 }
 
+/** A キー順 token that could not be decoded exactly (R19), with the text it was written as. */
+export interface InvalidOrdinal {
+  readonly raw: string;
+  readonly span: Span;
+}
+
 /** The key inferred for one object. */
 export interface InferredPrimaryKey {
   readonly sectionIndex: number;
   /** The object's `PName`, so the key is addressable without re-reading the section. */
   readonly object: string;
-  /** Columns in ordinal order. Empty when the object declares no ordinals at all. */
+  /** Columns in ordinal order. Empty when the object declares no usable ordinals at all. */
   readonly columns: readonly InferredPrimaryKeyColumn[];
   readonly origin: 'inferred';
   /** Every `Field` span the inference used (§4.2: an inferred value cites its inputs). */
   readonly derivedFrom: readonly Span[];
+  /**
+   * Ordinals that could not be decoded exactly (R23).
+   *
+   * Non-empty means this key is **not** verified: the file declared more key positions than the
+   * safe subset shows, so the subset must never be presented as the complete key. Nothing is
+   * guessed for them — the raw text and the line are all that is claimed.
+   */
+  readonly invalidOrdinals: readonly InvalidOrdinal[];
+}
+
+/** An object whose key cannot be determined at all because no ordinal decoded exactly. */
+export interface IndeterminateKey {
+  readonly sectionIndex: number;
+  readonly object: string;
+  readonly invalidOrdinals: readonly InvalidOrdinal[];
 }
 
 /** Why a declared ordinal sequence is not a key. */
@@ -62,6 +83,14 @@ export interface PrimaryKeyResult {
   /** One entry per object that declares at least one usable ordinal. */
   readonly keys: readonly InferredPrimaryKey[];
   readonly conflicts: readonly PkOrderConflict[];
+  /**
+   * Objects whose key is indeterminate because an ordinal did not decode (R23).
+   *
+   * A key that survives with a safe subset also appears here, so a consumer can find every
+   * incomplete key without inspecting each one; an object whose *only* ordinals were unusable has
+   * no key record at all and is reachable only through this list.
+   */
+  readonly indeterminate: readonly IndeterminateKey[];
 }
 
 /** The object's `PName`, or `null` when it never declared one (that is the required-key finding). */
@@ -86,12 +115,29 @@ function objectNameOf(section: Classification['sections'][number]): string | nul
 export function primaryKeysOf(classification: Classification): PrimaryKeyResult {
   const keys: InferredPrimaryKey[] = [];
   const conflicts: PkOrderConflict[] = [];
+  const indeterminate: IndeterminateKey[] = [];
 
   for (const section of classification.sections) {
     if (section.kind !== 'Entity') continue;
 
-    const declared = section.decoded.fields
-      .filter((field) => field.keyOrder !== null)
+    // R23: an ordinal the decoder refused is evidence that the key is not fully known, so it is
+    // carried alongside the usable ones instead of vanishing.
+    const invalidOrdinals: InvalidOrdinal[] = section.decoded.fields.flatMap((field) => {
+      if (field.keyOrderToken !== 'unrecognised' || field.keyOrderRaw === null) return [];
+      return [{ raw: field.keyOrderRaw, span: field.span }];
+    });
+
+    /** Fields that declare a usable ordinal, in declaration order. */
+    const usable = section.decoded.fields.filter((field) => field.keyOrder !== null);
+
+    const object = objectNameOf(section) ?? '';
+
+    if (invalidOrdinals.length > 0) {
+      indeterminate.push({ sectionIndex: section.index, object, invalidOrdinals });
+    }
+    if (usable.length === 0) continue;
+
+    const declared = usable
       .map((field) => ({
         pname: field.physicalName.value,
         ordinal: field.keyOrder?.value ?? 0,
@@ -100,15 +146,13 @@ export function primaryKeysOf(classification: Classification): PrimaryKeyResult 
       // Stable by construction: `sort` is stable in ES2019+, so equal ordinals keep file order.
       .sort((left, right) => left.ordinal - right.ordinal);
 
-    if (declared.length === 0) continue;
-
-    const object = objectNameOf(section) ?? '';
     keys.push({
       sectionIndex: section.index,
       object,
       columns: declared,
       origin: 'inferred',
       derivedFrom: declared.map((column) => column.span),
+      invalidOrdinals,
     });
 
     const ordinals = declared.map((column) => column.ordinal);
@@ -117,16 +161,16 @@ export function primaryKeysOf(classification: Classification): PrimaryKeyResult 
     conflicts.push({
       sectionIndex: section.index,
       object,
-      // Declaration order, not sorted order: the finding quotes what the file said.
-      ordinals: section.decoded.fields
-        .filter((field) => field.keyOrder !== null)
-        .map((field) => field.keyOrder?.value ?? 0),
+      // Declaration order, not sorted order: the finding quotes what the file said...
+      ordinals: usable.map((field) => field.keyOrder?.value ?? 0),
       reason,
-      spans: declared.map((column) => column.span),
+      // ...and R24: the spans follow the same order as the ordinals, so `ordinals[i]` and
+      // `spans[i]` describe one `Field`. The sorted view lives in the key's `columns`.
+      spans: usable.map((field) => field.span),
     });
   }
 
-  return { keys, conflicts };
+  return { keys, conflicts, indeterminate };
 }
 
 /** `null` for a unique `0..n-1` sequence; otherwise the reason it is not one. */
