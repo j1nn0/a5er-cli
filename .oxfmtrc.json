@@ -1,5 +1,5 @@
 {
-  "ignorePatterns": ["docs/**", "README.md", "LICENSE"],
+  "ignorePatterns": ["docs/**", "README.md", "LICENSE", ".agents/**", ".claude/**"],
   "semi": true,
   "singleQuote": true,
   "printWidth": 100,
