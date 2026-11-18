@@ -9,9 +9,15 @@ The repository's own license is the MIT license in the root `LICENSE`
 (Copyright (c) 2026 j1nn0). Nothing below replaces it or attributes upstream
 authorship to this project.
 
-## skill-doctor (vendored Skill)
+## skill-doctor (removed; historical record)
 
-Vendored path: `.agents/skills/skill-doctor/` (14 files, see `skills-lock.json`).
+> `skill-doctor` was removed from the repository tree (`.agents/skills/skill-doctor/`
+> deleted, the `.claude/skills/skill-doctor` symlink deleted, the `skills-lock.json`
+> entry removed). It is no longer included or distributed here. The notices below are
+> preserved unchanged as the historical record of the previously distributed
+> material, including the verified bundle-component notices.
+
+Former vendored path: `.agents/skills/skill-doctor/` (14 files at removal; the `skills-lock.json` entry has been removed).
 
 Upstream: `warpdotdev/common-skills` at pinned commit
 `8792394ff1b655e0af451b8fabb68ef0cfcbd208`
@@ -53,8 +59,9 @@ SOFTWARE.
 
 Provenance and evidence:
 
-- `skills-lock.json` pins `skill-doctor` to the commit above; all 14 vendored files
-  match their upstream Git blob identities (pre-merge audit, Issue #12, finding F2).
+- At distribution time, `skills-lock.json` pinned `skill-doctor` to the commit above;
+  all 14 vendored files matched their upstream Git blob identities (pre-merge audit,
+  Issue #12, finding F2). The lock entry has since been removed with the Skill itself.
 - No tracked file previously contained the Denver notice: the root `LICENSE` names
   only j1nn0, and a case-insensitive search for "Denver" across the repository
   returned no match before `THIRD-PARTY-NOTICES.md` was added.
