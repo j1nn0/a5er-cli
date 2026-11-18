@@ -107,6 +107,29 @@
         "Mentions inspect and validate as the available commands",
         "Does not claim to have produced DDL via the CLI"
       ]
+    },
+    {
+      "id": 10,
+      "prompt": "Which tables belong to the subtype in tests/fixtures/synthetic/sem-05-subtype.a5er.txt?",
+      "expected_output": "Runs inspect, finds one entity and one subtype object with membership {status: unsupported, reason: no-membership-key-in-v2.21} and the info diagnostic V_UNSUPPORTED_SUBTYPE_MEMBERSHIP at line 12; states the file format version defines no membership list, so no table can be named as belonging to the subtype.",
+      "files": [],
+      "expectations": [
+        "Reports status ok and exit 0",
+        "States that subtype membership is unsupported (no member list) and cites V_UNSUPPORTED_SUBTYPE_MEMBERSHIP or reason no-membership-key-in-v2.21",
+        "Does not name any entity as a member of the subtype",
+        "Does not say the entity has the subtype's fields; only entities carry fields[]"
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "Inspect tests/fixtures/synthetic/val-08-continuation-line.a5er.txt and list every diagnostic with its line.",
+      "expected_output": "Lists V_VIEW_COLUMNS_UNKNOWN (info, line 7) then S_MALFORMED_LINE (warning, line 9) in envelope order (line order); may lead with the warning as a reporting choice but does not claim the array is severity-sorted; also reports the multiline-value unsupported item and status degraded.",
+      "files": [],
+      "expectations": [
+        "Reports both diagnostics with correct severities and lines (info line 7, warning line 9)",
+        "Does not claim the envelope's diagnostics array is sorted by severity",
+        "Reports status degraded and one unsupported item of kind multiline-value"
+      ]
     }
   ]
 }
