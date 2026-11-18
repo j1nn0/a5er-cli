@@ -2348,3 +2348,154 @@ describe('json envelope — limits and the failure contract (stage 6-B unit 5)',
     });
   });
 });
+
+describe('json envelope — arms no golden reaches (stage 6-C unit 3)', () => {
+  // The four shapes below are correct by the model (R25/R28/R30) and tested at the semantic layer,
+  // but no committed fixture carries them, so the JSON arm had no evidence. Each document here is
+  // inline — no fixture, no golden, no catalog entry — and each asserts the envelope's own members.
+  const MANAGER = '[Manager]\nPageInfo="M",3,"A4Landscape","$FFFFFF"\n';
+  const POSITION = 'Position="M",1,1';
+  const RELATION_POSITION = 'Position="M",0,1,1,1,R,R,""';
+  /** The 1-based line a needle sits on, so a pinned line number cannot drift from the document. */
+  function lineOf(text: string, needle: string): number {
+    return text.split('\n').indexOf(needle) + 1;
+  }
+
+  it('keeps both columns of a physical-name collision and reports the collision (R30)', () => {
+    const text = [
+      '# A5:ER FORMAT:21', // 1
+      '', // 2
+      '[Manager]', // 3
+      'PageInfo="M",3,"A4Landscape","$FFFFFF"', // 4
+      'CommonField="共通ID","common_id","Integer",,,,,"",$FFFFFFFF', // 5
+      '', // 6
+      '[Entity]', // 7
+      'PName="clash"', // 8
+      'Field="ID","common_id","Serial","NOT NULL",0,"","",$FFFFFFFF,""', // 9
+      'Position="M",1,1', // 10
+      '', // 11
+    ].join('\n');
+    withDocument(text, (path, input) => {
+      const envelope = serialize(input, { command: 'inspect', path });
+      const entity = envelope.schema?.objects[0];
+      if (entity === undefined || entity.kind !== 'entity') throw new Error('no entity');
+      const columns = entity.effectiveColumns.columns;
+      // Nothing is overridden: the declared field and the common field both stay, declared first.
+      expect(columns.map((column) => [column.pname, column.source])).toEqual([
+        ['common_id', 'declared'],
+        ['common_id', 'common'],
+      ]);
+      // Both records of the collided name are flagged — the `true` arm nothing else reaches.
+      expect(columns.map((column) => column.collision)).toEqual([true, true]);
+      expect(columns.map((column) => column.span.keyLine)).toEqual([9, 5]);
+      // … and the collision list is not empty: it names both lines that wrote the name.
+      expect(entity.effectiveColumns.collisions).toEqual([
+        {
+          sectionIndex: 2,
+          object: 'clash',
+          pname: 'common_id',
+          spans: [oneLineSpan(2, 9), oneLineSpan(1, 5)],
+        },
+      ]);
+      expect(entity.effectiveColumns.status).toBe('complete');
+      expect(envelope.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(['D_BOM_MISSING']);
+    });
+  });
+  it('keeps an empty relation column slot, with its index and its empty name (R28)', () => {
+    const text = [
+      '# A5:ER FORMAT:21',
+      '',
+      MANAGER,
+      '[Entity]',
+      'PName="parent"',
+      'Field="ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,""',
+      POSITION,
+      '[Entity]',
+      'PName="child"',
+      'Field="ID","p_id","Serial","NOT NULL",0,"","",$FFFFFFFF,""',
+      // Both names the relation maps must exist here, or the column would be dangling rather than
+      // merely unmatched — this document is about the *slot*, not about resolution.
+      'Field="ID2","id","Serial","NOT NULL",1,"","",$FFFFFFFF,""',
+      'Position="M",2,2',
+      '[Relation]',
+      'Entity1="parent"',
+      'Entity2="child"',
+      'Fields1="id,,id"',
+      'Fields2="p_id,id"',
+      'RelationType1=1',
+      'RelationType2=3',
+      RELATION_POSITION,
+      '',
+    ].join('\n');
+    withDocument(text, (path, input) => {
+      const envelope = serialize(input, { command: 'inspect', path });
+      const relation = envelope.schema?.relations[0];
+      if (relation === undefined) throw new Error('no relation');
+      const slots = relation.fromColumns?.columns ?? [];
+      // The slot keeps its place: an empty column is a slot, not a removal.
+      expect(slots.map((slot) => [slot.index, slot.pname, slot.empty])).toEqual([
+        [0, 'id', false],
+        [1, '', true],
+        [2, 'id', false],
+      ]);
+      // Every slot of one quoted list carries the whole element as its `raw` — the same
+      // whole-element duplication `txt-03` shows for `"a,b"` — so the empty slot's raw is the list
+      // it belongs to, and its `empty` flag (not its text) is what marks the missing name.
+      expect(slots.map((slot) => slot.raw)).toEqual(['"id,,id"', '"id,,id"', '"id,,id"']);
+      expect(slots[1]?.span.keyLine).toBe(lineOf(text, 'Fields1="id,,id"'));
+      // The arity difference is real and reported; an empty slot is not a dangling column.
+      expect(relation.columnsAligned).toBe(false);
+      expect(envelope.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+        'D_BOM_MISSING',
+        'V_FIELD_COUNT_MISMATCH',
+      ]);
+    });
+  });
+  it('reports an ambiguous relation endpoint with its candidates, and no target (§9.2, R25)', () => {
+    const text = [
+      '# A5:ER FORMAT:21',
+      '',
+      MANAGER,
+      '[Entity]',
+      'PName="twin"',
+      'Field="ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,""',
+      POSITION,
+      '[Entity]',
+      'PName="twin"',
+      'Field="ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,""',
+      'Position="M",2,2',
+      '[Relation]',
+      'Entity1="twin"',
+      'Entity2="twin"',
+      'Fields1="id"',
+      'Fields2="id"',
+      'RelationType1=1',
+      'RelationType2=3',
+      RELATION_POSITION,
+      '',
+    ].join('\n');
+    withDocument(text, (path, input) => {
+      const envelope = serialize(input, { command: 'inspect', path });
+      const relation = envelope.schema?.relations[0];
+      if (relation === undefined) throw new Error('no relation');
+      for (const [side, line] of [
+        [relation.from, lineOf(text, 'Entity1="twin"')],
+        [relation.to, lineOf(text, 'Entity2="twin"')],
+      ] as const) {
+        if (side === null) throw new Error('a side is missing');
+        // Two objects carry the name, so the side names no target and counts both candidates.
+        expect(side.status).toBe('ambiguous');
+        expect(side.candidates).toBe(2);
+        expect(side.resolvedEntity).toBeNull();
+        expect(side.declared).toBe('twin');
+        expect(side.raw).toBe('"twin"');
+        expect(side.span.keyLine).toBe(line);
+      }
+      // The duplicate identity is what makes it ambiguous, and it is reported as such.
+      expect(envelope.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+        'D_BOM_MISSING',
+        'V_DUPLICATE_OBJECT_NAME',
+      ]);
+    });
+  });
+});

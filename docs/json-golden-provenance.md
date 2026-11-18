@@ -17,18 +17,39 @@ each fixture in its own codec and applies only the documented rules:
 - **blank / comment / key** (§7.4, §5): `trim() === ''`, `startsWith('#')`, first `=` at index > 0;
 - everything else is a **raw** line (a continuation, a malformed construct, a stray bracket line).
 
-**What the test asserts** is exactly eight values per count-bearing fixture: `sections.total`,
-`sections.parsed`, `sections.preservedRaw`, `sections.unknown`, `keys.total`, `lines.total`,
-`lines.accounted`, `lines.dropped`. **The `blank` / `cmt` / `raw` columns below and the `bytes`
-column are printed for review** — they come from the same reader and the same bytes, and they are
-what makes the physical-line total auditable by hand, but they are not separately asserted.
+**What the test asserts** is exactly ten values per count-bearing fixture: `sections.total`,
+`sections.parsed`, `sections.preservedRaw`, `sections.unknown`, `keys.total`, `keys.parsed`,
+`keys.preservedRaw`, `lines.total`, `lines.accounted`, `lines.dropped`. Each is compared three ways
+where a third witness exists — the source derivation, the golden and the catalog entry.
+**The `blank` / `cmt` / `raw` columns below and the `bytes` column are printed for review** — they
+come from the same reader and the same bytes, and they are what makes the physical-line total
+auditable by hand, but they are not separately asserted.
 
-**What is *not* derived, and must not be read as verified here:** `keys.parsed` and
-`keys.preservedRaw`. Deciding whether a key is *known* requires the per-section key registry
-(`src/schema/registry.ts`), so those two numbers are the catalog's and the golden's own — this
-inventory compares `keys.total` only. Likewise, no nested member of the JSON (object records,
-`scalars`, `pageReferences`, `unsupported` contents, span geometry) is audited here; those have
-their own tests, listed under *Exceptional spans* below.
+**The key split is derived, not taken on trust.** Whether a key is *known* is a lookup of its text
+in the table for its line's section kind: the eight tables live in the reader as data
+(`tests/helpers/key-tables.ts`, 111 names transcribed from `src/schema/registry.ts:101-264`), and
+three rules from the classifier's own documented behaviour decide the rest — a key before the first
+header has no section and is preserved (`registry.ts:570-580`), every key of an unknown section is
+preserved (`:615-630`), and a key with no registry entry in a known section is preserved
+(`:635-639`). A decoded legacy `Index`/`IndexOption` is still parsed (`:640-660`), as is a key whose
+value fails to decode.
+
+Only three fixtures preserve a key line, and each does so for a reason the source shows:
+
+| fixture | parsed | preserved | preserved lines |
+|---|---|---|---|
+| `hst-04` | 4 | 2 | l.12 `alert`, l.15 `PName` — inside `[<script>]` and `[[Entity]]` |
+| `txt-04` | 3 | 3 | l.5 `MysteryKey`, l.6 `SecondMystery` (`[Entity]` does not register them) and l.10 `Note` (unknown section) |
+| `txt-07` | 4 | 3 | l.12–14 `PName`/`Field`/`Position` — `[entity]` is a different header from `[Entity]` |
+
+The other 39 preserve nothing. `fmt-02` and `sem-04` write legacy `Index=` keys and still preserve
+nothing — the concrete proof that a decoded legacy key is parsed.
+
+**What is *not* derived here:** no nested member of the JSON (object records, `scalars`,
+`pageReferences`, `unsupported` contents, span geometry) is audited by this inventory; those have
+their own tests, listed under *Exceptional spans* below. Two key rules have no fixture at all — a
+key in the header region and a whitespace-padded key are both preserved — so they are pinned by
+inline reader tests in `tests/json-source-counts.test.ts`, not by a row above.
 
 ## Columns
 
@@ -163,10 +184,42 @@ so the "header before key" precedence and "an empty key name is not a key" are i
 | page / domain references | `sem-01` (dangling page), `sem-02` (case-insensitive page), `sem-07` (domain + `@INT`) | `V_DANGLING_PAGE`, `schema.pageReferences`, `schema.domainReferences` |
 | counting identities | all 42 count-bearing goldens | `tests/json-source-counts.test.ts` (this document's numbers), `tests/json-goldens.test.ts` (§13 identities) |
 
+## History — what the repository actually evidences
+
+Four commits have touched this directory, and their subjects are the only *why* any golden has:
+
+| commit | subject | goldens touched |
+|---|---|---|
+| `d2dfd88` | `feat(json): checkpoint Stage 6 work and Stage 6-A provenance` | 44 (all of them) |
+| `a7a7b9c` | `feat(json): retain every declared Entity/View/Subtype scalar occurrence` | 41 |
+| `ba771fa` | `feat(json): retain every declared single-fact scalar occurrence` | 11 |
+| `2d262c4` | `feat(json): expose page and domain reference resolution` | 42 |
+
+Per golden, `git log --oneline -- tests/fixtures/json-goldens/<id>.expected.json` shows three of
+those commits for 30 fixtures and four for 11, two for `sem-09`, and only the initial checkpoint for
+`enc-04` and `hst-02` — the two `failed` goldens, which never gained the later members because they
+have no `schema`.
+
+**What is *not* evidenced, and is therefore not asserted anywhere below.** The repository records
+*which* commits edited a golden and *why at the level of a commit subject*; it does not record, per
+value, which fixture line the number came from. That derivation happened in one-off authoring
+projections and is recorded in the stage-6 test comments and unit logs, not in git — so any finer
+per-golden history is **uncertain from the repository alone**. The substitute is the set of guards
+that re-derive the same facts from the bytes on every run (`tests/json-source-counts.test.ts`,
+`tests/json-provenance.test.ts`), which is what makes the claim checkable without trusting the
+authoring story.
+
 ## Related anchors
 
 - `architecture.md` §4.1 (physical lines), §7.4 (blank/comment/raw), §10.4 (header shape and the
   nine names), §11 (taxonomy and order), §12 (envelope), §13 (counting identities), §14 (matrix).
 - `docs/test-strategy.md` §3.6 (goldens authored, never blessed), §5 (the 16 behaviour rows),
   §8 (status is severity-derived), §10 (gates).
-- `tests/helpers/fixture-registry.ts` — the catalog these rows are keyed by.
+- `tests/helpers/fixture-registry.ts` — the catalog these rows are keyed by; the key split's
+  catalogue witness.
+- `tests/helpers/key-tables.ts` — the eight key tables as data (111 names), and
+  `tests/json-source-counts.test.ts` — the split, the header-region/padded-key rules, and the
+  legacy-is-parsed proof.
+- `tests/json-provenance.test.ts` — raw/span provenance, line ownership and the position-slot
+  element binding; `tests/json-contract.test.ts` — the inline documents for the arms no golden
+  reaches (collision, empty relation slot, ambiguous endpoint).

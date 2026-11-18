@@ -45,9 +45,19 @@
  * - The 65 `raw: ''` + `span: null` records — nothing to claim (checked as a group in 2).
  * - `enc-04` and `hst-02` — `schema: null`, so they contribute no raw record at all; they are
  *   skipped and never given fabricated provenance.
- * - `keys.parsed` / `keys.preservedRaw` — not derivable without the key registry (C1's boundary).
- * - User-domain references and R28's empty relation slot exist only in inline tests, not in any
- *   golden, so their arms are not asserted here.
+ * - `keys.parsed` / `keys.preservedRaw` — not a provenance question, and now derived from the
+ *   section-scoped key tables in `json-source-counts.test.ts` (C3 removed C1's "not derivable"
+ *   boundary: the split is a table lookup, not a parser opinion).
+ * - The arms no golden reaches, measured rather than assumed: `effectiveColumns.columns[].collision:
+ *   true` (0), a non-empty `collisions` list (0), `RelationColumn.empty: true` (0 of 19 columns),
+ *   `RelationEndpoint.status: 'ambiguous'` with two or more candidates (0; the corpus has 13
+ *   endpoints with one candidate and 1 with none), a user-domain reference (0) and R28's empty
+ *   relation slot (0). Their JSON arms are covered by inline documents in
+ *   `tests/json-contract.test.ts`, not by a golden, and are not asserted here.
+ * - The `positions[].x`/`y` slots are bound to their element indices in the test below, which is the
+ *   one same-line ambiguity slice membership cannot see: of the 53 object positions (the other 7
+ *   are relations, which have line geometry instead), 37 write the *same* number for `x` and `y`,
+ *   so only the remaining 16 can distinguish the two slots at all.
  *
  * Two source lines are byte-identical in `sem-08` (`PName="twin"` at 7 and 12), so swapping those
  * two spans cannot be caught by content alone; the section-ordinal check below is what catches it.
@@ -135,6 +145,13 @@ function spanAt(node: Node, key = 'span'): Span | null {
     return null;
   }
   return { sectionIndex, startLine, endLine, keyLine };
+}
+/** A scalar member as text (`String(value)`), or `null` when it is absent or a non-scalar. */
+function scalarText(node: Node, key: string): string | null {
+  const value = node[key];
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return null;
 }
 function hasKey(node: Node, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(node, key);
@@ -681,6 +698,13 @@ function auditGolden(id: string, golden: Node, counts: SourceCounts): Audit {
   return { violations, tallies, multiLine };
 }
 
+/** The text of one physical line, from the classification this file already derives. */
+function recordText(counts: SourceCounts, line: number): string {
+  const record = counts.records.find((candidate) => candidate.line === line);
+  if (record === undefined) throw new Error(`line ${String(line)} is outside the file`);
+  return record.text;
+}
+
 /** Which fixture each golden audits against, and the audit of every count-bearing golden. */
 interface Audited {
   readonly id: string;
@@ -783,6 +807,63 @@ describe('json provenance — every raw/span pair comes from its own line (stage
       const diagnostics = arrayAt(span.golden, 'diagnostics').filter(isRecord);
       expect(stringAt(diagnostics[index] ?? {}, 'code'), span.path).toBe('S_UNKNOWN_SECTION');
     }
+  });
+  it('binds the object position slots to their element indices (§4.6)', () => {
+    // Slice membership cannot tell `x` from `y` when both elements hold the same text, and 37 of the
+    // 60 positions do exactly that. Binding the named slot to its element index is the only check
+    // that can: page → element 0, x → 1, y → 2, width → 3, height → 4.
+    let positions = 0;
+    let distinct = 0;
+    let undecoded = 0;
+    for (const entry of auditAll()) {
+      const schema = entry.golden['schema'];
+      if (!isRecord(schema)) continue;
+      for (const object of arrayAt(schema, 'objects').filter(isRecord)) {
+        for (const position of arrayAt(object, 'positions').filter(isRecord)) {
+          if (position['kind'] !== 'object') continue;
+          const span = spanAt(position);
+          if (span === null) continue;
+          const elements = lineSlices(recordText(entry.counts, span.keyLine));
+          const slots: readonly (readonly [string, number])[] = [
+            ['page', 0],
+            ['x', 1],
+            ['y', 2],
+            ['width', 3],
+            ['height', 4],
+          ];
+          positions += 1;
+          for (const [slot, index] of slots) {
+            const value = position[slot];
+            if (!isRecord(value)) continue;
+            const raw = stringAt(value, 'raw');
+            const expected = elements.elements[index];
+            if (expected === undefined) {
+              throw new Error(`${entry.id}: position has no element ${String(index)}`);
+            }
+            expect(
+              raw,
+              `${entry.id} line ${String(span.keyLine)} ${slot} → element ${String(index)}`,
+            ).toBe(expected.trimmed);
+            // The decoded coordinate is the element's inner text, never its padding or quotes.
+            // A token that does not decode keeps its `raw` and has a `null` value; none exists in
+            // the corpus, so that arm is counted rather than silently skipped.
+            const decoded = scalarText(value, 'value');
+            if (decoded === null) undecoded += 1;
+            else expect(decoded, `${entry.id} ${slot} value`).toBe(expected.inner);
+          }
+          const x = position['x'];
+          const y = position['y'];
+          if (isRecord(x) && isRecord(y) && stringAt(x, 'raw') !== stringAt(y, 'raw'))
+            distinct += 1;
+        }
+      }
+    }
+    // 53 object positions (the other 7 are relations with their own geometry).
+    expect(positions).toBe(53);
+    // Only these positions can distinguish x from y; the rest are same-token and unobservable.
+    expect(distinct).toBe(16);
+    // Every coordinate in the corpus decodes, so the `null` arm above is measured, not assumed.
+    expect(undecoded).toBe(0);
   });
   it('pins the two granularities of a column list and the ownership shape', () => {
     const audited = auditAll();

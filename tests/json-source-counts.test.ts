@@ -6,14 +6,14 @@
  * `lines.total` and the five-way line partition had exactly one witness: the golden itself, written
  * by the same hand that read the model. This file supplies the second witness by counting the
  * fixture's own bytes with `tests/helpers/source-counts.ts` — a reader that imports nothing from
- * `src/` — and comparing the eight facts a source can decide:
+ * `src/` — and comparing the ten facts a source can decide (Stage 6-C Unit 3 also derives the key split):
  *
  *     sections.total, sections.parsed, sections.preservedRaw, sections.unknown,
- *     keys.total, lines.total, lines.accounted, lines.dropped
+ *     keys.total, keys.parsed, keys.preservedRaw, lines.total, lines.accounted, lines.dropped
  *
- * `keys.parsed` / `keys.preservedRaw` are deliberately **not** asserted: deciding whether a key is
- * known needs the per-section key registry, so a source-only reader cannot derive that split
- * without becoming a second parser. The boundary is stated in the helper and again below.
+ * `keys.parsed` / `keys.preservedRaw` are decided by a lookup of the key text in the per-section key tables
+ * (`tests/helpers/key-tables.ts`, transcribed from the registry's key lists, never the registry code path),
+ * so a source-only reader derives that split without becoming a second parser. See `keySplit`.
  *
  * **What it deliberately does not do.** It never edits a golden, a fixture or the catalog, never
  * runs the pipeline, and never asks the serializer what a count should be. The two `failed`
@@ -37,7 +37,7 @@ import * as hst05 from './fixtures/bytes/hst-05-mixed-eol.js';
 import type { FixtureSpec } from './helpers/fixture-registry.js';
 import { FIXTURES } from './helpers/fixture-registry.js';
 import type { DerivableCompleteness, FixtureCodec } from './helpers/source-counts.js';
-import { compareCounts, countSource, decodeBytes } from './helpers/source-counts.js';
+import { compareCounts, countSource, decodeBytes, keySplit } from './helpers/source-counts.js';
 
 const SYNTHETIC_DIR = fileURLToPath(new URL('./fixtures/synthetic/', import.meta.url));
 const GOLDEN_DIR = fileURLToPath(new URL('./fixtures/json-goldens/', import.meta.url));
@@ -117,7 +117,7 @@ describe('json source counts — every golden reconciles against its own bytes (
     ).map((spec) => spec.id);
     expect([...GOLDEN_IDS]).toEqual([...committed].sort());
   });
-  it('derives the eight countable facts for all 42 count-bearing goldens (no mismatch)', () => {
+  it('derives all ten countable facts for the 42 count-bearing goldens (no mismatch)', () => {
     const mismatches: string[] = [];
     let counted = 0;
     let fatal = 0;
@@ -146,12 +146,130 @@ describe('json source counts — every golden reconciles against its own bytes (
         spec.expectation.counts.sections.preservedRaw,
       );
       expect(completeness.keys.total, id).toBe(spec.expectation.counts.keys.total);
+      // The catalog's key split is the third witness beside the golden and the derivation: three
+      // independent numbers must agree, and the two below used to be "not derivable".
+      expect(completeness.keys.parsed, id).toBe(spec.expectation.counts.keys.parsed);
+      expect(completeness.keys.preservedRaw, id).toBe(spec.expectation.counts.keys.preservedRaw);
       mismatches.push(...compareCounts(countSource(textOf(id)), completeness, id));
     }
     // One message per mismatched field, so a failure names every wrong number at once.
     expect(mismatches).toEqual([]);
     expect(counted).toBe(42);
     expect(fatal).toBe(2);
+  });
+  it('derives the key split from the section-scoped tables (only three fixtures preserve)', () => {
+    const preserving: { id: string; parsed: number; preserved: number; reasons: string[] }[] = [];
+    let parsed = 0;
+    let preserved = 0;
+    for (const id of GOLDEN_IDS) {
+      const spec = specOf(id);
+      if (spec.expectation.status === 'failed') continue;
+      const split = keySplit(countSource(textOf(id)));
+      parsed += split.parsed;
+      preserved += split.preservedRaw;
+      // The partition closes on every fixture: a key is parsed or preserved, never both or neither.
+      expect(split.parsed + split.preservedRaw, id).toBe(countSource(textOf(id)).keys);
+      if (split.preservedRaw > 0) {
+        preserving.push({
+          id,
+          parsed: split.parsed,
+          preserved: split.preservedRaw,
+          reasons: split.preserved.map(
+            (entry) => `${String(entry.line)}:${entry.reason}:${entry.key}`,
+          ),
+        });
+      }
+    }
+    expect(parsed + preserved).toBeGreaterThan(300);
+    // Exactly three fixtures preserve a key, and each does so for a documented reason.
+    expect(preserving).toEqual([
+      {
+        id: 'hst-04',
+        parsed: 4,
+        preserved: 2,
+        // Two keys inside unknown sections: `[<script>]` (l.11) and `[[Entity]]` (l.14).
+        reasons: ['12:unknown-section:alert', '15:unknown-section:PName'],
+      },
+      {
+        id: 'txt-04',
+        parsed: 3,
+        preserved: 3,
+        // Two keys a *known* section does not register, and one key of an unknown section.
+        reasons: [
+          '5:no-registry-entry:MysteryKey',
+          '6:no-registry-entry:SecondMystery',
+          '10:unknown-section:Note',
+        ],
+      },
+      {
+        id: 'txt-07',
+        parsed: 4,
+        preserved: 3,
+        // `[entity]` is a different header from `[Entity]`: three keys are preserved, and
+        // `PageInfo` above it (in `[Manager]`) is parsed.
+        reasons: [
+          '12:unknown-section:PName',
+          '13:unknown-section:Field',
+          '14:unknown-section:Position',
+        ],
+      },
+    ]);
+  });
+  it('decodes legacy keys as parsed, and never as preserved text (§13)', () => {
+    // `fmt-02` declares `FORMAT:19` and writes `Index=`/`Page=`; `sem-04` writes a legacy `Index=`
+    // under `FORMAT:21`. Both are decoded, so both splits are `parsed` with nothing preserved —
+    // which is the concrete proof of the rule, not an absence of evidence.
+    for (const id of ['fmt-02', 'sem-04']) {
+      const split = keySplit(countSource(textOf(id)));
+      expect(split.preserved, id).toEqual([]);
+      expect(split.preservedRaw, id).toBe(0);
+      const keys = countSource(textOf(id))
+        .records.filter((record) => record.kind === 'key')
+        .map((record) => record.key);
+      expect(keys, id).toContain('Index');
+      expect(split.parsed, id).toBe(keys.length);
+    }
+  });
+  it('preserves a header-region key and a padded key, which no fixture exercises', () => {
+    // A key before the first header belongs to no section, so it is evidence, not data
+    // (`registry.ts:570-580`). No fixture has one; this is the only place the rule is pinned.
+    const headerRegion = countSource('Alpha=1\n[Beta]\nGamma=2\n');
+    expect(headerRegion.records.map((record) => record.kind)).toEqual(['key', 'header', 'key']);
+    expect(keySplit(headerRegion)).toEqual({
+      parsed: 0,
+      preservedRaw: 2,
+      preserved: [
+        { line: 1, key: 'Alpha', reason: 'header-region' },
+        // `[Beta]` is not one of the nine names, so its key is preserved too — two reasons in one
+        // document, which is what makes this test worth having.
+        { line: 3, key: 'Gamma', reason: 'unknown-section' },
+      ],
+    });
+    // … and with a modelled section, the header-region key is the only preserved one.
+    const knownSection = countSource('Alpha=1\n[Entity]\nPName="e"\n');
+    expect(keySplit(knownSection)).toEqual({
+      parsed: 1,
+      preservedRaw: 1,
+      preserved: [{ line: 1, key: 'Alpha', reason: 'header-region' }],
+    });
+
+    // The lookup is exact and case-sensitive, so padding makes a key unknown rather than close:
+    // ` Name` is not `Name`, and `PName ` is not `PName` (§5, `registry.ts:288-297`).
+    const padded = countSource('[Entity]\n PName="a"\nPName ="b"\nPName="c"\n');
+    expect(
+      padded.records.filter((record) => record.kind === 'key').map((record) => record.key),
+    ).toEqual([' PName', 'PName ', 'PName']);
+    expect(keySplit(padded)).toEqual({
+      parsed: 1,
+      preservedRaw: 2,
+      preserved: [
+        { line: 2, key: ' PName', reason: 'no-registry-entry' },
+        { line: 3, key: 'PName ', reason: 'no-registry-entry' },
+      ],
+    });
+    // A different case is a different key, in a known section as well.
+    const lowercase = countSource('[Entity]\npname="a"\n');
+    expect(keySplit(lowercase).preserved[0]?.reason).toBe('no-registry-entry');
   });
   it("pins the ambiguous source lines, so the reader cannot drift into the parser's reading", () => {
     // Two lines in the whole fixture set are genuinely ambiguous, and both are checked by hand.

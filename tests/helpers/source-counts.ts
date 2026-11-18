@@ -24,12 +24,20 @@
  *
  * Anything left is a **raw line** (a continuation, a malformed construct, a stray bracket line).
  *
- * **What this reader cannot derive, and must not pretend to.** Deciding whether a key is *known*
- * needs the per-section key registry (`src/schema/registry.ts`), so `keys.parsed` and
- * `keys.preservedRaw` are outside this boundary and are compared by no assertion here. What is
- * derivable is `keys.total`, the count of key lines in the whole file — which is also why the
- * byte fixtures are countable at all: key counting is a source fact, not a decode-stage one.
+ * **The key partition is derivable too, from the key tables as data.** Whether a key is *known* is
+ * a lookup of its text in the table for its line's section kind — the exact, case-sensitive rule of
+ * §5 (`src/schema/registry.ts:288-297`) — so `keySplit()` reproduces `keys.parsed` /
+ * `keys.preservedRaw` from a copy of the eight tables (`tests/helpers/key-tables.ts`, 111 names)
+ * rather than from the registry's code path. Three rules decide the rest, all from the classifier's
+ * own behaviour and the documentation: a key before the first header belongs to no section and is
+ * preserved as evidence (`registry.ts:570-580`); every key of an *unknown* section is preserved
+ * (`:615-630`); and a key with no registry entry in a known section is preserved
+ * (`:635-639`). A decoded legacy `Index`/`IndexOption` is still **parsed** (`:640-660`), and a value
+ * that fails to decode is still parsed too — it becomes a problem record, not preserved text.
  */
+
+import type { ModelledKind } from './key-tables.js';
+import { isRegisteredKey, kindOfHeader } from './key-tables.js';
 
 /** The nine section names of §10.4, spelled as the format spells them. */
 export const RECOGNISED_HEADERS: readonly string[] = [
@@ -91,6 +99,8 @@ export interface DerivableCompleteness {
   };
   readonly keys: {
     readonly total: number;
+    readonly parsed: number;
+    readonly preservedRaw: number;
   };
   readonly lines: {
     readonly total: number;
@@ -203,6 +213,65 @@ export function decodeBytes(bytes: Uint8Array, codec: FixtureCodec): string {
 }
 
 /**
+ * Why one key line was preserved, or `null` when it was parsed.
+ *
+ * The three reasons are the classifier's own, quoted so a failure names the rule it broke.
+ */
+export type PreservedKeyReason = 'header-region' | 'unknown-section' | 'no-registry-entry';
+
+/** One preserved key line, with the rule that preserved it. */
+export interface PreservedKey {
+  readonly line: number;
+  readonly key: string;
+  readonly reason: PreservedKeyReason;
+}
+
+/** The key partition of one document, derived from the tables and the line classification. */
+export interface KeySplit {
+  readonly parsed: number;
+  readonly preservedRaw: number;
+  readonly preserved: readonly PreservedKey[];
+}
+
+/**
+ * Split the document's key lines into parsed and preserved (§5, §13).
+ *
+ * The line's section kind comes from the header it follows, with `[Relationship]` folded to
+ * `Relation` and any other name — `[entity]`, `[<script>]`, `[[Entity]]` — counting as unknown. A
+ * key line before the first header belongs to no section and is preserved as evidence. Everything
+ * else is the exact lookup, so padding or a different case makes a key unknown rather than close.
+ */
+export function keySplit(counts: SourceCounts): KeySplit {
+  let kind: ModelledKind | null = null;
+  let seenHeader = false;
+  let parsed = 0;
+  const preserved: PreservedKey[] = [];
+  for (const record of counts.records) {
+    if (record.kind === 'header') {
+      seenHeader = true;
+      kind = kindOfHeader(record.headerName ?? '');
+      continue;
+    }
+    if (record.kind !== 'key') continue;
+    const key = record.key ?? '';
+    if (!seenHeader) {
+      preserved.push({ line: record.line, key, reason: 'header-region' });
+      continue;
+    }
+    if (kind === null) {
+      preserved.push({ line: record.line, key, reason: 'unknown-section' });
+      continue;
+    }
+    if (!isRegisteredKey(kind, key)) {
+      preserved.push({ line: record.line, key, reason: 'no-registry-entry' });
+      continue;
+    }
+    parsed += 1;
+  }
+  return { parsed, preservedRaw: preserved.length, preserved };
+}
+
+/**
  * Compare the derived counts with what an envelope claims, and describe every difference.
  *
  * A list rather than assertions, for two reasons: a mismatch is reported on every field at once
@@ -224,7 +293,10 @@ export function compareCounts(
   check('sections.parsed', counts.recognised, expected.sections.parsed);
   check('sections.preservedRaw', counts.unknown, expected.sections.preservedRaw);
   check('sections.unknown', counts.unknown, expected.sections.unknown);
+  const split = keySplit(counts);
   check('keys.total', counts.keys, expected.keys.total);
+  check('keys.parsed', split.parsed, expected.keys.parsed);
+  check('keys.preservedRaw', split.preservedRaw, expected.keys.preservedRaw);
   check('lines.total', counts.lines, expected.lines.total);
   check('lines.accounted', counts.accounted, expected.lines.accounted);
   check('lines.dropped', counts.lines - counts.accounted, expected.lines.dropped);
