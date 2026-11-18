@@ -230,3 +230,150 @@ export function compareCounts(
   check('lines.dropped', counts.lines - counts.accounted, expected.lines.dropped);
   return mismatches;
 }
+
+/**
+ * One Complex element of a `key=value` line, as §7.1 writes it.
+ *
+ * `raw` is the element's own slice of the line, padding included — that is the text a record's
+ * `raw` copies when it claims a whole element (class C in `tests/json-provenance.test.ts`).
+ * `trimmed` is that slice with the padding removed, which is what the padding-tolerant records
+ * carry (`IndexInfo`'s `, ""` option, class D). `inner` is the text between the quotes of a quoted
+ * element, escapes **not** applied (§7.1 keeps `\Q` as written), and `innerSlices` is that inner
+ * text split on its commas — the per-column names inside one quoted list (class E).
+ */
+export interface LineElement {
+  readonly raw: string;
+  readonly trimmed: string;
+  readonly quoted: boolean;
+  readonly inner: string;
+  readonly innerSlices: readonly string[];
+}
+
+/** Everything a physical line offers as a possible source slice of a `raw` token. */
+export interface LineSlices {
+  /** The line exactly as decoded, without its terminator. */
+  readonly whole: string;
+  /** The key text before the first `=` (verbatim, whitespace included), or `null`. */
+  readonly key: string | null;
+  /** The value text after the first `=` (quotes and padding kept), or `null`. */
+  readonly rhs: string | null;
+  /** The rhs split into §7.1 Complex elements, in order. */
+  readonly elements: readonly LineElement[];
+  /**
+   * Sub-slices of the legacy index spellings (`Index=`/`IndexOption=`), whose rhs is
+   * `name=flag,cols` rather than a Complex value: the pieces delimited by `=` and `,`.
+   */
+  readonly legacySlices: readonly string[];
+}
+
+/** Characters an escape may introduce (§7.1's table), used only to keep quote detection honest. */
+const ESCAPE_INTRODUCERS = new Set(['\\', 'Q', 'q', 't', 'n']);
+
+/** True when `text[index]` is padding §7.1 trims outside quotes. */
+function isPadding(text: string, index: number): boolean {
+  const char = text[index];
+  return char === ' ' || char === '\t';
+}
+
+/**
+ * Index of the quote closing the one at `open`, or `-1` when the element is unterminated.
+ *
+ * A backslash before one of §7.1's introducers consumes the next character, so `\\` is data and
+ * the quote after `\Q` is not a terminator; an unknown escape such as `\"` is not special, and the
+ * quote after a lone backslash closes the element — exactly what §7.1 states.
+ */
+function closingQuote(text: string, open: number): number {
+  for (let index = open + 1; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === '\\') {
+      const next = text[index + 1];
+      if (next !== undefined && ESCAPE_INTRODUCERS.has(next)) index += 1;
+      continue;
+    }
+    if (char === '"') return index;
+  }
+  return -1;
+}
+
+/** Split a value on the commas that are outside double quotes (§7.1). */
+function splitElements(value: string): readonly string[] {
+  const slices: string[] = [];
+  let start = 0;
+  let inQuotes = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (inQuotes) {
+      if (char === '\\') {
+        const next = value[index + 1];
+        if (next !== undefined && ESCAPE_INTRODUCERS.has(next)) index += 1;
+        continue;
+      }
+      if (char === '"') inQuotes = false;
+      continue;
+    }
+    if (char === '"') {
+      inQuotes = true;
+      continue;
+    }
+    if (char === ',') {
+      slices.push(value.slice(start, index));
+      start = index + 1;
+    }
+  }
+  slices.push(value.slice(start));
+  return slices;
+}
+
+/** One element's raw slice, trimmed slice, quoting and inner (unquoted) text. */
+function elementOf(rawSlice: string): LineElement {
+  let start = 0;
+  let end = rawSlice.length;
+  while (start < end && isPadding(rawSlice, start)) start += 1;
+  while (end > start && isPadding(rawSlice, end - 1)) end -= 1;
+  const trimmed = rawSlice.slice(start, end);
+  // Quoted only when the closing quote is the last thing in the element (§7.1 keeps text after a
+  // closing quote verbatim rather than dropping it).
+  const quoted =
+    trimmed.startsWith('"') &&
+    closingQuote(trimmed, 0) === trimmed.length - 1 &&
+    trimmed.length > 1;
+  const inner = quoted ? trimmed.slice(1, -1) : trimmed;
+  return {
+    raw: rawSlice,
+    trimmed,
+    quoted,
+    inner,
+    innerSlices: quoted ? splitElements(inner) : [],
+  };
+}
+
+/**
+ * Every slice a `raw` token is allowed to be for one physical line.
+ *
+ * The line is read with the same two rules the guard already relies on: the key is the text before
+ * the first `=`, and the value is everything after it, split into §7.1 elements. Legacy index values
+ * (`name=flag,cols`) are additionally split on `=` and `,`, because their payload is not a Complex
+ * value at all.
+ */
+export function lineSlices(text: string): LineSlices {
+  const equals = text.indexOf('=');
+  if (equals <= 0) {
+    return { whole: text, key: null, rhs: null, elements: [], legacySlices: [] };
+  }
+  const key = text.slice(0, equals);
+  const rhs = text.slice(equals + 1);
+  const elements = splitElements(rhs).map(elementOf);
+  // The legacy payload is `name=flag,cols`, not a Complex value: slice it on `=` and `,` by hand,
+  // so this file keeps its "no split for source structure" discipline.
+  const legacySlices: string[] = [];
+  if (key === 'Index' || key === 'IndexOption') {
+    let start = 0;
+    for (let index = 0; index <= rhs.length; index += 1) {
+      const char = rhs[index];
+      if (index < rhs.length && char !== '=' && char !== ',') continue;
+      if (index > start) legacySlices.push(rhs.slice(start, index));
+      start = index + 1;
+    }
+  }
+  return { whole: text, key, rhs, elements, legacySlices };
+}
