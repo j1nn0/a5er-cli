@@ -79,10 +79,16 @@ function gitLines(args: readonly string[]): string[] {
     .filter((line) => line.length > 0);
 }
 
-/** True when `git check-ignore` claims the path; any status but 0/1 is re-thrown. */
+/**
+ * True when `.gitignore` claims the path; any status but 0/1 is re-thrown.
+ *
+ * `--no-index` is load-bearing: without it `git check-ignore` does not judge a tracked path
+ * at all, so a tracked-but-ignored fixture would read as "not ignored" and the gate would
+ * pass for the wrong reason.
+ */
 function isIgnored(relativePath: string): boolean {
   try {
-    execFileSync('git', ['check-ignore', '--quiet', '--', relativePath], {
+    execFileSync('git', ['check-ignore', '--quiet', '--no-index', '--', relativePath], {
       cwd: REPO_ROOT,
       stdio: 'ignore',
     });
@@ -98,6 +104,19 @@ function isIgnored(relativePath: string): boolean {
 function committedFiles(directory: string): string[] {
   return readdirSync(directory)
     .filter((name) => !name.startsWith('.'))
+    .sort();
+}
+
+/** Paths of every tracked `.a5er` file that the catalog does not list, sorted. */
+function unregisteredA5er(tracked: readonly string[], expected: readonly string[]): string[] {
+  const allowed = new Set(expected);
+  return tracked.filter((path) => !allowed.has(path)).sort();
+}
+
+/** Repository-relative paths of the catalogued synthetic fixtures, sorted. */
+function syntheticPaths(): string[] {
+  return FIXTURES.filter((spec) => spec.fixtureClass === 'synthetic')
+    .map((spec) => `tests/fixtures/synthetic/${spec.file}`)
     .sort();
 }
 
@@ -171,7 +190,36 @@ describe('catalog — G-8 fixture integrity', () => {
     expect(gitLines(['ls-files', '--', 'tests/fixtures/generated'])).toEqual([
       'tests/fixtures/generated/.gitkeep',
     ]);
-    expect(gitLines(['ls-files', '*.a5er'])).toEqual([]);
+  });
+
+  it('tracks exactly the catalogued synthetic fixtures as `.a5er` (G-9)', () => {
+    // The `.gitignore` allowlist names the same paths one by one; a tracked `.a5er` that the
+    // catalog does not list is a diagram nobody reviewed, not a fixture to accommodate.
+    const tracked = gitLines(['ls-files', '*.a5er']).sort();
+    expect(tracked).toHaveLength(syntheticPaths().length);
+    expect(unregisteredA5er(tracked, syntheticPaths())).toEqual([]);
+    expect(tracked).toEqual(syntheticPaths());
+  });
+
+  it('rejects a tracked `.a5er` that the catalog does not list (G-9, pure)', () => {
+    // Pure on purpose: no file is created and nothing is staged, so no real diagram is at risk.
+    const probe = 'tests/fixtures/synthetic/zzz-unregistered.a5er';
+    const tracked = [...syntheticPaths(), probe];
+    expect(unregisteredA5er(tracked, syntheticPaths())).toEqual([probe]);
+    expect(tracked).not.toEqual(syntheticPaths());
+  });
+
+  it('allowlists only the catalogued paths, not the directory (G-9)', () => {
+    for (const path of syntheticPaths()) expect(isIgnored(path), path).toBe(false);
+    for (const path of [
+      'unlisted.a5er',
+      'docs/unlisted.a5er',
+      'tests/fixtures/unlisted.a5er',
+      'tests/fixtures/synthetic/zzz-unregistered.a5er',
+      'tests/fixtures/synthetic/nested/zzz-unregistered.a5er',
+    ]) {
+      expect(isIgnored(path), path).toBe(true);
+    }
   });
 
   it('has a builder for every generated entry and an entry for every builder', () => {

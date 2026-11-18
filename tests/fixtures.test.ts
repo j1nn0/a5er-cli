@@ -42,10 +42,15 @@ import {
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const TESTS_DIR = fileURLToPath(new URL('.', import.meta.url));
 
-/** Relative `git check-ignore` answer; throws on any status other than 0/1. */
+/**
+ * Relative `git check-ignore` answer; throws on any status other than 0/1.
+ *
+ * `--no-index` makes git judge the path by `.gitignore` alone; without it a tracked path is
+ * never reported as ignored, which would hide a tracked-but-ignored fixture.
+ */
 function isIgnoredByGit(relativePath: string): boolean {
   try {
-    execFileSync('git', ['check-ignore', '--quiet', '--', relativePath], {
+    execFileSync('git', ['check-ignore', '--quiet', '--no-index', '--', relativePath], {
       cwd: REPO_ROOT,
       stdio: 'ignore',
     });
@@ -198,7 +203,7 @@ describe('fixture staging', () => {
     expect(win32.isAbsolute(crossDrive)).toBe(true);
 
     // A real fixture path is still classified as inside.
-    expect(isInsideFixtures(join(FIXTURES_ROOT, 'synthetic', 'case.a5er.txt'))).toBe(true);
+    expect(isInsideFixtures(join(FIXTURES_ROOT, 'synthetic', 'case.a5er'))).toBe(true);
   });
 
   it('rejects IDs that would escape the fixture directory', () => {
@@ -208,7 +213,7 @@ describe('fixture staging', () => {
   });
 
   it('stages every catalog entry by ID through the registry', () => {
-    // R1 regression: `stage(id)` used to synthesise `<id>.a5er.txt`, which matches no
+    // R1 regression: `stage(id)` used to synthesise `<id>.a5er.txt` (the old committed suffix), which matched no
     // fixture file, and no test ever passed a catalog ID — every call site used a
     // hand-built path. Iterating `FIXTURES` is what puts the ID -> file resolution
     // under test for all 14 entries.
@@ -238,12 +243,10 @@ describe('fixture staging', () => {
 
   it('rejects an ID that is not in the registry instead of synthesising a path', () => {
     expect(() => stage('fmt-99')).toThrow(/unknown fixture id/);
-    // The file stem is not an ID: `fmt-01` resolves to `fmt-01-baseline.a5er.txt`.
+    // The file stem is not an ID: `fmt-01` resolves to `fmt-01-baseline.a5er`.
     expect(() => stage('fmt-01-baseline')).toThrow(/unknown fixture id/);
     // A path-shaped ID can never address a file inside the fixtures tree.
-    expect(() => stage(join(SYNTHETIC_DIR, 'fmt-01-baseline.a5er.txt'))).toThrow(
-      /unsafe fixture id/,
-    );
+    expect(() => stage(join(SYNTHETIC_DIR, 'fmt-01-baseline.a5er'))).toThrow(/unsafe fixture id/);
   });
 
   it('refuses a staging root inside the fixtures tree before creating anything', () => {
@@ -291,7 +294,7 @@ describe('fixture staging', () => {
   it('preserves bytes exactly, including BOM, CRLF, Japanese text and invalid UTF-8', () => {
     const dir = mkdtempSync(join(tmpdir(), 'a5er-src-'));
     try {
-      const source = join(dir, 'enc-check.a5er.txt');
+      const source = join(dir, 'enc-check.a5er');
       const bytes = hazardousBytes();
       writeFileSync(source, bytes);
 
@@ -312,7 +315,7 @@ describe('fixture staging', () => {
   it('stages outside the fixtures tree and removes its directory on cleanup', () => {
     const dir = mkdtempSync(join(tmpdir(), 'a5er-src-'));
     try {
-      const source = join(dir, 'sem-check.a5er.txt');
+      const source = join(dir, 'sem-check.a5er');
       writeFileSync(source, Buffer.from('PName="users"\n', 'utf8'));
 
       const staged = stageSource(source);
@@ -332,7 +335,7 @@ describe('fixture staging', () => {
   it('leaves the source file untouched (hash, size and mtime)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'a5er-src-'));
     try {
-      const source = join(dir, 'imm-check.a5er.txt');
+      const source = join(dir, 'imm-check.a5er');
       writeFileSync(source, hazardousBytes());
 
       const before = {
@@ -354,17 +357,26 @@ describe('fixture staging', () => {
 });
 
 describe('fixture ignore policy', () => {
-  it('ignores *.a5er anywhere in the fixtures tree', () => {
-    expect(isIgnoredByGit('tests/fixtures/synthetic/case.a5er')).toBe(true);
+  it('ignores *.a5er everywhere except the catalogued synthetic fixtures', () => {
+    expect(isIgnoredByGit('case.a5er')).toBe(true);
     expect(isIgnoredByGit('tests/fixtures/bytes/case.a5er')).toBe(true);
+    expect(isIgnoredByGit('tests/fixtures/generated/case.a5er')).toBe(true);
+    // The allowlist is per file: an unregistered name in the synthetic directory stays ignored.
+    expect(isIgnoredByGit('tests/fixtures/synthetic/case.a5er')).toBe(true);
   });
 
-  it('does not ignore the committed *.a5er.txt form', () => {
-    expect(isIgnoredByGit('tests/fixtures/synthetic/case.a5er.txt')).toBe(false);
+  it('does not ignore any catalogued synthetic fixture', () => {
+    for (const spec of FIXTURES.filter((candidate) => candidate.fixtureClass === 'synthetic')) {
+      const relativePath = `tests/fixtures/synthetic/${spec.file}`;
+      expect(isIgnoredByGit(relativePath), spec.id).toBe(false);
+    }
   });
 
-  it('tracks no file with a .a5er extension', () => {
-    expect(gitLines(['ls-files', '*.a5er'])).toEqual([]);
+  it('tracks a .a5er file only for a catalogued synthetic fixture', () => {
+    const catalogued = FIXTURES.filter((candidate) => candidate.fixtureClass === 'synthetic')
+      .map((spec) => `tests/fixtures/synthetic/${spec.file}`)
+      .sort();
+    expect(gitLines(['ls-files', '*.a5er']).sort()).toEqual(catalogued);
   });
 });
 

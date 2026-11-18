@@ -3,7 +3,7 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Give me a quick summary of tests/fixtures/synthetic/fmt-01-baseline.a5er.txt. What tables and views are in it, and is anything off?",
+      "prompt": "Give me a quick summary of tests/fixtures/synthetic/fmt-01-baseline.a5er. What tables and views are in it, and is anything off?",
       "expected_output": "Runs `a5er inspect` once, reads status ok with exit 0, summarizes 2 entities and 1 view from schema.objects via .value fields, and mentions the info diagnostic V_VIEW_COLUMNS_UNKNOWN at line 35.",
       "files": [],
       "expectations": [
@@ -16,7 +16,7 @@
     },
     {
       "id": 2,
-      "prompt": "Validate tests/fixtures/synthetic/sem-08-duplicate-pname.a5er.txt and tell me whether it passes.",
+      "prompt": "Validate tests/fixtures/synthetic/sem-08-duplicate-pname.a5er and tell me whether it passes.",
       "expected_output": "Runs `a5er validate`, sees exit 3 and status degraded, and reports that validation fails because of V_DUPLICATE_OBJECT_NAME at line 12 (physical name 'twin' declared twice).",
       "files": [],
       "expectations": [
@@ -29,7 +29,7 @@
     },
     {
       "id": 3,
-      "prompt": "Inspect tests/fixtures/synthetic/txt-04-unknown-section-key.a5er.txt. Did everything in it get parsed?",
+      "prompt": "Inspect tests/fixtures/synthetic/txt-04-unknown-section-key.a5er. Did everything in it get parsed?",
       "expected_output": "Reports status ok with exit 0 but states that 4 constructs are unsupported (unknown keys MysteryKey and SecondMystery, and the unmodelled [Memo] section with its Note key), preserved raw and not interpreted; does not claim they were parsed.",
       "files": [],
       "expectations": [
@@ -42,7 +42,7 @@
     },
     {
       "id": 4,
-      "prompt": "Check tests/fixtures/synthetic/sem-01-dangling-refs.a5er.txt for problems.",
+      "prompt": "Check tests/fixtures/synthetic/sem-01-dangling-refs.a5er for problems.",
       "expected_output": "Runs validate, reports status degraded with exit 0, and lists the three warnings V_DANGLING_ENTITY (line 14), V_DANGLING_COLUMN (line 16) and V_DANGLING_PAGE (line 21).",
       "files": [],
       "expectations": [
@@ -77,7 +77,7 @@
     },
     {
       "id": 7,
-      "prompt": "Run a5er inspect on tests/fixtures/synthetic/fmt-01-baseline.a5er.txt with --format yaml so I can read it more easily.",
+      "prompt": "Run a5er inspect on tests/fixtures/synthetic/fmt-01-baseline.a5er with --format yaml so I can read it more easily.",
       "expected_output": "Runs the command, gets exit 2 with empty stdout and a stderr message that only json is supported, explains that json is the only format, and offers the default json output instead.",
       "files": [],
       "expectations": [
@@ -99,7 +99,7 @@
     },
     {
       "id": 9,
-      "prompt": "Use the a5er CLI to convert tests/fixtures/synthetic/fmt-01-baseline.a5er.txt into CREATE TABLE statements.",
+      "prompt": "Use the a5er CLI to convert tests/fixtures/synthetic/fmt-01-baseline.a5er into CREATE TABLE statements.",
       "expected_output": "States that the CLI only ships inspect and validate and cannot generate SQL; offers to describe the entities and columns from the inspect envelope instead.",
       "files": [],
       "expectations": [
@@ -110,7 +110,7 @@
     },
     {
       "id": 10,
-      "prompt": "Which tables belong to the subtype in tests/fixtures/synthetic/sem-05-subtype.a5er.txt?",
+      "prompt": "Which tables belong to the subtype in tests/fixtures/synthetic/sem-05-subtype.a5er?",
       "expected_output": "Runs inspect, finds one entity and one subtype object with membership {status: unsupported, reason: no-membership-key-in-v2.21} and the info diagnostic V_UNSUPPORTED_SUBTYPE_MEMBERSHIP at line 12; states the file format version defines no membership list, so no table can be named as belonging to the subtype.",
       "files": [],
       "expectations": [
@@ -122,7 +122,7 @@
     },
     {
       "id": 11,
-      "prompt": "Inspect tests/fixtures/synthetic/val-08-continuation-line.a5er.txt and list every diagnostic with its line.",
+      "prompt": "Inspect tests/fixtures/synthetic/val-08-continuation-line.a5er and list every diagnostic with its line.",
       "expected_output": "Lists V_VIEW_COLUMNS_UNKNOWN (info, line 7) then S_MALFORMED_LINE (warning, line 9) in envelope order (line order); may lead with the warning as a reporting choice but does not claim the array is severity-sorted; also reports the multiline-value unsupported item and status degraded.",
       "files": [],
       "expectations": [

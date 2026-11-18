@@ -3,8 +3,8 @@
  *
  * The format defines no line endings at all (architecture §6 U4), so a mixed file must
  * parse with **no** diagnostic; the interesting part is that line numbering stays
- * correct across all three terminators. It is a byte module rather than a `.a5er.txt`
- * because `.gitattributes` normalises committed synthetic fixtures to LF, which would
+ * correct across all three terminators. It is a byte module rather than a synthetic `.a5er`
+ * fixture because `.gitattributes` normalises committed synthetic fixtures to LF, which would
  * silently delete the CRLF and CR halves of the fixture.
  *
  * Lines: CRLF, LF, CR, CRLF, LF, CRLF, LF.

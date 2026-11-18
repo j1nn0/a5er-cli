@@ -44,7 +44,7 @@ export const BYTES_DIR = join(FIXTURES_ROOT, 'bytes');
 export const GENERATED_DIR = join(FIXTURES_ROOT, 'generated');
 
 /** Suffix a catalog ID is stored under inside `synthetic/`. */
-export const SYNTHETIC_SUFFIX = '.a5er.txt';
+export const SYNTHETIC_SUFFIX = '.a5er';
 
 /** Extension the code under test must see. */
 export const STAGED_EXTENSION = '.a5er';
@@ -120,7 +120,7 @@ export function sha256File(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
-/** List committed synthetic fixtures as IDs (file names without `.a5er.txt`). */
+/** List committed synthetic fixtures as IDs (file names without `.a5er`). */
 export function listSyntheticFixtures(): string[] {
   return readdirSync(SYNTHETIC_DIR)
     .filter((name) => name.endsWith(SYNTHETIC_SUFFIX))
@@ -202,7 +202,7 @@ function stageFile(sourcePath: string, id: string, options: StageOptions = {}): 
   }
 }
 
-/** Stage a file by direct path; the staged ID is the file stem without `.a5er.txt`. */
+/** Stage a file by direct path; the staged ID is the file stem without `.a5er`. */
 export function stageSource(sourcePath: string, options: StageOptions = {}): StagedFile {
   const id = sourcePath.slice(sourcePath.lastIndexOf(sep) + 1).replace(SYNTHETIC_SUFFIX, '');
   return stageFile(sourcePath, id, options);
@@ -213,7 +213,7 @@ export function stageSource(sourcePath: string, options: StageOptions = {}): Sta
  *
  * The ID is resolved through the fixture registry, so the file name comes from
  * `FIXTURES` and is never synthesised from the ID: catalog IDs are not file
- * stems (`fmt-01` is `fmt-01-baseline.a5er.txt`). Byte fixtures are imported as
+ * stems (`fmt-01` is `fmt-01-baseline.a5er`). Byte fixtures are imported as
  * modules by their consumers, so asking to stage one is an error, not a guess.
  */
 export function stage(id: string, options: StageOptions = {}): StagedFile {

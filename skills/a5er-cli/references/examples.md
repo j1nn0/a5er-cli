@@ -5,7 +5,7 @@ Every case below ran the run block from SKILL.md, unchanged except for the `file
 ## ok, nothing unsupported (inspect)
 
 ```sh
-file=tests/fixtures/synthetic/fmt-01-baseline.a5er.txt
+file=tests/fixtures/synthetic/fmt-01-baseline.a5er
 # subcommand line in the block: a5er inspect "$file"
 ```
 
@@ -19,7 +19,7 @@ info V_VIEW_COLUMNS_UNKNOWN line 35
 ## ok, with unsupported constructs (inspect)
 
 ```sh
-file=tests/fixtures/synthetic/txt-04-unknown-section-key.a5er.txt
+file=tests/fixtures/synthetic/txt-04-unknown-section-key.a5er
 # subcommand line in the block: a5er inspect "$file"
 ```
 
@@ -35,7 +35,7 @@ info S_UNKNOWN_SECTION line 9
 ## ok, subtype membership unsupported (inspect)
 
 ```sh
-file=tests/fixtures/synthetic/sem-05-subtype.a5er.txt
+file=tests/fixtures/synthetic/sem-05-subtype.a5er
 # subcommand line in the block: a5er inspect "$file"
 ```
 
@@ -49,7 +49,7 @@ info V_UNSUPPORTED_SUBTYPE_MEMBERSHIP line 12
 ## degraded, warnings only (validate, exit 0)
 
 ```sh
-file=tests/fixtures/synthetic/sem-01-dangling-refs.a5er.txt
+file=tests/fixtures/synthetic/sem-01-dangling-refs.a5er
 # subcommand line in the block: a5er validate "$file"
 ```
 
@@ -65,7 +65,7 @@ warning V_DANGLING_PAGE line 21
 ## degraded, error diagnostic (validate, exit 3)
 
 ```sh
-file=tests/fixtures/synthetic/sem-08-duplicate-pname.a5er.txt
+file=tests/fixtures/synthetic/sem-08-duplicate-pname.a5er
 # subcommand line in the block: a5er validate "$file"
 ```
 
@@ -81,7 +81,7 @@ info V_VIEW_COLUMNS_UNKNOWN line 12
 ## same file under inspect: error diagnostic, exit 0
 
 ```sh
-file=tests/fixtures/synthetic/sem-08-duplicate-pname.a5er.txt
+file=tests/fixtures/synthetic/sem-08-duplicate-pname.a5er
 # subcommand line in the block: a5er inspect "$file"
 ```
 
@@ -97,7 +97,7 @@ info V_VIEW_COLUMNS_UNKNOWN line 12
 ## diagnostics are in line order, not severity order (inspect)
 
 ```sh
-file=tests/fixtures/synthetic/val-08-continuation-line.a5er.txt
+file=tests/fixtures/synthetic/val-08-continuation-line.a5er
 # subcommand line in the block: a5er inspect "$file"
 ```
 
@@ -127,7 +127,7 @@ fatal E_IO
 ## exit 2: missing operand
 
 ```sh
-file=tests/fixtures/synthetic/fmt-01-baseline.a5er.txt
+file=tests/fixtures/synthetic/fmt-01-baseline.a5er
 # subcommand line in the block: a5er inspect
 ```
 
@@ -146,7 +146,7 @@ Run 'a5er --help' for details.
 ## exit 2: unsupported --format value
 
 ```sh
-file=tests/fixtures/synthetic/fmt-01-baseline.a5er.txt
+file=tests/fixtures/synthetic/fmt-01-baseline.a5er
 # subcommand line in the block: a5er inspect --format yaml "$file"
 ```
 

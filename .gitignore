@@ -158,3 +158,46 @@ tmp/
 
 # Real ER diagrams may contain confidential schema information
 *.a5er
+
+# Exact allowlist: the catalogued synthetic fixtures are committed under their real
+# `.a5er` extension. One line per file, deliberately no directory wildcard, so any
+# other `.a5er` file (including a new one in this directory) stays ignored.
+!tests/fixtures/synthetic/enc-02-no-bom.a5er
+!tests/fixtures/synthetic/fmt-01-baseline.a5er
+!tests/fixtures/synthetic/fmt-02-format19-legacy-index.a5er
+!tests/fixtures/synthetic/fmt-03-no-header.a5er
+!tests/fixtures/synthetic/fmt-04-format20.a5er
+!tests/fixtures/synthetic/fmt-05-format99.a5er
+!tests/fixtures/synthetic/hst-01-nul-inside-text.a5er
+!tests/fixtures/synthetic/hst-04-hostile-names.a5er
+!tests/fixtures/synthetic/sem-01-dangling-refs.a5er
+!tests/fixtures/synthetic/sem-02-page-case.a5er
+!tests/fixtures/synthetic/sem-03-fields-count-mismatch.a5er
+!tests/fixtures/synthetic/sem-04-legacy-index-under-21.a5er
+!tests/fixtures/synthetic/sem-05-subtype.a5er
+!tests/fixtures/synthetic/sem-06-view-columns.a5er
+!tests/fixtures/synthetic/sem-07-domains-commonfields.a5er
+!tests/fixtures/synthetic/sem-08-duplicate-pname.a5er
+!tests/fixtures/synthetic/sem-09-zero-pages.a5er
+!tests/fixtures/synthetic/sem-10-missing-position.a5er
+!tests/fixtures/synthetic/sem-11-zero-fields.a5er
+!tests/fixtures/synthetic/txt-01-multi-table-view.a5er
+!tests/fixtures/synthetic/txt-02-relationship-alias.a5er
+!tests/fixtures/synthetic/txt-03-relation-composite.a5er
+!tests/fixtures/synthetic/txt-04-unknown-section-key.a5er
+!tests/fixtures/synthetic/txt-05-duplicate-scalar.a5er
+!tests/fixtures/synthetic/txt-06-duplicate-manager.a5er
+!tests/fixtures/synthetic/txt-07-lowercase-section.a5er
+!tests/fixtures/synthetic/txt-08-header-whitespace.a5er
+!tests/fixtures/synthetic/txt-09-empty-section.a5er
+!tests/fixtures/synthetic/val-01-escapes.a5er
+!tests/fixtures/synthetic/val-02-index-multi-column.a5er
+!tests/fixtures/synthetic/val-03-field-9-element.a5er
+!tests/fixtures/synthetic/val-04-field-11-element.a5er
+!tests/fixtures/synthetic/val-05-field-missing-color.a5er
+!tests/fixtures/synthetic/val-06-composite-pk.a5er
+!tests/fixtures/synthetic/val-07-color-tokens.a5er
+!tests/fixtures/synthetic/val-08-continuation-line.a5er
+!tests/fixtures/synthetic/val-09-keyorder-gap.a5er
+!tests/fixtures/synthetic/val-10-value-with-equals.a5er
+!tests/fixtures/synthetic/val-11-unterminated-quote.a5er

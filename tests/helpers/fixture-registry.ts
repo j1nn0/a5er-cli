@@ -109,7 +109,7 @@ export interface FixtureExpectation {
 export interface FixtureSpec {
   /** Stable catalog ID, e.g. `fmt-01`. */
   readonly id: string;
-  /** File name inside its class directory, e.g. `fmt-01-baseline.a5er.txt`. */
+  /** File name inside its class directory, e.g. `fmt-01-baseline.a5er`. */
   readonly file: string;
   readonly fixtureClass: FixtureClass;
   /** One sentence: which construct this fixture exists to exercise. */
@@ -130,7 +130,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   // ── format / header ────────────────────────────────────────────────────
   {
     id: 'fmt-01',
-    file: 'fmt-01-baseline.a5er.txt',
+    file: 'fmt-01-baseline.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'Baseline document: BOM, UTF-8, CRLF, two entities, one view, one relation, IndexInfo.',
@@ -168,7 +168,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'fmt-02',
-    file: 'fmt-02-format19-legacy-index.a5er.txt',
+    file: 'fmt-02-format19-legacy-index.a5er',
     fixtureClass: 'synthetic',
     purpose: 'FORMAT:19 file whose only index data is the legacy Index key.',
     specRefs: ['F2', 'D5', 'L6', 'P8'],
@@ -193,7 +193,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'fmt-03',
-    file: 'fmt-03-no-header.a5er.txt',
+    file: 'fmt-03-no-header.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'No FORMAT line at all: the version is unknown, so canonical and legacy decoders stay active.',
@@ -225,7 +225,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'fmt-04',
-    file: 'fmt-04-format20.a5er.txt',
+    file: 'fmt-04-format20.a5er',
     fixtureClass: 'synthetic',
     purpose: 'FORMAT:20, the hole in the documented version map (K2).',
     specRefs: ['P1', 'K2', '§6'],
@@ -250,7 +250,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'fmt-05',
-    file: 'fmt-05-format99.a5er.txt',
+    file: 'fmt-05-format99.a5er',
     fixtureClass: 'synthetic',
     purpose: 'FORMAT:99, above every documented version: the absent-FORMAT policy applies.',
     specRefs: ['P1', 'U1'],
@@ -280,7 +280,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   // ── encoding ───────────────────────────────────────────────────────────
   {
     id: 'enc-02',
-    file: 'enc-02-no-bom.a5er.txt',
+    file: 'enc-02-no-bom.a5er',
     fixtureClass: 'synthetic',
     purpose: 'UTF-8 without a BOM: the spec-preferred form is absent, nothing else is wrong.',
     specRefs: ['§14 row 2', 'P2'],
@@ -378,7 +378,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'txt-01',
-    file: 'txt-01-multi-table-view.a5er.txt',
+    file: 'txt-01-multi-table-view.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'Three entities (one with zero Field), two views, two pages and one relation across two pages.',
@@ -419,7 +419,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'txt-02',
-    file: 'txt-02-relationship-alias.a5er.txt',
+    file: 'txt-02-relationship-alias.a5er',
     fixtureClass: 'synthetic',
     purpose:
       '[Relationship] is one section for [Relation], so two sections mean two relations, not four.',
@@ -449,7 +449,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'txt-03',
-    file: 'txt-03-relation-composite.a5er.txt',
+    file: 'txt-03-relation-composite.a5er',
     fixtureClass: 'synthetic',
     purpose: 'Composite foreign key: Fields1 and Fields2 each carry two columns in one value.',
     specRefs: ['§14 row 8', 'P9'],
@@ -476,7 +476,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   // ── structure ──────────────────────────────────────────────────────────
   {
     id: 'txt-04',
-    file: 'txt-04-unknown-section-key.a5er.txt',
+    file: 'txt-04-unknown-section-key.a5er',
     fixtureClass: 'synthetic',
     purpose: 'Unknown section and two unknown keys are preserved as raw evidence.',
     specRefs: ['§14 row 9', 'P13', 'F6'],
@@ -506,7 +506,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'txt-05',
-    file: 'txt-05-duplicate-scalar.a5er.txt',
+    file: 'txt-05-duplicate-scalar.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'ProjectName appears twice with different values: last occurrence wins, both spans are kept.',
@@ -535,7 +535,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'txt-06',
-    file: 'txt-06-duplicate-manager.a5er.txt',
+    file: 'txt-06-duplicate-manager.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'Two [Manager] sections: both stay in the AST, both spans are reported, scalars resolve last-wins.',
@@ -564,7 +564,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'txt-07',
-    file: 'txt-07-lowercase-section.a5er.txt',
+    file: 'txt-07-lowercase-section.a5er',
     fixtureClass: 'synthetic',
     purpose:
       '[entity] in lower case is an unknown section, preserved raw and never parsed as [Entity].',
@@ -590,7 +590,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'txt-08',
-    file: 'txt-08-header-whitespace.a5er.txt',
+    file: 'txt-08-header-whitespace.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'Whitespace around a section header is trimmed for recognition and kept in header.raw.',
@@ -615,7 +615,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'txt-09',
-    file: 'txt-09-empty-section.a5er.txt',
+    file: 'txt-09-empty-section.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'A known section with zero entries stays in the AST and is missing required keys, not dropped.',
@@ -640,7 +640,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   // ── values ─────────────────────────────────────────────────────────────
   {
     id: 'val-01',
-    file: 'val-01-escapes.a5er.txt',
+    file: 'val-01-escapes.a5er',
     fixtureClass: 'synthetic',
     purpose: 'Escape table in real strings: \\Q, \\\\, \\q, \\t, \\n appear verbatim.',
     specRefs: ['§14 row 5', 'P5', 'F3'],
@@ -665,7 +665,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'val-02',
-    file: 'val-02-index-multi-column.a5er.txt',
+    file: 'val-02-index-multi-column.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'IndexInfo whose column list is one quoted element containing a comma; single-column PK.',
@@ -695,7 +695,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'val-03',
-    file: 'val-03-field-9-element.a5er.txt',
+    file: 'val-03-field-9-element.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'Field row with the 9-element shape of the spec sample (tail defaulted, no diagnostic).',
@@ -721,7 +721,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'val-04',
-    file: 'val-04-field-11-element.a5er.txt',
+    file: 'val-04-field-11-element.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'Field row with 11 elements: the tail beyond 追加オプション is kept raw, the row is kept.',
@@ -746,7 +746,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'val-05',
-    file: 'val-05-field-missing-color.a5er.txt',
+    file: 'val-05-field-missing-color.a5er',
     fixtureClass: 'synthetic',
     purpose: 'Field row missing 色 (element 8, 必須): reported, never defaulted.',
     specRefs: ['P7', 'F4'],
@@ -771,7 +771,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'val-06',
-    file: 'val-06-composite-pk.a5er.txt',
+    file: 'val-06-composite-pk.a5er',
     fixtureClass: 'synthetic',
     purpose: 'Composite primary key as キー順 0,1,2 — a primary key is positional, not an object.',
     specRefs: ['§14 row 7', 'P8'],
@@ -796,7 +796,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'val-07',
-    file: 'val-07-color-tokens.a5er.txt',
+    file: 'val-07-color-tokens.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'Colour tokens: $FFFFFFFF default, 8-hex $AABBGGRR, 6-hex $BBGGRR and a length that fits neither.',
@@ -829,7 +829,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'val-08',
-    file: 'val-08-continuation-line.a5er.txt',
+    file: 'val-08-continuation-line.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'A Query value broken across two physical lines: the rest is one malformed line, never joined.',
@@ -858,7 +858,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'val-09',
-    file: 'val-09-keyorder-gap.a5er.txt',
+    file: 'val-09-keyorder-gap.a5er',
     fixtureClass: 'synthetic',
     purpose: 'キー順 is 0 and 2: a gap, so the inferred primary key is reported as a conflict.',
     specRefs: ['P8'],
@@ -886,7 +886,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'val-10',
-    file: 'val-10-value-with-equals.a5er.txt',
+    file: 'val-10-value-with-equals.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'A TableInnerOption value contains `=`: the key/value split happens on the first one and the rest is data.',
@@ -915,7 +915,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'val-11',
-    file: 'val-11-unterminated-quote.a5er.txt',
+    file: 'val-11-unterminated-quote.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'A Complex value whose closing quote never arrives: the raw remainder stays one element.',
@@ -945,7 +945,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   // ── semantics ──────────────────────────────────────────────────────────
   {
     id: 'sem-01',
-    file: 'sem-01-dangling-refs.a5er.txt',
+    file: 'sem-01-dangling-refs.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'Relation to a missing entity, a missing column and a missing page: three warnings, no crash.',
@@ -971,7 +971,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'sem-02',
-    file: 'sem-02-page-case.a5er.txt',
+    file: 'sem-02-page-case.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'PageInfo declares "Main" while the entity position says "MAIN": page names resolve case-insensitively.',
@@ -998,7 +998,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'sem-03',
-    file: 'sem-03-fields-count-mismatch.a5er.txt',
+    file: 'sem-03-fields-count-mismatch.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'Fields1 names two columns and Fields2 three: the arity mismatch is reported, never truncated.',
@@ -1030,7 +1030,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'sem-04',
-    file: 'sem-04-legacy-index-under-21.a5er.txt',
+    file: 'sem-04-legacy-index-under-21.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'FORMAT:21 carrying only the legacy Index key, with a multi-column payload and no IndexInfo.',
@@ -1057,7 +1057,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'sem-05',
-    file: 'sem-05-subtype.a5er.txt',
+    file: 'sem-05-subtype.a5er',
     fixtureClass: 'synthetic',
     purpose:
       '[Subtype] present: its own keys parse, its entity membership is undeterminable and never inferred.',
@@ -1087,7 +1087,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'sem-06',
-    file: 'sem-06-view-columns.a5er.txt',
+    file: 'sem-06-view-columns.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'One view with LNameByComment=1 beside a plain view: neither stores columns, both say so.',
@@ -1119,7 +1119,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'sem-07',
-    file: 'sem-07-domains-commonfields.a5er.txt',
+    file: 'sem-07-domains-commonfields.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'A domain, a common field, an @INT system domain and UsingCommonColumns absent beside explicit 0.',
@@ -1153,7 +1153,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'sem-08',
-    file: 'sem-08-duplicate-pname.a5er.txt',
+    file: 'sem-08-duplicate-pname.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'An entity and a view share one PName: both are emitted and the collision is an error.',
@@ -1184,7 +1184,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'sem-09',
-    file: 'sem-09-zero-pages.a5er.txt',
+    file: 'sem-09-zero-pages.a5er',
     fixtureClass: 'synthetic',
     purpose:
       '[Manager] with no PageInfo at all: zero pages is an error, and no schema is invented.',
@@ -1208,7 +1208,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'sem-10',
-    file: 'sem-10-missing-position.a5er.txt',
+    file: 'sem-10-missing-position.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'An entity without Position is still emitted, with an empty positions list and a warning.',
@@ -1235,7 +1235,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'sem-11',
-    file: 'sem-11-zero-fields.a5er.txt',
+    file: 'sem-11-zero-fields.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'An entity with zero Field keys is legal: complete columns with an empty list, no diagnostic.',
@@ -1260,7 +1260,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'hst-01',
-    file: 'hst-01-nul-inside-text.a5er.txt',
+    file: 'hst-01-nul-inside-text.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'One NUL byte inside a comment, far below the 10 %/4 KiB binary threshold: the document stays text.',
@@ -1339,7 +1339,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
   },
   {
     id: 'hst-04',
-    file: 'hst-04-hostile-names.a5er.txt',
+    file: 'hst-04-hostile-names.a5er',
     fixtureClass: 'synthetic',
     purpose:
       'Hostile section names: a tag, a nested pair, a trailing character and a 4 KiB name, all inert.',
@@ -1574,7 +1574,7 @@ export const FIXTURES: readonly FixtureSpec[] = [
 ];
 
 const FILE_SUFFIXES: Record<FixtureClass, readonly string[]> = {
-  synthetic: ['.a5er.txt'],
+  synthetic: ['.a5er'],
   bytes: ['.ts', '.bin'],
   generated: [],
   injected: [],

@@ -57,51 +57,63 @@ exhaustively without building a file for every escape combination.
 
 | Class | Shape | Committed as | Why |
 |---|---|---|---|
-| **Text-shaped** | Valid UTF-8, reviewable line by line (BOM, CRLF, LF, no trailing newline, escapes, Japanese names) | `tests/fixtures/synthetic/<id>.a5er.txt` | Reviewable in diff; the `.txt` suffix keeps `*.a5er` ignored (3.2) |
+| **Text-shaped** | Valid UTF-8, reviewable line by line (BOM, CRLF, LF, no trailing newline, escapes, Japanese names) | `tests/fixtures/synthetic/<name>.a5er` | Reviewable in diff; tracked through an exact per-file `.gitignore` allowlist, not a wildcard (3.2) |
 | **Byte-shaped** | Not valid UTF-8 or not text: Shift_JIS, UTF-16LE, invalid UTF-8, NUL bytes | `tests/fixtures/bytes/<id>.ts` exporting the exact bytes, with the decoded text in a comment | Node has **no Shift_JIS encoder** — verified: `new TextEncoder('shift_jis')` reports `utf-8` and emits `e38386e382b9e38388` for `テスト`, i.e. UTF-8. A byte fixture therefore cannot be produced from readable text, and a committed non-UTF-8 blob would be unreviewable and EOL-conversion-sensitive |
 | **Generated** | Size/limit cases and fuzz mutations | Not committed; built in a temp dir at test time | A 64 MiB file must not live in git, and mutations are defined by code |
 
-### 3.2 Decision: `.a5er.txt` in the repo, real `.a5er` only at run time
+### 3.2 Decision: real `.a5er` in the repo, by exact per-file allowlist
 
-Committed fixtures end in `.a5er.txt`. A staging helper copies each fixture to a temp directory
-under its real name (`<tmp>/<id>.a5er`) before any code under test opens it.
+Committed synthetic fixtures end in their real extension, `tests/fixtures/synthetic/<name>.a5er`.
+A staging helper still copies each fixture to a temp directory (`<tmp>/<id>.a5er`) before any code
+under test opens it, so tests never open a path inside `tests/fixtures/`.
+
+The blanket `*.a5er` rule in `.gitignore` stays ("Real ER diagrams may contain confidential
+schema information"). It is followed by one exact negation per catalogued fixture, and nothing
+else:
+
+```gitignore
+*.a5er
+!tests/fixtures/synthetic/fmt-01-baseline.a5er
+!tests/fixtures/synthetic/enc-02-no-bom.a5er
+# ... one line for each of the 39 synthetic catalog entries
+```
 
 Rationale, in order of weight:
 
-1. **The confidentiality guard stays absolute.** `.gitignore` ignores `*.a5er` with the comment
-   "Real ER diagrams may contain confidential schema information". Adding an exception weakens
-   that guard for every future contributor; the `.txt` suffix means **no `.gitignore` change is
-   required at all** for this strategy.
-2. **Extension realism is preserved where it matters.** The CLI only ever sees `<id>.a5er`, so
-   error messages, path handling and any future extension check are exercised realistically.
-3. **Byte fidelity is independent of the name.** A `.txt` file is not treated as text by git
-   once `.gitattributes` marks it `-text` (3.3).
+1. **The confidentiality guard stays per file.** There is deliberately **no** directory wildcard
+   (`!tests/fixtures/synthetic/**/*.a5er` or `!tests/fixtures/synthetic/*.a5er`): a stray `cp` of a
+   real export into that directory would be committed silently under a wildcard, whereas under the
+   exact allowlist it stays ignored and `git add` refuses it. Adding a fixture therefore takes two
+   edits that a reviewer sees together: the registry entry and its negation line.
+2. **Extension realism is preserved everywhere.** The fixture on disk, in the registry and in the
+   staged copy all carry the extension the CLI really sees.
+3. **A tracked `.a5er` that is not in the catalog is a failure, not something to accommodate**
+   (G-9). Never `git add -f` an unknown or private diagram.
 
-Verified: with `*.a5er` as the only rule, `git check-ignore -v tests/fixtures/synthetic/case.a5er.txt`
-reports nothing (not ignored), while `tests/fixtures/synthetic/case.a5er` and `docs/x.a5er` are
-ignored.
+Verified with `git check-ignore --no-index` (the flag is required: without it git does not judge a
+tracked path, so a tracked-but-ignored file would read as "not ignored"): every registered synthetic
+fixture is not ignored; `case.a5er` at the repository root, `docs/x.a5er`, and an unregistered
+name such as `tests/fixtures/synthetic/case.a5er` are all ignored.
 
-### 3.3 Rejected alternative, and the exact rule if it is ever adopted
+### 3.3 Line endings: `.gitattributes`
 
-If real `.a5er` extensions must live in the repo, this is the rule — **proposed, not applied in
-this unit**, and it must be appended *after* `*.a5er` (order matters):
-
-```gitignore
-# Synthetic fixtures only. Real ER diagrams stay ignored everywhere else.
-!tests/fixtures/synthetic/**/*.a5er
-```
-
-Verified behaviour of that pair: `tests/fixtures/synthetic/case.a5er` becomes trackable while
-`docs/x.a5er` stays ignored. It is rejected for now because it weakens the guard for one whole
-directory; a stray `cp` of a real export into that directory would be committed silently.
-
-**Byte-fidelity rule (proposed, not applied in this unit)** — required either way, because git
-may normalise line endings on checkout and the CRLF/LF/mixed fixtures depend on exact bytes:
+Committed synthetic fixtures are reviewable text, so `.gitattributes` pins their line endings
+instead of leaving them to `core.autocrlf`:
 
 ```gitattributes
-# Fixtures are byte-exact: no EOL conversion, no text diffing
-tests/fixtures/** -text
+tests/fixtures/synthetic/** text eol=lf
+tests/fixtures/synthetic/fmt-01-baseline.a5er text eol=crlf
 ```
+
+- Every synthetic fixture is LF in the index and in the working tree. The one exception is
+  `fmt-01`, whose purpose is the BOM + CRLF case: its index blob is LF (898 bytes) and a checkout
+  materialises CRLF (935 bytes) on every platform, so the diff stays readable while the bytes
+  under test are exact. `-text` is not used, because it would store the CRLF in the index.
+- Fixtures whose bytes cannot survive any EOL conversion (mixed CRLF/LF/CR, non-UTF-8) are not
+  synthetic fixtures at all: they are `bytes/` modules (3.1), declared `binary` or `text eol=lf`
+  in `.gitattributes`.
+- The renamed files are byte-identical to their former `.a5er` forms; `git diff
+  --find-renames=100%` reports each as a pure rename.
 
 ### 3.4 Layout and naming
 
@@ -109,9 +121,9 @@ tests/fixtures/** -text
 tests/
   fixtures/
     synthetic/            # committed, text-shaped, staged to *.a5er at run time
-      fmt-01-baseline.a5er.txt
+      fmt-01-baseline.a5er
       fmt-01-baseline.expected.json
-      val-01-escapes.a5er.txt
+      val-01-escapes.a5er
       ...
     bytes/                # committed, byte-shaped, exported as Uint8Array
       enc-03-sjis.ts
@@ -213,51 +225,51 @@ Every row is a required fixture. "Stage" is the `architecture.md` §18 stage tha
 
 | ID | File | Serves | Encodes | Stage |
 |---|---|---|---|---|
-| `fmt-01` | `fmt-01-baseline.a5er.txt` | §14 row 1; golden | BOM + UTF-8 + CRLF; two entities, one view, one relation, `IndexInfo`, composite PK-free, one page | 2–3 |
-| `fmt-02` | `fmt-02-format19-legacy-index.a5er.txt` | §14 row 1; P8 | `FORMAT:19`, legacy `Index=` only, no `IndexInfo` | 3 |
-| `fmt-03` | `fmt-03-no-header.a5er.txt` | P1 | No `FORMAT` line, BOM present | 3 |
-| `fmt-04` | `fmt-04-format20.a5er.txt` | P1, K2 | `FORMAT:20` (the documented hole) | 3 |
-| `fmt-05` | `fmt-05-format99.a5er.txt` | P1 | `FORMAT:99` | 3 |
-| `enc-02` | `enc-02-no-bom.a5er.txt` | §14 row 2 | UTF-8 without BOM | 2 |
+| `fmt-01` | `fmt-01-baseline.a5er` | §14 row 1; golden | BOM + UTF-8 + CRLF; two entities, one view, one relation, `IndexInfo`, composite PK-free, one page | 2–3 |
+| `fmt-02` | `fmt-02-format19-legacy-index.a5er` | §14 row 1; P8 | `FORMAT:19`, legacy `Index=` only, no `IndexInfo` | 3 |
+| `fmt-03` | `fmt-03-no-header.a5er` | P1 | No `FORMAT` line, BOM present | 3 |
+| `fmt-04` | `fmt-04-format20.a5er` | P1, K2 | `FORMAT:20` (the documented hole) | 3 |
+| `fmt-05` | `fmt-05-format99.a5er` | P1 | `FORMAT:99` | 3 |
+| `enc-02` | `enc-02-no-bom.a5er` | §14 row 2 | UTF-8 without BOM | 2 |
 | `enc-03` | `bytes/enc-03-sjis.ts` | §14 row 3 | Shift_JIS bytes with `ENCODING:UTF8`; Japanese names decode correctly | 2 |
 | `enc-04` | `bytes/enc-04-undecodable.ts` | §14 row 4 | Bytes that fail every strict candidate | 2 |
 | `enc-05` | `bytes/enc-05-utf16le.ts` | P2 | UTF-16LE BOM, no `ENCODING` hint | 2 |
-| `txt-01` | `txt-01-multi-table-view.a5er.txt` | §14 row 6 | Three entities, two views, two pages | 3 |
-| `txt-02` | `txt-02-relationship-alias.a5er.txt` | P3 | `[Relation]` and `[Relationship]` in one file | 3 |
-| `txt-03` | `txt-03-relation-composite.a5er.txt` | §14 row 8 | `Fields1="a,b"`, `Fields2="x,y"` | 3 |
-| `txt-04` | `txt-04-unknown-section-key.a5er.txt` | §14 row 9 | `[Memo]` section, unknown key in `[Entity]` | 3 |
-| `txt-05` | `txt-05-duplicate-scalar.a5er.txt` | §14 row 10; U6 | Duplicate `ProjectName` with different values | 3 |
-| `txt-06` | `txt-06-duplicate-manager.a5er.txt` | P3, U5 | Two `[Manager]` sections | 3 |
-| `txt-07` | `txt-07-lowercase-section.a5er.txt` | P3 | `[entity]` | 3 |
-| `txt-08` | `txt-08-header-whitespace.a5er.txt` | P3 | ` [Entity] ` with surrounding spaces | 3 |
-| `txt-09` | `txt-09-empty-section.a5er.txt` | P3 | A known section with no keys | 3 |
-| `val-01` | `val-01-escapes.a5er.txt` | §14 row 5; P5 | Comments containing `\Q`, `\q`, `\\`, `\t`, `\n`, a literal `,` and a real `\"` sequence | 3 |
-| `val-02` | `val-02-index-multi-column.a5er.txt` | §14 row 8; P8 | `IndexInfo="users_ix1",1,"user_name,birthday", ""` | 3 |
-| `val-03` | `val-03-field-9-element.a5er.txt` | P7, K3 | The 9-element sample shape | 3 |
-| `val-04` | `val-04-field-11-element.a5er.txt` | P7 | 11 elements (future growth) | 3 |
-| `val-05` | `val-05-field-missing-color.a5er.txt` | P7 | 7 elements — 色 absent | 3 |
-| `val-06` | `val-06-composite-pk.a5er.txt` | §14 row 7; P8 | キー順 `0,1,2` | 4 |
-| `val-07` | `val-07-color-tokens.a5er.txt` | P5, F8 | `$FFFFFFFF`, `$AABBGGRR`-style and ambiguous-length tokens | 4 |
-| `val-08` | `val-08-continuation-line.a5er.txt` | P13, U12 | A query split across two physical lines | 3 |
-| `val-09` | `val-09-keyorder-gap.a5er.txt` | P8 | キー順 `0,2` | 4 |
-| `val-10` | `val-10-value-with-equals.a5er.txt` | P4 | `TableInnerOption` value containing `=` | 3 |
-| `val-11` | `val-11-unterminated-quote.a5er.txt` | P5 | A Complex value whose closing quote is missing | 3 |
-| `sem-01` | `sem-01-dangling-refs.a5er.txt` | §14 row 13 | Dangling entity, dangling column, dangling page — in one file | 4 |
-| `sem-02` | `sem-02-page-case.a5er.txt` | P9, F5 | `PageInfo="Main"` with `Position="MAIN"` | 4 |
-| `sem-03` | `sem-03-fields-count-mismatch.a5er.txt` | P9, U8 | `Fields1` 2, `Fields2` 3 | 4 |
-| `sem-04` | `sem-04-legacy-index-under-21.a5er.txt` | F2, D5 | `FORMAT:21` carrying only legacy `Index=` | 3–4 |
-| `sem-05` | `sem-05-subtype.a5er.txt` | P13, F7 | `[Subtype]` present | 4 |
-| `sem-06` | `sem-06-view-columns.a5er.txt` | P10 | View with `LNameByComment=1`, plus a plain view | 4 |
-| `sem-07` | `sem-07-domains-commonfields.a5er.txt` | P12 | Domain + `@INT` field + `UsingCommonColumns` absent and `0` | 4 |
-| `sem-08` | `sem-08-duplicate-pname.a5er.txt` | P6 | Entity and View sharing `PName` | 4 |
-| `sem-09` | `sem-09-zero-pages.a5er.txt` | P11 | `[Manager]` with no `PageInfo` | 4 |
-| `sem-10` | `sem-10-missing-position.a5er.txt` | P11 | Entity with no `Position` | 4 |
-| `sem-11` | `sem-11-zero-fields.a5er.txt` | P6 | Entity with no `Field` (legal) | 4 |
-| `hst-01` | `hst-01-nul-inside-text.a5er.txt` | §14 row 15 | A NUL below the binary threshold, inside a comment | 2 |
+| `txt-01` | `txt-01-multi-table-view.a5er` | §14 row 6 | Three entities, two views, two pages | 3 |
+| `txt-02` | `txt-02-relationship-alias.a5er` | P3 | `[Relation]` and `[Relationship]` in one file | 3 |
+| `txt-03` | `txt-03-relation-composite.a5er` | §14 row 8 | `Fields1="a,b"`, `Fields2="x,y"` | 3 |
+| `txt-04` | `txt-04-unknown-section-key.a5er` | §14 row 9 | `[Memo]` section, unknown key in `[Entity]` | 3 |
+| `txt-05` | `txt-05-duplicate-scalar.a5er` | §14 row 10; U6 | Duplicate `ProjectName` with different values | 3 |
+| `txt-06` | `txt-06-duplicate-manager.a5er` | P3, U5 | Two `[Manager]` sections | 3 |
+| `txt-07` | `txt-07-lowercase-section.a5er` | P3 | `[entity]` | 3 |
+| `txt-08` | `txt-08-header-whitespace.a5er` | P3 | ` [Entity] ` with surrounding spaces | 3 |
+| `txt-09` | `txt-09-empty-section.a5er` | P3 | A known section with no keys | 3 |
+| `val-01` | `val-01-escapes.a5er` | §14 row 5; P5 | Comments containing `\Q`, `\q`, `\\`, `\t`, `\n`, a literal `,` and a real `\"` sequence | 3 |
+| `val-02` | `val-02-index-multi-column.a5er` | §14 row 8; P8 | `IndexInfo="users_ix1",1,"user_name,birthday", ""` | 3 |
+| `val-03` | `val-03-field-9-element.a5er` | P7, K3 | The 9-element sample shape | 3 |
+| `val-04` | `val-04-field-11-element.a5er` | P7 | 11 elements (future growth) | 3 |
+| `val-05` | `val-05-field-missing-color.a5er` | P7 | 7 elements — 色 absent | 3 |
+| `val-06` | `val-06-composite-pk.a5er` | §14 row 7; P8 | キー順 `0,1,2` | 4 |
+| `val-07` | `val-07-color-tokens.a5er` | P5, F8 | `$FFFFFFFF`, `$AABBGGRR`-style and ambiguous-length tokens | 4 |
+| `val-08` | `val-08-continuation-line.a5er` | P13, U12 | A query split across two physical lines | 3 |
+| `val-09` | `val-09-keyorder-gap.a5er` | P8 | キー順 `0,2` | 4 |
+| `val-10` | `val-10-value-with-equals.a5er` | P4 | `TableInnerOption` value containing `=` | 3 |
+| `val-11` | `val-11-unterminated-quote.a5er` | P5 | A Complex value whose closing quote is missing | 3 |
+| `sem-01` | `sem-01-dangling-refs.a5er` | §14 row 13 | Dangling entity, dangling column, dangling page — in one file | 4 |
+| `sem-02` | `sem-02-page-case.a5er` | P9, F5 | `PageInfo="Main"` with `Position="MAIN"` | 4 |
+| `sem-03` | `sem-03-fields-count-mismatch.a5er` | P9, U8 | `Fields1` 2, `Fields2` 3 | 4 |
+| `sem-04` | `sem-04-legacy-index-under-21.a5er` | F2, D5 | `FORMAT:21` carrying only legacy `Index=` | 3–4 |
+| `sem-05` | `sem-05-subtype.a5er` | P13, F7 | `[Subtype]` present | 4 |
+| `sem-06` | `sem-06-view-columns.a5er` | P10 | View with `LNameByComment=1`, plus a plain view | 4 |
+| `sem-07` | `sem-07-domains-commonfields.a5er` | P12 | Domain + `@INT` field + `UsingCommonColumns` absent and `0` | 4 |
+| `sem-08` | `sem-08-duplicate-pname.a5er` | P6 | Entity and View sharing `PName` | 4 |
+| `sem-09` | `sem-09-zero-pages.a5er` | P11 | `[Manager]` with no `PageInfo` | 4 |
+| `sem-10` | `sem-10-missing-position.a5er` | P11 | Entity with no `Position` | 4 |
+| `sem-11` | `sem-11-zero-fields.a5er` | P6 | Entity with no `Field` (legal) | 4 |
+| `hst-01` | `hst-01-nul-inside-text.a5er` | §14 row 15 | A NUL below the binary threshold, inside a comment | 2 |
 | `hst-02` | `bytes/hst-02-binary.ts` | §14 row 15 | More than 10 % NUL in the first 4 KiB | 2 |
 | `hst-03` | generated | §14 row 15 | 1 MiB single line, under the limit | 2 |
-| `hst-04` | `hst-04-hostile-names.a5er.txt` | §14 row 15 | `[<script>]`, `[[Entity]]`, `[Entity]x`, 4 KiB section name | 3 |
-| `hst-05` | `hst-05-mixed-eol.a5er.txt` | §14 row 15, U4 | CRLF, LF and CR in one file | 2 |
+| `hst-04` | `hst-04-hostile-names.a5er` | §14 row 15 | `[<script>]`, `[[Entity]]`, `[Entity]x`, 4 KiB section name | 3 |
+| `hst-05` | `hst-05-mixed-eol.a5er` | §14 row 15, U4 | CRLF, LF and CR in one file | 2 |
 | `hst-06` | generated (3 files) | §14 row 16 | Empty, whitespace-only, no recognised sections | 2 |
 | `res-01` | generated | §14 row 11 | Read capped below file size | 2 |
 | `res-02` | injected reader | §14 row 11 | Short read reported by the IO seam | 2 |
@@ -396,8 +408,8 @@ v1 — it is reported, because a percentage would let an untested branch hide be
 | G-5 | No swallowed exceptions or silently ignored branches | guard test scanning for empty `catch {}` and `catch (e) {}` with no rethrow or diagnostic |
 | G-6 | No snapshot auto-update and no committed `.snap` files | guard test asserting no `__snapshots__` directory exists |
 | G-7 | Immutability holds for every command | `imm-01` |
-| G-8 | Fixture integrity: every catalog ID exists, is tracked, and is not ignored | `catalog.test.ts` runs `git ls-files` and `git check-ignore` |
-| G-9 | Policy: no committed `.a5er` files | CI runs `git ls-files '*.a5er'` and expects empty output |
+| G-8 | Fixture integrity: every catalog ID exists, is tracked, and is not ignored | `catalog.test.ts` runs `git ls-files` and `git check-ignore --no-index` |
+| G-9 | Policy: the tracked `.a5er` set equals the catalog's synthetic fixtures (exactly 39 today); any other tracked `.a5er` fails | `catalog.test.ts` compares `git ls-files '*.a5er'` with the registry and checks the `.gitignore` allowlist with `git check-ignore --no-index`; CI may run the same `ls-files` comparison |
 
 G-4 and G-5 are guard tests, not lint rules, because no linter is decided in
 `architecture.md` §15. They are a stopgap: once a linter is chosen, both move to lint rules and
@@ -447,7 +459,7 @@ Jobs already exist in `.github/workflows/ci.yml`; this table names the suites th
 | `test` | ubuntu, node 24 + 26 | `pnpm test` (`vitest run`) | All levels; ~60 s budget |
 | `test-windows` | windows, node 24 | `vitest run immutability fixtures` | Line endings, mtime granularity, path handling |
 | `build` | ubuntu, node 24 | `pnpm build` | Proves the package compiles as ESM |
-| `fixture-policy` | ubuntu | `git ls-files '*.a5er'` must be empty; `git check-ignore` on every `*.a5er.txt` must report nothing | Guards the confidentiality rule (G-8, G-9) |
+| `fixture-policy` | ubuntu | `git ls-files '*.a5er'` must equal the 39 catalogued synthetic paths exactly; `git check-ignore --no-index` must report every one of them as not ignored and an unregistered `.a5er` as ignored | Guards the confidentiality rule (G-8, G-9) |
 | `no-update` | ubuntu | `git diff --exit-code` after `vitest run` | Fails if anything rewrote an expected file |
 
 Node 24 is the floor (`architecture.md` §15 and `engines` in `package.json`); node 26 is included

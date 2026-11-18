@@ -56,7 +56,7 @@ inline reader tests in `tests/json-source-counts.test.ts`, not by a row above.
 | column | meaning |
 |---|---|
 | `id` | catalog ID; the golden is `<id>.expected.json` |
-| `source` | the committed file (`.a5er.txt` under `tests/fixtures/synthetic/`, or the `.ts` byte module under `tests/fixtures/bytes/`) |
+| `source` | the committed file (`.a5er` under `tests/fixtures/synthetic/`, or the `.ts` byte module under `tests/fixtures/bytes/`) |
 | `enc` | the codec used to decode it; `undecodable`/`binary` mean no decoder is ever asked |
 | `bytes` | the fixture's size on disk / in its module |
 | `status` | the golden's `status` |
@@ -71,50 +71,50 @@ inline reader tests in `tests/json-source-counts.test.ts`, not by a row above.
 
 | id | source | enc | bytes | status | § | keys | lines | blank | cmt | raw | codes | anchors |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `enc-02` | `enc-02-no-bom.a5er.txt` | utf-8 | 197 | ok | 2 | 4 | 10 | 2 | 2 | 0 | D_BOM_MISSING | §14 row 2, P2 |
+| `enc-02` | `enc-02-no-bom.a5er` | utf-8 | 197 | ok | 2 | 4 | 10 | 2 | 2 | 0 | D_BOM_MISSING | §14 row 2, P2 |
 | `enc-03` | `enc-03-sjis.ts` | shift_jis | 106 | degraded | 1 | 3 | 7 | 1 | 2 | 0 | D_ENCODING_MISMATCH,V_MISSING_REQUIRED_KEY,V_DANGLING_PAGE | §14 row 3, P2 |
 | `enc-04` | `enc-04-undecodable.ts` | undecodable | 39 | failed | — | — | — | — | — | — | E_UNDECODABLE | §14 row 4, §8.2 of docs/architecture.md |
 | `enc-05` | `enc-05-utf16le.ts` | utf-16le | 130 | degraded | 1 | 2 | 5 | 1 | 1 | 0 | D_ENCODING_ASSUMED,V_MISSING_REQUIRED_KEY,V_DANGLING_PAGE | P2, §6 |
-| `fmt-01` | `fmt-01-baseline.a5er.txt` | utf-8 | 935 | ok | 5 | 25 | 37 | 5 | 2 | 0 | V_VIEW_COLUMNS_UNKNOWN | §14 row 1, P1, P6, P8 |
-| `fmt-02` | `fmt-02-format19-legacy-index.a5er.txt` | utf-8 | 244 | degraded | 2 | 5 | 11 | 2 | 2 | 0 | S_LEGACY_KEY,V_INDEX_LEGACY_ONLY | F2, D5, L6, P8 |
-| `fmt-03` | `fmt-03-no-header.a5er.txt` | utf-8 | 253 | degraded | 2 | 8 | 13 | 2 | 1 | 0 | S_HEADER_UNKNOWN_FORMAT | P1, U1, D2 |
-| `fmt-04` | `fmt-04-format20.a5er.txt` | utf-8 | 119 | degraded | 2 | 3 | 8 | 2 | 1 | 0 | S_HEADER_UNKNOWN_FORMAT | P1, K2, §6 |
-| `fmt-05` | `fmt-05-format99.a5er.txt` | utf-8 | 279 | degraded | 2 | 8 | 14 | 2 | 2 | 0 | S_HEADER_UNKNOWN_FORMAT | P1, U1 |
-| `hst-01` | `hst-01-nul-inside-text.a5er.txt` | utf-8 | 209 | ok | 2 | 5 | 10 | 2 | 1 | 0 | — | §14 row 15, §10.3 |
+| `fmt-01` | `fmt-01-baseline.a5er` | utf-8 | 935 | ok | 5 | 25 | 37 | 5 | 2 | 0 | V_VIEW_COLUMNS_UNKNOWN | §14 row 1, P1, P6, P8 |
+| `fmt-02` | `fmt-02-format19-legacy-index.a5er` | utf-8 | 244 | degraded | 2 | 5 | 11 | 2 | 2 | 0 | S_LEGACY_KEY,V_INDEX_LEGACY_ONLY | F2, D5, L6, P8 |
+| `fmt-03` | `fmt-03-no-header.a5er` | utf-8 | 253 | degraded | 2 | 8 | 13 | 2 | 1 | 0 | S_HEADER_UNKNOWN_FORMAT | P1, U1, D2 |
+| `fmt-04` | `fmt-04-format20.a5er` | utf-8 | 119 | degraded | 2 | 3 | 8 | 2 | 1 | 0 | S_HEADER_UNKNOWN_FORMAT | P1, K2, §6 |
+| `fmt-05` | `fmt-05-format99.a5er` | utf-8 | 279 | degraded | 2 | 8 | 14 | 2 | 2 | 0 | S_HEADER_UNKNOWN_FORMAT | P1, U1 |
+| `hst-01` | `hst-01-nul-inside-text.a5er` | utf-8 | 209 | ok | 2 | 5 | 10 | 2 | 1 | 0 | — | §14 row 15, §10.3 |
 | `hst-02` | `hst-02-binary.ts` | binary | 4096 | failed | — | — | — | — | — | — | E_BINARY_INPUT | §14 row 15, §10.3, E_BINARY_INPUT |
-| `hst-04` | `hst-04-hostile-names.a5er.txt` | utf-8 | 4340 | degraded | 5 | 6 | 19 | 6 | 1 | 1 | S_UNKNOWN_SECTION,S_UNKNOWN_SECTION,S_MALFORMED_LINE,S_UNKNOWN_SECTION | §14 row 15, P3, F6 |
+| `hst-04` | `hst-04-hostile-names.a5er` | utf-8 | 4340 | degraded | 5 | 6 | 19 | 6 | 1 | 1 | S_UNKNOWN_SECTION,S_UNKNOWN_SECTION,S_MALFORMED_LINE,S_UNKNOWN_SECTION | §14 row 15, P3, F6 |
 | `hst-05` | `hst-05-mixed-eol.ts` | utf-8 | 185 | ok | 2 | 4 | 7 | 0 | 1 | 0 | — | §14 row 15, U4, P2 |
-| `sem-01` | `sem-01-dangling-refs.a5er.txt` | utf-8 | 462 | degraded | 3 | 14 | 21 | 3 | 1 | 0 | V_DANGLING_ENTITY,V_DANGLING_COLUMN,V_DANGLING_PAGE | §14 row 13, P9, F5 |
-| `sem-02` | `sem-02-page-case.a5er.txt` | utf-8 | 184 | ok | 2 | 4 | 9 | 2 | 1 | 0 | — | P9, F5, U9 |
-| `sem-03` | `sem-03-fields-count-mismatch.a5er.txt` | utf-8 | 674 | degraded | 4 | 19 | 28 | 4 | 1 | 0 | V_FIELD_COUNT_MISMATCH | P9, U8 |
-| `sem-04` | `sem-04-legacy-index-under-21.a5er.txt` | utf-8 | 385 | degraded | 2 | 7 | 12 | 2 | 1 | 0 | S_LEGACY_KEY,V_INDEX_LEGACY_ONLY | F2, D5, L6, P8 |
-| `sem-05` | `sem-05-subtype.a5er.txt` | utf-8 | 294 | ok | 3 | 9 | 16 | 3 | 1 | 0 | V_UNSUPPORTED_SUBTYPE_MEMBERSHIP | P13, F7, D6, K11 |
-| `sem-06` | `sem-06-view-columns.a5er.txt` | utf-8 | 274 | ok | 3 | 8 | 15 | 3 | 1 | 0 | V_VIEW_COLUMNS_UNKNOWN,V_VIEW_COLUMNS_UNKNOWN | P10, F6 |
-| `sem-07` | `sem-07-domains-commonfields.a5er.txt` | utf-8 | 511 | ok | 3 | 11 | 18 | 3 | 1 | 0 | — | P12, F9 |
-| `sem-08` | `sem-08-duplicate-pname.a5er.txt` | utf-8 | 254 | degraded | 3 | 7 | 14 | 3 | 1 | 0 | V_DUPLICATE_OBJECT_NAME,V_VIEW_COLUMNS_UNKNOWN | P6, U6 |
-| `sem-09` | `sem-09-zero-pages.a5er.txt` | utf-8 | 55 | degraded | 1 | 1 | 4 | 1 | 1 | 0 | V_MISSING_REQUIRED_KEY | P11 |
-| `sem-10` | `sem-10-missing-position.a5er.txt` | utf-8 | 164 | degraded | 2 | 3 | 8 | 2 | 1 | 0 | V_MISSING_REQUIRED_KEY | P11 |
-| `sem-11` | `sem-11-zero-fields.a5er.txt` | utf-8 | 124 | ok | 2 | 3 | 8 | 2 | 1 | 0 | — | P6 |
-| `txt-01` | `txt-01-multi-table-view.a5er.txt` | utf-8 | 1171 | ok | 7 | 33 | 49 | 7 | 2 | 0 | V_VIEW_COLUMNS_UNKNOWN,V_VIEW_COLUMNS_UNKNOWN | §14 row 6, P6, P9, P11 |
-| `txt-02` | `txt-02-relationship-alias.a5er.txt` | utf-8 | 746 | ok | 5 | 26 | 37 | 5 | 1 | 0 | — | P3, P9, F4 |
-| `txt-03` | `txt-03-relation-composite.a5er.txt` | utf-8 | 613 | ok | 4 | 18 | 27 | 4 | 1 | 0 | — | §14 row 8, P9 |
-| `txt-04` | `txt-04-unknown-section-key.a5er.txt` | utf-8 | 190 | ok | 3 | 6 | 13 | 3 | 1 | 0 | S_UNKNOWN_KEY,S_UNKNOWN_KEY,S_UNKNOWN_SECTION | §14 row 9, P13, F6 |
-| `txt-05` | `txt-05-duplicate-scalar.a5er.txt` | utf-8 | 242 | degraded | 2 | 6 | 11 | 2 | 1 | 0 | S_DUPLICATE_KEY | §14 row 10, U6, P4 |
-| `txt-06` | `txt-06-duplicate-manager.a5er.txt` | utf-8 | 296 | degraded | 3 | 7 | 14 | 3 | 1 | 0 | S_DUPLICATE_KEY | P3, U5 |
-| `txt-07` | `txt-07-lowercase-section.a5er.txt` | utf-8 | 311 | ok | 3 | 7 | 14 | 3 | 1 | 0 | S_UNKNOWN_SECTION | P3, F6 |
-| `txt-08` | `txt-08-header-whitespace.a5er.txt` | utf-8 | 191 | ok | 2 | 4 | 9 | 2 | 1 | 0 | — | P3 |
-| `txt-09` | `txt-09-empty-section.a5er.txt` | utf-8 | 206 | degraded | 3 | 4 | 11 | 3 | 1 | 0 | V_MISSING_REQUIRED_KEY | P3, P9 |
-| `val-01` | `val-01-escapes.a5er.txt` | utf-8 | 255 | ok | 2 | 5 | 10 | 2 | 1 | 0 | — | §14 row 5, P5, F3 |
-| `val-02` | `val-02-index-multi-column.a5er.txt` | utf-8 | 357 | ok | 2 | 7 | 12 | 2 | 1 | 0 | — | §14 row 8, P8, F3 |
-| `val-03` | `val-03-field-9-element.a5er.txt` | utf-8 | 196 | ok | 2 | 4 | 9 | 2 | 1 | 0 | — | P7, K3, F4 |
-| `val-04` | `val-04-field-11-element.a5er.txt` | utf-8 | 217 | degraded | 2 | 4 | 9 | 2 | 1 | 0 | S_FIELD_TOO_MANY_ELEMENTS | P7, F4 |
-| `val-05` | `val-05-field-missing-color.a5er.txt` | utf-8 | 198 | degraded | 2 | 4 | 9 | 2 | 1 | 0 | S_FIELD_TOO_FEW_ELEMENTS,V_MISSING_REQUIRED_KEY | P7, F4 |
-| `val-06` | `val-06-composite-pk.a5er.txt` | utf-8 | 337 | ok | 2 | 6 | 11 | 2 | 1 | 0 | — | §14 row 7, P8 |
-| `val-07` | `val-07-color-tokens.a5er.txt` | utf-8 | 373 | ok | 2 | 8 | 13 | 2 | 1 | 0 | — | P5, F8, K10 |
-| `val-08` | `val-08-continuation-line.a5er.txt` | utf-8 | 166 | degraded | 2 | 4 | 10 | 2 | 1 | 1 | V_VIEW_COLUMNS_UNKNOWN,S_MALFORMED_LINE | P13, U12 |
-| `val-09` | `val-09-keyorder-gap.a5er.txt` | utf-8 | 265 | degraded | 2 | 5 | 10 | 2 | 1 | 0 | V_PK_ORDER_CONFLICT | P8 |
-| `val-10` | `val-10-value-with-equals.a5er.txt` | utf-8 | 244 | ok | 2 | 5 | 10 | 2 | 1 | 0 | — | P4 |
-| `val-11` | `val-11-unterminated-quote.a5er.txt` | utf-8 | 221 | degraded | 2 | 4 | 9 | 2 | 1 | 0 | S_COMPLEX_UNTERMINATED_QUOTE | P5, F3 |
+| `sem-01` | `sem-01-dangling-refs.a5er` | utf-8 | 462 | degraded | 3 | 14 | 21 | 3 | 1 | 0 | V_DANGLING_ENTITY,V_DANGLING_COLUMN,V_DANGLING_PAGE | §14 row 13, P9, F5 |
+| `sem-02` | `sem-02-page-case.a5er` | utf-8 | 184 | ok | 2 | 4 | 9 | 2 | 1 | 0 | — | P9, F5, U9 |
+| `sem-03` | `sem-03-fields-count-mismatch.a5er` | utf-8 | 674 | degraded | 4 | 19 | 28 | 4 | 1 | 0 | V_FIELD_COUNT_MISMATCH | P9, U8 |
+| `sem-04` | `sem-04-legacy-index-under-21.a5er` | utf-8 | 385 | degraded | 2 | 7 | 12 | 2 | 1 | 0 | S_LEGACY_KEY,V_INDEX_LEGACY_ONLY | F2, D5, L6, P8 |
+| `sem-05` | `sem-05-subtype.a5er` | utf-8 | 294 | ok | 3 | 9 | 16 | 3 | 1 | 0 | V_UNSUPPORTED_SUBTYPE_MEMBERSHIP | P13, F7, D6, K11 |
+| `sem-06` | `sem-06-view-columns.a5er` | utf-8 | 274 | ok | 3 | 8 | 15 | 3 | 1 | 0 | V_VIEW_COLUMNS_UNKNOWN,V_VIEW_COLUMNS_UNKNOWN | P10, F6 |
+| `sem-07` | `sem-07-domains-commonfields.a5er` | utf-8 | 511 | ok | 3 | 11 | 18 | 3 | 1 | 0 | — | P12, F9 |
+| `sem-08` | `sem-08-duplicate-pname.a5er` | utf-8 | 254 | degraded | 3 | 7 | 14 | 3 | 1 | 0 | V_DUPLICATE_OBJECT_NAME,V_VIEW_COLUMNS_UNKNOWN | P6, U6 |
+| `sem-09` | `sem-09-zero-pages.a5er` | utf-8 | 55 | degraded | 1 | 1 | 4 | 1 | 1 | 0 | V_MISSING_REQUIRED_KEY | P11 |
+| `sem-10` | `sem-10-missing-position.a5er` | utf-8 | 164 | degraded | 2 | 3 | 8 | 2 | 1 | 0 | V_MISSING_REQUIRED_KEY | P11 |
+| `sem-11` | `sem-11-zero-fields.a5er` | utf-8 | 124 | ok | 2 | 3 | 8 | 2 | 1 | 0 | — | P6 |
+| `txt-01` | `txt-01-multi-table-view.a5er` | utf-8 | 1171 | ok | 7 | 33 | 49 | 7 | 2 | 0 | V_VIEW_COLUMNS_UNKNOWN,V_VIEW_COLUMNS_UNKNOWN | §14 row 6, P6, P9, P11 |
+| `txt-02` | `txt-02-relationship-alias.a5er` | utf-8 | 746 | ok | 5 | 26 | 37 | 5 | 1 | 0 | — | P3, P9, F4 |
+| `txt-03` | `txt-03-relation-composite.a5er` | utf-8 | 613 | ok | 4 | 18 | 27 | 4 | 1 | 0 | — | §14 row 8, P9 |
+| `txt-04` | `txt-04-unknown-section-key.a5er` | utf-8 | 190 | ok | 3 | 6 | 13 | 3 | 1 | 0 | S_UNKNOWN_KEY,S_UNKNOWN_KEY,S_UNKNOWN_SECTION | §14 row 9, P13, F6 |
+| `txt-05` | `txt-05-duplicate-scalar.a5er` | utf-8 | 242 | degraded | 2 | 6 | 11 | 2 | 1 | 0 | S_DUPLICATE_KEY | §14 row 10, U6, P4 |
+| `txt-06` | `txt-06-duplicate-manager.a5er` | utf-8 | 296 | degraded | 3 | 7 | 14 | 3 | 1 | 0 | S_DUPLICATE_KEY | P3, U5 |
+| `txt-07` | `txt-07-lowercase-section.a5er` | utf-8 | 311 | ok | 3 | 7 | 14 | 3 | 1 | 0 | S_UNKNOWN_SECTION | P3, F6 |
+| `txt-08` | `txt-08-header-whitespace.a5er` | utf-8 | 191 | ok | 2 | 4 | 9 | 2 | 1 | 0 | — | P3 |
+| `txt-09` | `txt-09-empty-section.a5er` | utf-8 | 206 | degraded | 3 | 4 | 11 | 3 | 1 | 0 | V_MISSING_REQUIRED_KEY | P3, P9 |
+| `val-01` | `val-01-escapes.a5er` | utf-8 | 255 | ok | 2 | 5 | 10 | 2 | 1 | 0 | — | §14 row 5, P5, F3 |
+| `val-02` | `val-02-index-multi-column.a5er` | utf-8 | 357 | ok | 2 | 7 | 12 | 2 | 1 | 0 | — | §14 row 8, P8, F3 |
+| `val-03` | `val-03-field-9-element.a5er` | utf-8 | 196 | ok | 2 | 4 | 9 | 2 | 1 | 0 | — | P7, K3, F4 |
+| `val-04` | `val-04-field-11-element.a5er` | utf-8 | 217 | degraded | 2 | 4 | 9 | 2 | 1 | 0 | S_FIELD_TOO_MANY_ELEMENTS | P7, F4 |
+| `val-05` | `val-05-field-missing-color.a5er` | utf-8 | 198 | degraded | 2 | 4 | 9 | 2 | 1 | 0 | S_FIELD_TOO_FEW_ELEMENTS,V_MISSING_REQUIRED_KEY | P7, F4 |
+| `val-06` | `val-06-composite-pk.a5er` | utf-8 | 337 | ok | 2 | 6 | 11 | 2 | 1 | 0 | — | §14 row 7, P8 |
+| `val-07` | `val-07-color-tokens.a5er` | utf-8 | 373 | ok | 2 | 8 | 13 | 2 | 1 | 0 | — | P5, F8, K10 |
+| `val-08` | `val-08-continuation-line.a5er` | utf-8 | 166 | degraded | 2 | 4 | 10 | 2 | 1 | 1 | V_VIEW_COLUMNS_UNKNOWN,S_MALFORMED_LINE | P13, U12 |
+| `val-09` | `val-09-keyorder-gap.a5er` | utf-8 | 265 | degraded | 2 | 5 | 10 | 2 | 1 | 0 | V_PK_ORDER_CONFLICT | P8 |
+| `val-10` | `val-10-value-with-equals.a5er` | utf-8 | 244 | ok | 2 | 5 | 10 | 2 | 1 | 0 | — | P4 |
+| `val-11` | `val-11-unterminated-quote.a5er` | utf-8 | 221 | degraded | 2 | 4 | 9 | 2 | 1 | 0 | S_COMPLEX_UNTERMINATED_QUOTE | P5, F3 |
 
 **Fatal rows carry no counts.** `enc-04` (`E_UNDECODABLE`) and `hst-02` (`E_BINARY_INPUT`) have
 `completeness: null` and `schema: null`: nothing was decoded, so there is nothing to count. The

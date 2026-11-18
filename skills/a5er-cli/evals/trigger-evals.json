@@ -12,7 +12,7 @@
     "should_trigger": true
   },
   {
-    "query": "run a5er inspect on tests/fixtures/synthetic/fmt-01-baseline.a5er.txt",
+    "query": "run a5er inspect on tests/fixtures/synthetic/fmt-01-baseline.a5er",
     "should_trigger": true
   },
   {

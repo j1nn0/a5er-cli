@@ -30,7 +30,7 @@ Pick `validate` for "is this file OK?" and `inspect` for "what is in it?". Both 
 Run, report the exit code and extract fields in one block. The subshell keeps the exit code and its `trap` deletes the temp directory (outside any repository) when the block ends, so the envelope never lingers. Put every extraction you need inside the block.
 
 ```sh
-file=tests/fixtures/synthetic/fmt-01-baseline.a5er.txt   # replace with the path to read
+file=tests/fixtures/synthetic/fmt-01-baseline.a5er   # replace with the path to read
 (
   tmp=$(mktemp -d) || exit 70
   trap 'rm -rf "$tmp"' EXIT
