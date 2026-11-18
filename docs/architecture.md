@@ -1,11 +1,11 @@
 # Architecture — spec-based `.a5er` parser + CLI (option C)
 
-Phase 1 design output. **Scaffold in place, features not:** `package.json`, `src/cli.ts`,
-`src/index.ts`, `tests/`, CI, `oxlint` + `oxfmt`, Node >= 24 and pnpm 11.28.12 (pinned through
-`packageManager`) exist and build, and the CLI exposes exactly `--help` and `--version`. The
-`.a5er` parser and every analysis command remain unimplemented (Phase 2). This file fixes the
-module boundaries, the data model, the error taxonomy, and the initial JSON contract so that
-Phase 2 can be built against a contract instead of invented incrementally.
+Phase 1 design output, implemented through Phase 2 stage 7: the decode, syntax, schema, semantic
+and validate layers and the JSON serializer exist and are tested, and the CLI runs `inspect` and
+`validate` over a `.a5er` file, emits one envelope, and exits by §12's table. The remaining
+analysis commands are not implemented and are not accepted by the CLI. This file fixes the
+module boundaries, the data model, the error taxonomy, and the initial JSON contract so that the
+rest of Phase 2 can be built against a contract instead of invented incrementally.
 
 Companion documents, both committed: `docs/format-coverage.md` (what v2.21 says, item by item)
 and `docs/parser-evaluation.md` (why option C). This document assumes both and cites them.
@@ -874,9 +874,12 @@ key is a `warning` (U6 defines no semantics).
 
 ## 12. JSON contract (initial)
 
-One envelope per invocation, on **stdout**. Human-readable diagnostics go to **stderr**; JSON
-is never mixed with prose. `--format json` is the default for machine use; a `text` renderer is
-a Phase 2 command-level concern.
+One envelope per invocation, on **stdout**, and nothing else there: the stream is exactly one
+JSON document plus the newline that ends it, so a consumer can parse it whole. Human-readable
+diagnostics go to **stderr**; JSON is never mixed with prose. stderr carries one line per `fatal`
+or `error` diagnostic — the two severities that can decide a non-zero exit — and nothing for
+`warning`/`info`, whose complete record is the envelope. `--format json` is the only format and
+the default; a `text` renderer remains a later command-level concern.
 
 ```json
 {
@@ -988,6 +991,20 @@ Contract rules:
 `ExitPolicy` stays Integration data (`inspect` ∈ {0, 1}, `validate` ∈ {0, 1, 3}), and the one code
 that is not a policy answer — `2` for command-line misuse — is decided by the command layer before
 any input is read (§11, §17 TBD-O7).
+
+**The exit table (TBD-O7, decided).** One code per invocation. A file decides every non-misuse
+code, because `integrate()` answers the first two columns from the severities alone; `src/cli.ts`
+maps the command to its column and adds nothing.
+
+| Code | `inspect` | `validate` | What was written |
+|---|---|---|---|
+| `0` | any non-failed read, `degraded` included | no `error`-severity diagnostic | one envelope on stdout; stderr stays empty unless the result carries a `fatal`/`error` diagnostic — `warning`/`info` findings live only in the envelope |
+| `1` | any `fatal` diagnostic | any `fatal` diagnostic | the envelope is still emitted, with `source`, `schema` and `completeness` `null`; stderr carries the fatal line |
+| `3` | never | any `error`-severity diagnostic | one envelope whose `status` is `degraded`; stderr carries the error line |
+| `2` | — | — | nothing on stdout; the usage block on stderr. Decided before any input is read, so no file can cause it |
+
+The split is what makes `V_DUPLICATE_OBJECT_NAME` (sem-08) and `V_MISSING_REQUIRED_KEY` (sem-09)
+exit `0` under `inspect` and `3` under `validate` (`test-strategy.md` §14 stage 5).
 
 A single object, abbreviated, to show span/raw/origin co-location:
 
@@ -1199,7 +1216,7 @@ not as spec behaviour. None of U1–U15 is presented as settled by these decisio
 | TBD-O4 | Whether a JSON Schema file ships with the CLI | Not in v0.1.0 | Phase 2, stage 7 |
 | TBD-O5 | `contractVersion` bump policy and its relation to package semver | Independent versioning | Phase 2, stage 7 |
 | TBD-O6 | Whether the AST is exposed behind a flag (`--ast`) | Not exposed | Phase 2, stage 7 |
-| TBD-O7 | Exit code for non-`validate` commands when `error`-severity diagnostics exist | 0 (only `validate` returns 3). The mapping is `ExitPolicy` in `validate/`; command-line misuse (`2`) is decided by the command layer and is not part of it; neither appears in the envelope (§11, §12) | Phase 2, stage 7 |
+| TBD-O7 | Exit code for non-`validate` commands when `error`-severity diagnostics exist | **Decided in §12's exit table**: `0` for `inspect` even when an `error`-severity finding is present, `3` only for `validate`, `1` for a fatal read in both, `2` for misuse. The mapping is `ExitPolicy` in `validate/`; command-line misuse is decided by `src/cli.ts` and is not part of it; neither appears in the envelope (§11, §12) | Closed — Phase 2 stage 7 |
 | TBD-O8 | Whether `export` exists as a command or `inspect --format` covers it | Not decided | Phase 3 |
 
 ---
@@ -1221,7 +1238,10 @@ when its fixtures pass.
 6. **`json`** (§12–§13). Exit: envelope shape frozen at `contractVersion 0.1.0`; expected
    envelopes are then authored from the stage 1–5 semantic expectations and reviewed, never
    produced by blessing parser output.
-7. **`cli`** (§12, TBD-O7). Exit: one command end-to-end with a real fixture, stdout/stderr separated.
+7. **`cli`** (§12, TBD-O7). Exit: `inspect` and `validate` end to end on the committed fixtures;
+   stdout carries exactly one envelope and no prose, stderr carries the `fatal`/`error` lines, and
+   exit codes `0`/`1`/`2`/`3` are asserted, including the sem-08/sem-09 split. The remaining
+   stage-7 item is `imm-01`'s command sweep (`test-strategy.md` §11, §14 stage 7).
 
 Stages 2–4 are independently testable; stage 1 gates them only in the sense that the fixtures
 must exist — real exports are not an entry gate (`docs/test-strategy.md` §3.8). No stage may
