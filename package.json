@@ -23,7 +23,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
-    "lint": "pnpm exec oxlint",
+    "lint": "pnpm exec oxlint src tests",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "pretest": "pnpm build",

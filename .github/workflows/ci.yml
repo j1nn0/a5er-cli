@@ -51,7 +51,6 @@ jobs:
         run: pnpm typecheck
 
       - name: Lint
-        # Covered by the `lint` script again (pnpm exec oxlint); the Windows failure was EOL, not lint.
         run: pnpm lint
 
       - name: Format check
