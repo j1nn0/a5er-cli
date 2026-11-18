@@ -753,7 +753,9 @@ admits more than one reading. `$FFFFFFFF` is reported as the default colour, not
 
 ### 10.1 Read
 
-`fs.open(path, 'r')` → `fstat` → bounded read up to `maxBytes` → `fstat` again. Never
+`fs.open` read-only, and non-blocking where the platform has `O_NONBLOCK` (`'r'` on Windows) →
+`fstat` → bounded read up to `maxBytes` → `fstat` again; a non-regular file is opened only to be
+refused with `E_NOT_A_FILE`, never read. Never
 `'r+'`, never a temp file, never a write, never a rename. If the second `fstat` differs in
 `size`, `mtimeMs` or `ino`, the read is discarded and `E_FILE_CHANGED_DURING_READ` is fatal.
 
@@ -1185,7 +1187,7 @@ Module responsibilities, one line each, with the invariant that makes the bounda
 | A15 | Colours stored raw plus best-effort RGB with `channelOrder: 'assumed'` | F8, K10 | Picking one channel order and presenting it as fact |
 | A16 | Presentation and DDL switches are preserved and classified, never interpreted | F9, D7 | Deriving DDL or constraint names from `DefaultPkName` templates |
 | A17 | Scalar duplicate keys: last occurrence wins, all occurrences kept, both spans reported | U5, U6, §9.3 | First-wins, or refusing the file |
-| A18 | Read-only by construction: `'r'` open, pre/post stat, no temp files | Brief, immutability goal | Reading with a write-capable handle and relying on discipline |
+| A18 | Read-only by construction: read-only open, non-blocking on POSIX (`O_NONBLOCK`; Windows `'r'`), pre/post stat, no temp files; a non-regular file is opened only to be refused with `E_NOT_A_FILE` | Brief, immutability goal | Reading with a write-capable handle and relying on discipline |
 
 Conservative posture for the unconfirmed items — the tool never upgrades a guess into a fact:
 

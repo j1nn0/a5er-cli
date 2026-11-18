@@ -11,7 +11,7 @@
  * close. There is no write, truncate, rename or unlink, so no caller can grow one.
  */
 
-import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 
 /** The parts of `fstat` the reader compares (`architecture.md` §10.1). */
 export interface SourceStat {
@@ -57,10 +57,22 @@ export interface FileSystem {
   open(path: string): SourceHandle;
 }
 
-/** The only production implementation: `fs.open(path, 'r')`, never `'r+'`. */
+/**
+ * Read-only, and non-blocking wherever the platform has `O_NONBLOCK`.
+ *
+ * The reader refuses a non-regular file, but only after opening it: `open(path, 'r')` on a
+ * writer-less FIFO waits for a writer, so the refusal is never reached and the command hangs.
+ * `O_NONBLOCK` makes that open return at once on POSIX and is documented to have no effect on a
+ * regular file, which is the only kind of input that is then read. Windows exports no
+ * `O_NONBLOCK` constant, so it keeps the plain `'r'` flag string.
+ */
+const READ_ONLY_FLAGS: string | number =
+  typeof constants.O_NONBLOCK === 'number' ? constants.O_RDONLY | constants.O_NONBLOCK : 'r';
+
+/** The only production implementation: `READ_ONLY_FLAGS`, never `'r+'`. */
 export const nodeFileSystem: FileSystem = {
   open(path: string): SourceHandle {
-    const descriptor = openSync(path, 'r');
+    const descriptor = openSync(path, READ_ONLY_FLAGS);
     let closed = false;
 
     return {
