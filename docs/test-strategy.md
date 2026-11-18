@@ -407,8 +407,8 @@ the guard tests are deleted (TBD-T2).
 
 ## 11. Immutability proof
 
-`imm-01` runs every command (`inspect`, `tables`, `relations`, `validate`, and `search` once it
-exists) against every text fixture and asserts, per invocation:
+`imm-01` runs every shipped command (`inspect` and `validate`) against every text fixture and
+asserts, per invocation:
 
 1. `sha256(stagedFile)` unchanged;
 2. `stat.size` and `stat.mtimeMs` unchanged;

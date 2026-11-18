@@ -1240,8 +1240,8 @@ when its fixtures pass.
    produced by blessing parser output.
 7. **`cli`** (§12, TBD-O7). Exit: `inspect` and `validate` end to end on the committed fixtures;
    stdout carries exactly one envelope and no prose, stderr carries the `fatal`/`error` lines, and
-   exit codes `0`/`1`/`2`/`3` are asserted, including the sem-08/sem-09 split. The remaining
-   stage-7 item is `imm-01`'s command sweep (`test-strategy.md` §11, §14 stage 7).
+   exit codes `0`/`1`/`2`/`3` are asserted, including the sem-08/sem-09 split, and `imm-01`
+   sweeps both commands over every text fixture (`test-strategy.md` §11, §14 stage 7).
 
 Stages 2–4 are independently testable; stage 1 gates them only in the sense that the fixtures
 must exist — real exports are not an entry gate (`docs/test-strategy.md` §3.8). No stage may
