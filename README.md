@@ -133,8 +133,8 @@ With the committed fixture above the block prints `exit=0`, copies back no diagn
 `ok dropped=0` and `info V_VIEW_COLUMNS_UNKNOWN line 35`. Point `file=` at
 `tests/fixtures/synthetic/sem-08-duplicate-pname.a5er` for the failure branch: `exit=3`, the
 error line, `degraded dropped=0`, and the `error` and `info` diagnostics. A misuse (exit `2`)
-writes nothing to the CLI's stdout, so the guard skips `JSON.parse` and the block prints only the
-usage text plus `exit=2`. Set `file=` to your own diagram to run it against another file.
+writes nothing to the CLI's stdout, so the guard skips `JSON.parse` and the block prints `exit=2`,
+the CLI error message, and the usage text. Set `file=` to your own diagram to run it against another file.
 
 ## Agent skill
 
