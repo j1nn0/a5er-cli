@@ -20,8 +20,10 @@ Rules for agents working in this repository.
   through its own exact-file negation in `.gitignore`. Keep the blanket ignore and the per-file
   allowlist (no directory wildcard); never `git add -f` an unregistered `.a5er`. The G-8/G-9
   guards in `tests/catalog.test.ts` enforce this; see `docs/test-strategy.md`.
-- Tests that touch a fixture use a disposable staged copy (`tests/helpers/stage.ts`), never the
-  committed source. Keep the input-immutability guarantees intact.
+- When a test passes a synthetic `.a5er` path to the code under test, it uses a disposable staged
+  copy (`tests/helpers/stage.ts`), never the committed source. Read-only access to committed
+  sources for staging and integrity checks (bytes, hashes) is fine; in-memory byte fixtures need no
+  staging. Tests never modify committed fixtures; keep the input-immutability guarantees intact.
 - Derive golden expectations independently from the specifications and fixture evidence
   (`docs/json-golden-provenance.md`), never by copying serializer output. Do not regenerate
   goldens or edit expected diagnostics just to make a test pass.
