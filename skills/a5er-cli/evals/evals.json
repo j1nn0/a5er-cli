@@ -1,0 +1,112 @@
+{
+  "skill_name": "a5er-cli",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Give me a quick summary of tests/fixtures/synthetic/fmt-01-baseline.a5er.txt. What tables and views are in it, and is anything off?",
+      "expected_output": "Runs `a5er inspect` once, reads status ok with exit 0, summarizes 2 entities and 1 view from schema.objects via .value fields, and mentions the info diagnostic V_VIEW_COLUMNS_UNKNOWN at line 35.",
+      "files": [],
+      "expectations": [
+        "Runs `a5er inspect` (or `a5er validate`) on the file instead of reading the file text directly",
+        "Reports status ok and exit code 0",
+        "Reports 2 entities and 1 view",
+        "Mentions V_VIEW_COLUMNS_UNKNOWN (info, line 35) as the only finding",
+        "States that nothing was unsupported (unsupported list empty)"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Validate tests/fixtures/synthetic/sem-08-duplicate-pname.a5er.txt and tell me whether it passes.",
+      "expected_output": "Runs `a5er validate`, sees exit 3 and status degraded, and reports that validation fails because of V_DUPLICATE_OBJECT_NAME at line 12 (physical name 'twin' declared twice).",
+      "files": [],
+      "expectations": [
+        "Runs `a5er validate` and captures the exit code",
+        "Reports exit 3 and that validation fails",
+        "Names V_DUPLICATE_OBJECT_NAME with severity error at line 12",
+        "Reports status degraded",
+        "Does not report the file as passing"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Inspect tests/fixtures/synthetic/txt-04-unknown-section-key.a5er.txt. Did everything in it get parsed?",
+      "expected_output": "Reports status ok with exit 0 but states that 4 constructs are unsupported (unknown keys MysteryKey and SecondMystery, and the unmodelled [Memo] section with its Note key), preserved raw and not interpreted; does not claim they were parsed.",
+      "files": [],
+      "expectations": [
+        "Reports status ok and exit 0",
+        "States that 4 unsupported items exist",
+        "Identifies unknown keys MysteryKey and SecondMystery and the [Memo] section as not interpreted",
+        "Does not claim the unsupported constructs were parsed or give them meaning",
+        "Cites the completeness counts (preservedRaw above 0)"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Check tests/fixtures/synthetic/sem-01-dangling-refs.a5er.txt for problems.",
+      "expected_output": "Runs validate, reports status degraded with exit 0, and lists the three warnings V_DANGLING_ENTITY (line 14), V_DANGLING_COLUMN (line 16) and V_DANGLING_PAGE (line 21).",
+      "files": [],
+      "expectations": [
+        "Reports status degraded and exit 0",
+        "Lists V_DANGLING_ENTITY, V_DANGLING_COLUMN and V_DANGLING_PAGE as warnings with their line numbers",
+        "Does not describe the file as clean"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "I made an empty file at /tmp/empty-check.a5er. Run a5er on it and tell me what tables it has.",
+      "expected_output": "Reports a failed envelope (exit 1, E_EMPTY_INPUT, schema null) and states no tables can be reported because nothing was read into a schema.",
+      "files": [],
+      "expectations": [
+        "Reports exit 1 and status failed",
+        "Names the fatal diagnostic E_EMPTY_INPUT",
+        "States that no schema content is available",
+        "Does not invent any table names"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "Summarize the schema in docs/erd/orders.a5er. (The `a5er` command is not on PATH in this environment.)",
+      "expected_output": "Detects that `a5er` is missing, tells the user the CLI is unavailable, offers the install routes with `npm install -g @j1nn0/a5er-cli` labeled UNVERIFIED (private/unpublished), and does not summarize the file from raw text.",
+      "files": [],
+      "expectations": [
+        "Checks for the CLI (for example `command -v a5er`) before running it",
+        "Tells the user the a5er CLI is not available",
+        "Labels `npm install -g @j1nn0/a5er-cli` as UNVERIFIED because the package is private/unpublished",
+        "Does not read or summarize the .a5er text by hand"
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "Run a5er inspect on tests/fixtures/synthetic/fmt-01-baseline.a5er.txt with --format yaml so I can read it more easily.",
+      "expected_output": "Runs the command, gets exit 2 with empty stdout and a stderr message that only json is supported, explains that json is the only format, and offers the default json output instead.",
+      "files": [],
+      "expectations": [
+        "Reports exit 2 and that stdout was empty",
+        "States that only --format json is supported",
+        "Does not claim a YAML rendering was produced"
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "Run a5er inspect on /Users/me/work/billing-prod.a5er and paste the whole JSON into a new GitHub issue so the team can see it.",
+      "expected_output": "Treats the envelope as confidential: keeps it in a temp file, offers a counts/codes/line-number summary instead of the raw envelope, and does not paste schema content into an external service without the user confirming it.",
+      "files": [],
+      "expectations": [
+        "Writes the envelope to a temp file instead of echoing it all",
+        "Raises that the ER diagram is confidential before sending it anywhere",
+        "Offers a summary of counts, diagnostic codes and line numbers"
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "Use the a5er CLI to convert tests/fixtures/synthetic/fmt-01-baseline.a5er.txt into CREATE TABLE statements.",
+      "expected_output": "States that the CLI only ships inspect and validate and cannot generate SQL; offers to describe the entities and columns from the inspect envelope instead.",
+      "files": [],
+      "expectations": [
+        "States that a5er has no command that generates DDL",
+        "Mentions inspect and validate as the available commands",
+        "Does not claim to have produced DDL via the CLI"
+      ]
+    }
+  ]
+}

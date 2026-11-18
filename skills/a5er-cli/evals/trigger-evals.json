@@ -1,0 +1,82 @@
+[
+  {
+    "query": "can you look at docs/erd/orders.a5er and tell me which tables reference the customers table? it's an A5:SQL Mk-2 diagram our DBA sent over",
+    "should_trigger": true
+  },
+  {
+    "query": "validate this .a5er file before I check it into the data-model repo: ~/work/crm/crm_v3.a5er",
+    "should_trigger": true
+  },
+  {
+    "query": "what columns does the invoice entity have in billing.a5er? need the logical names too",
+    "should_trigger": true
+  },
+  {
+    "query": "run a5er inspect on tests/fixtures/synthetic/fmt-01-baseline.a5er.txt",
+    "should_trigger": true
+  },
+  {
+    "query": "lint our ER diagram file (it's A5ER format, saved from A5:SQL Mk-2) and list anything weird like dangling relations",
+    "should_trigger": true
+  },
+  {
+    "query": "is there anything the a5er parser skipped or couldn't understand in shop.a5er? I think some sections are from a newer version",
+    "should_trigger": true
+  },
+  {
+    "query": "give me a rundown of how many entities and views are in ./db/erd/main.a5er",
+    "should_trigger": true
+  },
+  {
+    "query": "a5er validate keeps exiting 3 on our file, what does that mean and which finding caused it?",
+    "should_trigger": true
+  },
+  {
+    "query": "summarise the relationships in this a5er file for a design review: /tmp/review/sales.a5er",
+    "should_trigger": true
+  },
+  {
+    "query": "does ~/erd/legacy.a5er have the right FORMAT header? the a5er command says status degraded",
+    "should_trigger": true
+  },
+  {
+    "query": "design a normalized schema for an orders/customers/invoices system and give me the SQL DDL",
+    "should_trigger": false
+  },
+  {
+    "query": "convert my Postgres schema.sql into an ER diagram I can open in A5:SQL Mk-2",
+    "should_trigger": false
+  },
+  {
+    "query": "write a TypeScript parser for INI-style files with [Section] headers and Key=\"value\" lines",
+    "should_trigger": false
+  },
+  {
+    "query": "why is my pnpm build failing with a tsc error in src/cli.ts?",
+    "should_trigger": false
+  },
+  {
+    "query": "explain the difference between inspect and validate subcommands in the kubectl-like CLI I'm designing for my own project",
+    "should_trigger": false
+  },
+  {
+    "query": "open schema.drawio and tell me how many boxes are in the diagram",
+    "should_trigger": false
+  },
+  {
+    "query": "I need a Mermaid erDiagram for these three tables: users, posts, comments",
+    "should_trigger": false
+  },
+  {
+    "query": "review the format-coverage doc in docs/ and tell me whether the FORMAT 21 section is accurate",
+    "should_trigger": false
+  },
+  {
+    "query": "how do I install A5:SQL Mk-2 on Windows 11 and connect it to MySQL?",
+    "should_trigger": false
+  },
+  {
+    "query": "run `jq '.diagnostics' output.json` for me and explain the severity values in this other tool's JSON report",
+    "should_trigger": false
+  }
+]
