@@ -71,7 +71,7 @@ npx skills@latest add j1nn0/a5er-cli -s a5er-cli
 ```
 
 UNVERIFIED. `main` carries no `skills/a5er-cli`, so a real run stops with `SKILLS_NO_VALID_SKILLS`.
-The verified form pins the branch that carries both the CLI and the skill — see
+The verified form names the branch that carries both the CLI and the skill — see
 [Agent skill](#agent-skill).
 
 ## Output and exit codes
@@ -104,8 +104,8 @@ is in [architecture §12](docs/architecture.md#12-json-contract-initial).
 Extract the fields you need instead of printing the document. Run this from the repository root:
 
 ```bash
-file=tests/fixtures/synthetic/fmt-01-baseline.a5er   # replace with your own diagram
 (
+  file=tests/fixtures/synthetic/fmt-01-baseline.a5er
   tmp=$(mktemp -d) || exit 70
   trap 'rm -rf "$tmp"' EXIT
   node dist/cli.js validate "$file" >"$tmp/envelope.json" 2>"$tmp/diagnostics.txt"; code=$?
@@ -120,13 +120,21 @@ for (const d of j.diagnostics) console.log(d.severity, d.code, d.span ? "line " 
 )
 ```
 
-The parentheses run the whole example in a subshell with its own `EXIT` trap, so the temporary
-directory is deleted the moment the block finishes, nothing is left behind in your shell, and the
-subshell exits with the CLI's status. With the committed fixture above the block prints `exit=0`,
-then `ok dropped=0` and `info V_VIEW_COLUMNS_UNKNOWN line 35`, with nothing on stderr. Point `file`
-at `tests/fixtures/synthetic/sem-08-duplicate-pname.a5er` for the failure branch: `exit=3`, the
-error line, `degraded dropped=0`, and the `error` and `info` diagnostics. A misuse (exit `2`) leaves
-stdout empty, so the block prints only the usage text from stderr and never parses an empty file.
+`file=` and the temporary directory are both assigned inside the parentheses, so the whole example
+is a subshell: the `EXIT` trap deletes the temporary directory the moment the block finishes, and
+neither a variable nor a trap is left behind in your shell. The last line is `exit "$code"`, so the
+subshell hands back the CLI's status rather than the status of the last helper command. The
+redirects capture the CLI's own streams to files — stdout to `envelope.json`, stderr to
+`diagnostics.txt` — so everything the block prints is the wrapper's stdout: the `echo` of the exit
+code, the diagnostics that `cat` copies back, and the parsed fields. The wrapper writes nothing on
+stderr.
+
+With the committed fixture above the block prints `exit=0`, copies back no diagnostic line, then
+`ok dropped=0` and `info V_VIEW_COLUMNS_UNKNOWN line 35`. Point `file=` at
+`tests/fixtures/synthetic/sem-08-duplicate-pname.a5er` for the failure branch: `exit=3`, the
+error line, `degraded dropped=0`, and the `error` and `info` diagnostics. A misuse (exit `2`)
+writes nothing to the CLI's stdout, so the guard skips `JSON.parse` and the block prints only the
+usage text plus `exit=2`. Set `file=` to your own diagram to run it against another file.
 
 ## Agent skill
 
@@ -136,16 +144,26 @@ from what was parsed. Every branch — `ok`, `degraded`, `failed`, exit `3`, exi
 has its stdout, stderr and exit code recorded in
 [`references/examples.md`](skills/a5er-cli/references/examples.md).
 
-Install it into the current project with the `skills` installer, pinned to the branch that carries
-it:
+Install it into the current project with the `skills` installer, from the branch that carries it:
 
 ```bash
 npx skills@latest add j1nn0/a5er-cli#phase2 -s a5er-cli
 ```
 
-The pin records `"ref": "phase2"` and the resolved commit in `skills-lock.json`, so the install is
-reproducible, and the installed files match `skills/a5er-cli` in this repository. The unpinned form
-is the UNVERIFIED command above.
+`add` resolves `phase2` at install time and records the ref plus the commit it resolved in
+`skills-lock.json`. Because `phase2` is a moving branch, a later `add` resolves whatever `phase2`
+points at then and overwrites the recorded commit, so the saved `skills-lock.json` is what pins the
+install. To restore the commit a lock records, keep the file and run:
+
+```bash
+npx skills@latest experimental_install --frozen-lockfile
+```
+
+`experimental_install` restores the skills listed in `skills-lock.json` (`install` and `i` are
+aliases). It needs a saved lock: `--frozen-lockfile` makes the command fail with exit `1` rather
+than write a new `skills-lock.json` when none is saved, and CI enables it by default. Restored that
+way, the installed files match `skills/a5er-cli` in this repository. The unpinned form is the
+UNVERIFIED command above.
 
 The skill runs `a5er`, so it needs the CLI on `PATH`. In a checkout, use `node dist/cli.js` in its
 place — the skill documents that substitution itself.
