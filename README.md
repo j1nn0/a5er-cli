@@ -26,11 +26,17 @@ the default; there is no text renderer.
 is a command yet, so each exits `2` with the usage block on stderr and nothing on stdout, and none
 of them appears in `--help`.
 
-## Install and run from a checkout
+## Install
+
+The CLI is not on npm, so it comes from a checkout. Two commands that readers are likely to try
+first are documented below with the reason they do not work, so a failure is not mistaken for a
+local mistake.
+
+### Verified: run the CLI from a checkout
 
 The package is not published to npm — `package.json` is `"private": true` and the registry has no
-`@j1nn0/a5er-cli` — so the CLI is run from a checkout. The branch that carries the build described
-here is `phase2`; `main` does not contain `src/cli.ts` yet.
+`@j1nn0/a5er-cli` — so the CLI is run from source. The branch that carries the build described here
+is `phase2`; `main` does not contain `src/cli.ts` yet.
 
 Requirements: Node.js 24 or newer (`engines.node`) and pnpm 11.28.12 (`packageManager`).
 
@@ -48,6 +54,25 @@ Run the block from any directory outside an existing checkout; the clone creates
 last two commands run from its root. That last command reads a synthetic fixture committed here, so
 it works on a fresh checkout — replace the path with your own diagram. The small file already
 produces about 22 KB of JSON, so extract fields instead of printing the whole envelope.
+
+### Unavailable: install the package from npm
+
+```bash
+npm install -g @j1nn0/a5er-cli
+```
+
+UNAVAILABLE. `package.json` is `"private": true` and nothing is published: `npm view @j1nn0/a5er-cli`
+answers `E404`, so this install fails today.
+
+### Unverified: install the agent skill from the default branch
+
+```bash
+npx skills@latest add j1nn0/a5er-cli -s a5er-cli
+```
+
+UNVERIFIED. `main` carries no `skills/a5er-cli`, so a real run stops with `SKILLS_NO_VALID_SKILLS`.
+The verified form pins the branch that carries both the CLI and the skill — see
+[Agent skill](#agent-skill).
 
 ## Output and exit codes
 
@@ -79,20 +104,29 @@ is in [architecture §12](docs/architecture.md#12-json-contract-initial).
 Extract the fields you need instead of printing the document. Run this from the repository root:
 
 ```bash
-file=/path/to/schema.a5er   # a real diagram; the repository commits only synthetic fixtures
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
-node dist/cli.js validate "$file" >"$tmp/envelope.json" 2>"$tmp/diagnostics.txt"; echo "exit=$?"
-cat "$tmp/diagnostics.txt"
-node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
+file=tests/fixtures/synthetic/fmt-01-baseline.a5er   # replace with your own diagram
+(
+  tmp=$(mktemp -d) || exit 70
+  trap 'rm -rf "$tmp"' EXIT
+  node dist/cli.js validate "$file" >"$tmp/envelope.json" 2>"$tmp/diagnostics.txt"; code=$?
+  echo "exit=$code"
+  cat "$tmp/diagnostics.txt"
+  if [ "$code" -ne 2 ] && [ -s "$tmp/envelope.json" ]; then
+    node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
 console.log(j.status, j.completeness ? "dropped=" + j.completeness.dropped : "");
 for (const d of j.diagnostics) console.log(d.severity, d.code, d.span ? "line " + d.span.startLine : "");' "$tmp/envelope.json"
+  fi
+  exit "$code"
+)
 ```
 
-Against the committed fixture `fmt-01-baseline.a5er` this prints `exit=0`, then `ok dropped=0` and
-`info V_VIEW_COLUMNS_UNKNOWN line 35`, with nothing on stderr. Against
-`sem-08-duplicate-pname.a5er` it prints `exit=3`, the error line, `degraded dropped=0`, and the
-`error` and `info` diagnostics.
+The parentheses run the whole example in a subshell with its own `EXIT` trap, so the temporary
+directory is deleted the moment the block finishes, nothing is left behind in your shell, and the
+subshell exits with the CLI's status. With the committed fixture above the block prints `exit=0`,
+then `ok dropped=0` and `info V_VIEW_COLUMNS_UNKNOWN line 35`, with nothing on stderr. Point `file`
+at `tests/fixtures/synthetic/sem-08-duplicate-pname.a5er` for the failure branch: `exit=3`, the
+error line, `degraded dropped=0`, and the `error` and `info` diagnostics. A misuse (exit `2`) leaves
+stdout empty, so the block prints only the usage text from stderr and never parses an empty file.
 
 ## Agent skill
 
@@ -109,10 +143,9 @@ it:
 npx skills@latest add j1nn0/a5er-cli#phase2 -s a5er-cli
 ```
 
-The pin is not optional yet: `main` carries no `skills/a5er-cli`, so an unpinned
-`npx skills@latest add j1nn0/a5er-cli` stops with `SKILLS_NO_VALID_SKILLS`. The pinned install
-writes a `skills-lock.json` entry with `"ref": "phase2"` and the resolved commit, and the installed
-files match `skills/a5er-cli` in the repository.
+The pin records `"ref": "phase2"` and the resolved commit in `skills-lock.json`, so the install is
+reproducible, and the installed files match `skills/a5er-cli` in this repository. The unpinned form
+is the UNVERIFIED command above.
 
 The skill runs `a5er`, so it needs the CLI on `PATH`. In a checkout, use `node dist/cli.js` in its
 place — the skill documents that substitution itself.
@@ -157,9 +190,11 @@ pnpm test          # pretest runs pnpm build, then vitest
 ## Confidentiality
 
 ER diagrams are confidential, and an envelope echoes names, comments and raw text from the file.
-`.a5er` files are gitignored, with an explicit allowlist for the synthetic fixtures under
-`tests/fixtures/`. Do not commit, paste or quote a real `.a5er` file or an envelope produced from
-one; keep such envelopes outside the repository and delete them when the command ends.
+`.a5er` files are gitignored; the only tracked ones are the 39 synthetic fixtures under
+`tests/fixtures/synthetic/`, each on an explicit allowlist in `.gitignore`. Any other `.a5er` file, a
+real diagram included, stays ignored. Do not commit, paste or quote a real `.a5er` file or an
+envelope produced from one; keep such envelopes outside the repository and delete them when the
+command ends.
 
 ## License
 
