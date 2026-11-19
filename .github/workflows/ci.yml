@@ -91,37 +91,41 @@ jobs:
       - name: Pack from a clean tree
         shell: bash
         run: |
-          rm -rf dist
+          rm -rf dist "$RUNNER_TEMP/pack" "$RUNNER_TEMP/smoke"
+          mkdir -p "$RUNNER_TEMP/pack"
           pnpm pack --pack-destination "$RUNNER_TEMP/pack"
           test -f "$RUNNER_TEMP/pack/j1nn0-a5er-cli-0.1.0.tgz"
 
       - name: Check tarball contents
         shell: bash
         run: |
-          tar -tzf "$RUNNER_TEMP/pack/j1nn0-a5er-cli-0.1.0.tgz" | grep -F "package/dist/cli.js"
-          tar -tzf "$RUNNER_TEMP/pack/j1nn0-a5er-cli-0.1.0.tgz" | grep -F "package/LICENSE"
+          TGZ="$RUNNER_TEMP/pack/j1nn0-a5er-cli-0.1.0.tgz"
+          case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) TGZ="$(cygpath -u "$TGZ")" ;; esac
+          tar -tzf "$TGZ" | grep -F "package/dist/cli.js"
+          tar -tzf "$TGZ" | grep -F "package/LICENSE"
 
       - name: Install tarball and smoke-test the CLI
         shell: bash
         run: |
-          REPO="$PWD"
+          START="$PWD"
           SMOKE="$RUNNER_TEMP/smoke"
           rm -rf "$SMOKE"
           mkdir -p "$SMOKE"
+          cp tests/fixtures/synthetic/fmt-01-baseline.a5er tests/fixtures/synthetic/sem-08-duplicate-pname.a5er "$SMOKE"/
           cd "$SMOKE"
           npm init -y >/dev/null 2>&1
           npm install --no-save --no-audit --no-fund "$RUNNER_TEMP/pack/j1nn0-a5er-cli-0.1.0.tgz"
           node_modules/.bin/a5er --version | grep -F "0.1.0"
           node_modules/.bin/a5er --help >/dev/null
-          node_modules/.bin/a5er inspect "$REPO/tests/fixtures/synthetic/fmt-01-baseline.a5er" > out.txt 2> err.txt
+          node_modules/.bin/a5er inspect "fmt-01-baseline.a5er" > out.txt 2> err.txt
           code=$?
           grep -q -F '"status":"ok"' out.txt
           test "$code" = "0"
           code=0
-          node_modules/.bin/a5er validate "$REPO/tests/fixtures/synthetic/sem-08-duplicate-pname.a5er" > out2.txt 2> err2.txt || code=$?
+          node_modules/.bin/a5er validate "sem-08-duplicate-pname.a5er" > out2.txt 2> err2.txt || code=$?
           test "$code" = "3"
           code=0
           node_modules/.bin/a5er bogus >/dev/null 2>&1 || code=$?
           test "$code" = "2"
-          cd "$REPO"
+          cd "$START"
           rm -rf "$SMOKE" "$RUNNER_TEMP/pack"
