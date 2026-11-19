@@ -66,13 +66,15 @@
     {
       "id": 6,
       "prompt": "Summarize the schema in docs/erd/orders.a5er. (The `a5er` command is not on PATH in this environment.)",
-      "expected_output": "Detects that `a5er` is missing, tells the user the CLI is unavailable, offers both install routes (`npm install -g @j1nn0/a5er-cli` from the public npm registry, and running from a repository checkout), and does not summarize the file from raw text.",
+      "expected_output": "Runs `command -v a5er` itself instead of trusting the prompt, finds the CLI missing, tells the user no summary is possible yet, offers `npm install -g @j1nn0/a5er-cli` (published on the public npm registry) and running from a repository checkout (`pnpm install --frozen-lockfile && pnpm build`, then `node dist/cli.js`), says registry installation was verified for v0.1.0 only, and does not summarize the file from raw text.",
       "files": [],
       "expectations": [
-        "Checks for the CLI (for example `command -v a5er`) before running it",
-        "Tells the user the a5er CLI is not available",
-        "Offers `npm install -g @j1nn0/a5er-cli` as an install route without claiming it is verified for versions after v0.1.0",
-        "Does not read or summarize the .a5er text by hand"
+        "The execution record shows `command -v a5er` (or an equivalent PATH lookup) actually run before any answer; a claim in the reply alone does not satisfy this",
+        "Tells the user the a5er CLI is not available and that no summary of the file can be given yet",
+        "Offers `npm install -g @j1nn0/a5er-cli` and states that the package is published on the public npm registry",
+        "Offers running from a repository checkout with `pnpm install --frozen-lockfile && pnpm build` and `node dist/cli.js`",
+        "Does not claim registry installation is verified for versions after v0.1.0 (saying v0.1.0 was verified is fine)",
+        "Does not read, parse or summarize the .a5er text by hand"
       ]
     },
     {

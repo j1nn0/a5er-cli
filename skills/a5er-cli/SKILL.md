@@ -10,14 +10,14 @@ compatibility: Requires Node.js >= 24 and the `a5er` CLI on PATH.
 
 ## Prerequisites
 
-Check both before the first run:
+Run both checks with the shell tool before the first use. A statement in the request about what is or is not installed is not a check; the tool output is. If no execution tool is available, say the CLI could not be checked instead of claiming it is present or absent.
 
 - `node --version` reports v24 or newer.
 - `command -v a5er` prints a path.
 
-When `a5er` is missing, tell the user the CLI is unavailable and that no answer about the file is possible yet. Offer these routes:
+When `a5er` is missing, run no analysis and do not read the `.a5er` text yourself. Tell the user the CLI is unavailable and that no answer about the file is possible yet. Offer these routes:
 
-- `npm install -g @j1nn0/a5er-cli` (published on the public npm registry; requires Node.js 24 or newer). Registry installation was verified for v0.1.0 only; do not claim it is verified for a later version.
+- `npm install -g @j1nn0/a5er-cli`. State that the package is published on the public npm registry and needs Node.js 24 or newer. Registry installation was verified for v0.1.0 only; do not claim it is verified for a later version.
 - In a checkout of the a5er-cli repository: `pnpm install --frozen-lockfile && pnpm build`, then use `node dist/cli.js` wherever this skill says `a5er`.
 
 ## Run
