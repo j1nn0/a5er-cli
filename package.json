@@ -1,9 +1,14 @@
 {
   "name": "@j1nn0/a5er-cli",
   "version": "0.1.0",
-  "private": true,
   "description": "Read-only CLI for A5:SQL Mk-2 ER diagram (.a5er) files",
+  "homepage": "https://github.com/j1nn0/a5er-cli#readme",
+  "bugs": "https://github.com/j1nn0/a5er-cli/issues",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/j1nn0/a5er-cli.git"
+  },
   "bin": {
     "a5er": "./dist/cli.js"
   },
@@ -19,8 +24,12 @@
       "default": "./dist/index.js"
     }
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "pnpm build",
     "dev": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "lint": "pnpm exec oxlint src tests",

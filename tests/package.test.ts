@@ -22,10 +22,11 @@ describe('package manifest', () => {
     expect(VERSION).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
-  it('stays private so a publish cannot happen by accident', () => {
+  it('declares an explicit public publish scope instead of relying on private', () => {
     const pkg = readPackageJson();
 
-    expect(pkg['private']).toBe(true);
+    expect(pkg['private']).toBeUndefined();
+    expect(pkg['publishConfig']).toEqual({ access: 'public' });
   });
 
   it('publishes under the expected name and bin', () => {
