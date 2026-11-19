@@ -28,9 +28,9 @@ of them appears in `--help`.
 
 ## Install
 
-The CLI is not on npm, so it comes from a checkout. Two commands that readers are likely to try
-first are documented below with the reason they do not work, so a failure is not mistaken for a
-local mistake.
+The CLI is not on npm, so it comes from a checkout. The Agent Skill can be installed separately
+with the `skills` installer below. The npm package command is documented with the reason it does
+not work, so a failure is not mistaken for a local mistake.
 
 ### Verified: run the CLI from a checkout
 
@@ -69,8 +69,9 @@ answers `E404`, so this install fails today.
 npx skills@latest add j1nn0/a5er-cli -s a5er-cli
 ```
 
-Verified on the default branch: the command above installs `a5er-cli` (skill files,
-`LICENSE`, references, evals) and records the resolved commit in `skills-lock.json`.
+Verified on the default branch: running the command above with explicit agent selection in
+noninteractive mode (`--agent '*' -y`) installs `a5er-cli` (skill files, `LICENSE`, references,
+evals) and records the resolved commit in `skills-lock.json`.
 Details — including that installing the skill alone does not install the CLI — are in
 [Agent skill](#agent-skill).
 
