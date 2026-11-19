@@ -22,28 +22,44 @@ jobs:
   release:
     name: verify, publish and confirm
     runs-on: ubuntu-latest
+    # Environment npm-release carries NO required reviewers and no manual
+    # approval gate, by explicit policy: releases run fully automatically
+    # once an agent pushes a version tag. Compensating automated gates are
+    # the tag trigger, version match, main ancestry, already-published
+    # refusal and tarball integrity match below. Complementary admin-side
+    # restrictions (environment deployment branches/tags limited to release
+    # tags, tag ruleset, main protection) remain manual setup and are
+    # reported as pending, not implemented here.
+    environment:
+      name: npm-release
     permissions:
       contents: read
       id-token: write
     timeout-minutes: 20
     steps:
       - name: Checkout the tag with full history
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
       - name: Install Node.js 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
 
       - name: Check npm CLI supports OIDC publishing
         shell: bash
         run: |
-          test "$(printf '%s\n%s' "11.5.1" "$(npm --version)" | sort -V | head -n 1)" = "11.5.1"
+          NPM_BIN="$(command -v npm)"
+          echo "npm: $NPM_BIN $(npm --version)"
+          NPM_VER="$(npm --version)"
+          case "$NPM_VER" in
+            *-*|*[!0-9.]*) echo "refusing prerelease or malformed npm version: $NPM_VER"; exit 1 ;;
+          esac
+          test "$(printf '%s\n%s' "11.5.1" "$NPM_VER" | sort -V | head -n 1)" = "11.5.1"
 
       - name: Refuse non-stable tag names
         shell: bash
@@ -108,34 +124,77 @@ jobs:
           PKG_NAME="$(node -p "require('./package.json').name")"
           PKG_VER="$(node -p "require('./package.json').version")"
           test "$PKG_NAME" = "@j1nn0/a5er-cli"
+          test "$PKG_VER" = "${GITHUB_REF_NAME#v}"
           TARBALL="$CAND/j1nn0-a5er-cli-$PKG_VER.tgz"
           test -f "$TARBALL"
+          if ! tar -tzf "$TARBALL" > "$CAND/contents.txt"; then
+            echo "cannot list publish candidate contents"
+            exit 1
+          fi
           for f in package/dist/cli.js package/dist/index.js package/dist/index.d.ts package/README.md package/LICENSE package/package.json; do
-            tar -tzf "$TARBALL" | grep -qxF "$f"
+            if ! grep -qxF "$f" "$CAND/contents.txt"; then
+              echo "missing required file: $f"
+              exit 1
+            fi
           done
-          test "$(tar -xzOf "$TARBALL" package/dist/cli.js | head -n 1)" = "#!/usr/bin/env node"
-          if tar -tzf "$TARBALL" | grep -iE '\.a5er$|\.npmrc$|\.env$|/(tests?|skills?|fixtures?)/|credentials?|secret'; then
+          if grep -qiE '\.a5er$|\.npmrc$|\.env$|/(tests?|skills?|fixtures?)/|credentials?|secret' "$CAND/contents.txt"; then
             echo "forbidden content in publish candidate"
             exit 1
           fi
-          rm -rf "$CAND"
+          CLI_TMP="$CAND/cli-head.js"
+          if ! tar -xzOf "$TARBALL" package/dist/cli.js > "$CLI_TMP"; then
+            echo "cannot extract package/dist/cli.js"
+            exit 1
+          fi
+          test "$(head -n 1 "$CLI_TMP")" = "#!/usr/bin/env node"
+          tar -xzOf "$TARBALL" package/package.json > "$CAND/manifest.json"
+          MAN_NAME="$(node -p "require('$CAND/manifest.json').name")"
+          MAN_VER="$(node -p "require('$CAND/manifest.json').version")"
+          MAN_BIN="$(node -p "require('$CAND/manifest.json').bin.a5er")"
+          MAN_PRIV="$(node -p "require('$CAND/manifest.json').private")"
+          test "$MAN_NAME" = "@j1nn0/a5er-cli"
+          test "$MAN_VER" = "$PKG_VER"
+          test "$MAN_VER" = "${GITHUB_REF_NAME#v}"
+          test "$MAN_BIN" = "./dist/cli.js"
+          test "$MAN_PRIV" = "undefined"
+          test -n "$(node -p "require('$CAND/manifest.json').main")"
+          test -n "$(node -p "require('$CAND/manifest.json').types")"
+          test -n "$(node -p "require('$CAND/manifest.json').exports")"
+          SRI="$(node -p "require('crypto').createHash('sha512').update(require('fs').readFileSync('$TARBALL')).digest('base64')")"
+          echo "TARBALL_PATH=$TARBALL" >> "$GITHUB_ENV"
+          echo "TARBALL_SRI=sha512-$SRI" >> "$GITHUB_ENV"
 
-      # OIDC authentication comes from id-token: write. No NODE_AUTH_TOKEN and
-      # no long-lived credentials are used here (the pnpm dependency cache in
-      # setup-node is unrelated to authentication). The default
+      # OIDC authentication comes from id-token: write. No NODE_AUTH_TOKEN,
+      # no caches and no long-lived credentials are used here. The default
       # dist-tag (latest) applies; do not pass --tag.
-      - name: Publish to npm with OIDC
+      # The tarball path form keeps OIDC authentication and automatic
+      # provenance: npm exchanges the OIDC token for the session before
+      # uploading, independent of the payload form. Verified locally only
+      # to dry-run; an actual OIDC publish needs the npm trusted publisher.
+      - name: Publish the inspected tarball to npm with OIDC
         shell: bash
-        run: npm publish --access public
+        run: |
+          test -f "$TARBALL_PATH"
+          ACTUAL_SRI="sha512-$(node -p "require('crypto').createHash('sha512').update(require('fs').readFileSync(process.env.TARBALL_PATH)).digest('base64')")"
+          test "$ACTUAL_SRI" = "$TARBALL_SRI"
+          npm publish "$TARBALL_PATH" --access public --registry=https://registry.npmjs.org/
 
       - name: Confirm the published package
         shell: bash
         run: |
-          PKG_VER="$(node -p "require('./package.json').version")"
+          PKG_VER="${GITHUB_REF#refs/tags/v}"
           for i in 1 2 3 4 5 6; do
-            if npm view "@j1nn0/a5er-cli@${PKG_VER}" version 2>/dev/null | grep -q "$PKG_VER"; then
-              npm view "@j1nn0/a5er-cli@${PKG_VER}"
+            if npm view "@j1nn0/a5er-cli@${PKG_VER}" dist.integrity --registry=https://registry.npmjs.org/ 2>registry-err.txt | grep -qxF "$TARBALL_SRI"; then
+              npm view "@j1nn0/a5er-cli@${PKG_VER}" --registry=https://registry.npmjs.org/
+              rm -rf "$RUNNER_TEMP/publish-candidate"
               exit 0
+            fi
+            if grep -q "E404" registry-err.txt; then
+              echo "attempt $i/6: not yet visible (replication lag); retrying"
+            else
+              cat registry-err.txt
+              echo "registry query failed for a reason other than absence; stopping"
+              exit 1
             fi
             sleep 20
           done
