@@ -117,10 +117,11 @@ jobs:
           code=$?
           grep -q -F '"status":"ok"' out.txt
           test "$code" = "0"
-          node_modules/.bin/a5er validate "$REPO/tests/fixtures/synthetic/sem-08-duplicate-pname.a5er" > out2.txt 2> err2.txt
-          code=$?
+          code=0
+          node_modules/.bin/a5er validate "$REPO/tests/fixtures/synthetic/sem-08-duplicate-pname.a5er" > out2.txt 2> err2.txt || code=$?
           test "$code" = "3"
-          node_modules/.bin/a5er bogus >/dev/null 2>&1
-          test "$?" = "2"
+          code=0
+          node_modules/.bin/a5er bogus >/dev/null 2>&1 || code=$?
+          test "$code" = "2"
           cd "$REPO"
           rm -rf "$SMOKE" "$RUNNER_TEMP/pack"
