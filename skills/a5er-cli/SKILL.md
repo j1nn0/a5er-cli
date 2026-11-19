@@ -17,7 +17,7 @@ Check both before the first run:
 
 When `a5er` is missing, tell the user the CLI is unavailable and that no answer about the file is possible yet. Offer these routes:
 
-- `npm install -g @j1nn0/a5er-cli`. UNVERIFIED: the package is private and unpublished, so this may fail.
+- `npm install -g @j1nn0/a5er-cli` (published on the public npm registry; requires Node.js 24 or newer). Registry installation was verified for v0.1.0 only; do not claim it is verified for a later version.
 - In a checkout of the a5er-cli repository: `pnpm install --frozen-lockfile && pnpm build`, then use `node dist/cli.js` wherever this skill says `a5er`.
 
 ## Run

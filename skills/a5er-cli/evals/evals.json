@@ -66,12 +66,12 @@
     {
       "id": 6,
       "prompt": "Summarize the schema in docs/erd/orders.a5er. (The `a5er` command is not on PATH in this environment.)",
-      "expected_output": "Detects that `a5er` is missing, tells the user the CLI is unavailable, offers the install routes with `npm install -g @j1nn0/a5er-cli` labeled UNVERIFIED (private/unpublished), and does not summarize the file from raw text.",
+      "expected_output": "Detects that `a5er` is missing, tells the user the CLI is unavailable, offers both install routes (`npm install -g @j1nn0/a5er-cli` from the public npm registry, and running from a repository checkout), and does not summarize the file from raw text.",
       "files": [],
       "expectations": [
         "Checks for the CLI (for example `command -v a5er`) before running it",
         "Tells the user the a5er CLI is not available",
-        "Labels `npm install -g @j1nn0/a5er-cli` as UNVERIFIED because the package is private/unpublished",
+        "Offers `npm install -g @j1nn0/a5er-cli` as an install route without claiming it is verified for versions after v0.1.0",
         "Does not read or summarize the .a5er text by hand"
       ]
     },
