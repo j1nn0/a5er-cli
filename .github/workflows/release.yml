@@ -56,9 +56,10 @@ jobs:
           NPM_BIN="$(command -v npm)"
           echo "npm: $NPM_BIN $(npm --version)"
           NPM_VER="$(npm --version)"
-          case "$NPM_VER" in
-            *-*|*[!0-9.]*) echo "refusing prerelease or malformed npm version: $NPM_VER"; exit 1 ;;
-          esac
+          if ! [[ "$NPM_VER" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "refusing non-stable npm version: $NPM_VER"
+            exit 1
+          fi
           test "$(printf '%s\n%s' "11.5.1" "$NPM_VER" | sort -V | head -n 1)" = "11.5.1"
 
       - name: Refuse non-stable tag names
@@ -108,11 +109,17 @@ jobs:
         shell: bash
         run: |
           PKG_VER="$(node -p "require('./package.json').version")"
-          if npm view "@j1nn0/a5er-cli@${PKG_VER}" version 2>npm-err.txt; then
+          if npm view "@j1nn0/a5er-cli@${PKG_VER}" version --registry=https://registry.npmjs.org/ --@j1nn0:registry=https://registry.npmjs.org/ 2>npm-err.txt; then
             echo "version ${PKG_VER} is already published; refusing to republish"
             exit 1
           fi
-          grep -q "E404" npm-err.txt
+          if grep -q "^npm error code E404$" npm-err.txt; then
+            echo "version ${PKG_VER} is not published; proceeding"
+          else
+            cat npm-err.txt
+            echo "registry check failed for a reason other than absence; stopping"
+            exit 1
+          fi
 
       - name: Inspect the publish candidate tarball
         shell: bash
@@ -137,8 +144,15 @@ jobs:
               exit 1
             fi
           done
-          if grep -qiE '\.a5er$|\.npmrc$|\.env$|/(tests?|skills?|fixtures?)/|credentials?|secret' "$CAND/contents.txt"; then
+          FORBID_RC=0
+          grep -qiE '\.a5er$|\.npmrc$|\.env$|/(tests?|skills?|fixtures?)/|credentials?|secret' "$CAND/contents.txt" || FORBID_RC=$?
+          if [ "$FORBID_RC" -eq 0 ]; then
             echo "forbidden content in publish candidate"
+            exit 1
+          elif [ "$FORBID_RC" -eq 1 ]; then
+            echo "no forbidden content"
+          else
+            echo "forbidden-content scan failed with exit $FORBID_RC"
             exit 1
           fi
           CLI_TMP="$CAND/cli-head.js"
@@ -148,18 +162,38 @@ jobs:
           fi
           test "$(head -n 1 "$CLI_TMP")" = "#!/usr/bin/env node"
           tar -xzOf "$TARBALL" package/package.json > "$CAND/manifest.json"
-          MAN_NAME="$(node -p "require('$CAND/manifest.json').name")"
-          MAN_VER="$(node -p "require('$CAND/manifest.json').version")"
-          MAN_BIN="$(node -p "require('$CAND/manifest.json').bin.a5er")"
-          MAN_PRIV="$(node -p "require('$CAND/manifest.json').private")"
-          test "$MAN_NAME" = "@j1nn0/a5er-cli"
-          test "$MAN_VER" = "$PKG_VER"
-          test "$MAN_VER" = "${GITHUB_REF_NAME#v}"
-          test "$MAN_BIN" = "./dist/cli.js"
-          test "$MAN_PRIV" = "undefined"
-          test -n "$(node -p "require('$CAND/manifest.json').main")"
-          test -n "$(node -p "require('$CAND/manifest.json').types")"
-          test -n "$(node -p "require('$CAND/manifest.json').exports")"
+          MANIFEST_PATH="$CAND/manifest.json" EXPECTED_VER="$PKG_VER" EXPECTED_TAG="${GITHUB_REF_NAME#v}" node -e '
+          const fs = require("fs");
+          const fail = (msg) => { console.error("manifest check failed: " + msg); process.exit(1); };
+          let m;
+          try {
+            m = JSON.parse(fs.readFileSync(process.env.MANIFEST_PATH, "utf8"));
+          } catch (e) {
+            fail("manifest is not valid JSON");
+          }
+          const s = (v, what) => { if (typeof v !== "string" || v.length === 0) fail(what + " is not a non-empty string"); };
+          if (typeof m !== "object" || m === null || Array.isArray(m)) fail("top level is not an object");
+          s(m.name, "name");
+          if (m.name !== "@j1nn0/a5er-cli") fail("name mismatch");
+          s(m.version, "version");
+          if (m.version !== process.env.EXPECTED_VER) fail("version mismatch with source manifest");
+          if (m.version !== process.env.EXPECTED_TAG) fail("version mismatch with git tag");
+          if (typeof m.bin !== "object" || m.bin === null) fail("bin is not an object");
+          s(m.bin.a5er, "bin.a5er");
+          if (m.bin.a5er !== "./dist/cli.js") fail("bin.a5er mismatch");
+          if (Object.prototype.hasOwnProperty.call(m, "private")) fail("private must be absent");
+          s(m.main, "main");
+          if (m.main !== "./dist/index.js") fail("main mismatch");
+          s(m.types, "types");
+          if (m.types !== "./dist/index.d.ts") fail("types mismatch");
+          if (typeof m.exports !== "object" || m.exports === null) fail("exports is not an object");
+          const sub = m.exports["."];
+          if (typeof sub !== "object" || sub === null) fail("exports dot entry is not an object");
+          s(sub.types, "exports dot types");
+          if (sub.types !== "./dist/index.d.ts") fail("exports dot types mismatch");
+          s(sub.default, "exports dot default");
+          if (sub.default !== "./dist/index.js") fail("exports dot default mismatch");
+          '
           SRI="$(node -p "require('crypto').createHash('sha512').update(require('fs').readFileSync('$TARBALL')).digest('base64')")"
           echo "TARBALL_PATH=$TARBALL" >> "$GITHUB_ENV"
           echo "TARBALL_SRI=sha512-$SRI" >> "$GITHUB_ENV"
@@ -177,19 +211,19 @@ jobs:
           test -f "$TARBALL_PATH"
           ACTUAL_SRI="sha512-$(node -p "require('crypto').createHash('sha512').update(require('fs').readFileSync(process.env.TARBALL_PATH)).digest('base64')")"
           test "$ACTUAL_SRI" = "$TARBALL_SRI"
-          npm publish "$TARBALL_PATH" --access public --registry=https://registry.npmjs.org/
+          npm publish "$TARBALL_PATH" --access public --registry=https://registry.npmjs.org/ --@j1nn0:registry=https://registry.npmjs.org/
 
       - name: Confirm the published package
         shell: bash
         run: |
           PKG_VER="${GITHUB_REF#refs/tags/v}"
           for i in 1 2 3 4 5 6; do
-            if npm view "@j1nn0/a5er-cli@${PKG_VER}" dist.integrity --registry=https://registry.npmjs.org/ 2>registry-err.txt | grep -qxF "$TARBALL_SRI"; then
-              npm view "@j1nn0/a5er-cli@${PKG_VER}" --registry=https://registry.npmjs.org/
+            if npm view "@j1nn0/a5er-cli@${PKG_VER}" dist.integrity --registry=https://registry.npmjs.org/ --@j1nn0:registry=https://registry.npmjs.org/ 2>registry-err.txt | grep -qxF "$TARBALL_SRI"; then
+              npm view "@j1nn0/a5er-cli@${PKG_VER}" --registry=https://registry.npmjs.org/ --@j1nn0:registry=https://registry.npmjs.org/
               rm -rf "$RUNNER_TEMP/publish-candidate"
               exit 0
             fi
-            if grep -q "E404" registry-err.txt; then
+            if grep -q "^npm error code E404$" registry-err.txt; then
               echo "attempt $i/6: not yet visible (replication lag); retrying"
             else
               cat registry-err.txt
