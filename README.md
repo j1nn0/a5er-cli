@@ -28,15 +28,13 @@ of them appears in `--help`.
 
 ## Install
 
-The CLI is not on npm, so it comes from a checkout. The Agent Skill can be installed separately
-with the `skills` installer below. The npm package command is documented with the reason it does
-not work, so a failure is not mistaken for a local mistake.
+The CLI can be run from a checkout, or installed from npm once `@j1nn0/a5er-cli` is published.
+The Agent Skill can be installed separately with the `skills` installer below.
 
 ### Verified: run the CLI from a checkout
 
-The package is not published to npm — `package.json` is `"private": true` and the registry has no
-`@j1nn0/a5er-cli` — so the CLI is run from source. The default branch `main` carries the CLI source
-(`src/cli.ts`), the tests and the agent skill described here.
+The CLI is run from source: the default branch `main` carries the CLI source (`src/cli.ts`),
+the tests and the agent skill described here.
 
 Requirements: Node.js 24 or newer (`engines.node`) and pnpm 11.28.12 (`packageManager`).
 
@@ -54,14 +52,16 @@ last two commands run from its root. That last command reads a synthetic fixture
 it works on a fresh checkout — replace the path with your own diagram. The small file already
 produces about 22 KB of JSON, so extract fields instead of printing the whole envelope.
 
-### Unavailable: install the package from npm
+### Install the package from npm (requires publication)
 
 ```bash
 npm install -g @j1nn0/a5er-cli
 ```
 
-UNAVAILABLE. `package.json` is `"private": true` and nothing is published: `npm view @j1nn0/a5er-cli`
-answers `E404`, so this install fails today.
+Registry installation requires the published package: until `@j1nn0/a5er-cli@0.1.0` is published,
+`npm view @j1nn0/a5er-cli` answers `E404` and the install below fails. Installing a locally
+built tarball has been verified instead; installing from the public registry has not been
+tested yet.
 
 ### Verified: install the agent skill from the default branch
 
