@@ -99,8 +99,9 @@ jobs:
           fi
           grep -q "E404" npm-err.txt
 
-      # OIDC authentication comes from id-token: write. No NODE_AUTH_TOKEN,
-      # no caches and no long-lived credentials are used here. The default
+      # OIDC authentication comes from id-token: write. No NODE_AUTH_TOKEN and
+      # no long-lived credentials are used here (the pnpm dependency cache in
+      # setup-node is unrelated to authentication). The default
       # dist-tag (latest) applies; do not pass --tag.
       - name: Publish to npm with OIDC
         shell: bash
@@ -138,5 +139,5 @@ jobs:
         run: |
           TAG="${GITHUB_REF_NAME}"
           VER="${TAG#v}"
-          gh release create "$TAG" --title "$TAG" \
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" \
             --notes "Release $TAG of @j1nn0/a5er-cli ($VER), published to npm as @j1nn0/a5er-cli@$VER. Install with: npm install -g @j1nn0/a5er-cli@$VER"
