@@ -93,13 +93,15 @@ jobs:
         run: |
           rm -rf dist "$RUNNER_TEMP/pack" "$RUNNER_TEMP/smoke"
           mkdir -p "$RUNNER_TEMP/pack"
+          VER="$(node -p "require('./package.json').version")"
+          echo "PKG_VERSION=$VER" >> "$GITHUB_ENV"
           pnpm pack --pack-destination "$RUNNER_TEMP/pack"
-          test -f "$RUNNER_TEMP/pack/j1nn0-a5er-cli-0.1.0.tgz"
+          test -f "$RUNNER_TEMP/pack/j1nn0-a5er-cli-$VER.tgz"
 
       - name: Check tarball contents
         shell: bash
         run: |
-          TGZ="$RUNNER_TEMP/pack/j1nn0-a5er-cli-0.1.0.tgz"
+          TGZ="$RUNNER_TEMP/pack/j1nn0-a5er-cli-$PKG_VERSION.tgz"
           case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) TGZ="$(cygpath -u "$TGZ")" ;; esac
           tar -tzf "$TGZ" | grep -F "package/dist/cli.js"
           tar -tzf "$TGZ" | grep -F "package/LICENSE"
@@ -114,8 +116,8 @@ jobs:
           cp tests/fixtures/synthetic/fmt-01-baseline.a5er tests/fixtures/synthetic/sem-08-duplicate-pname.a5er "$SMOKE"/
           cd "$SMOKE"
           npm init -y >/dev/null 2>&1
-          npm install --no-save --no-audit --no-fund "$RUNNER_TEMP/pack/j1nn0-a5er-cli-0.1.0.tgz"
-          node_modules/.bin/a5er --version | grep -F "0.1.0"
+          npm install --no-save --no-audit --no-fund "$RUNNER_TEMP/pack/j1nn0-a5er-cli-$PKG_VERSION.tgz"
+          node_modules/.bin/a5er --version | grep -F "$PKG_VERSION"
           node_modules/.bin/a5er --help >/dev/null
           node_modules/.bin/a5er inspect "fmt-01-baseline.a5er" > out.txt 2> err.txt
           code=$?

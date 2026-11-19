@@ -1,0 +1,142 @@
+name: Release
+
+# Trusted-publishing workflow. This filename is registered as the npm
+# Trusted Publisher workflow value, so do not rename this file.
+# Triggers only on stable version tags; pull requests and branch pushes
+# never publish.
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+# One release flow per tag. Re-runs queue instead of racing; a re-run
+# stops at the already-published check below rather than republishing.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: verify, publish and confirm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    timeout-minutes: 20
+    steps:
+      - name: Checkout the tag with full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Check npm CLI supports OIDC publishing
+        shell: bash
+        run: |
+          test "$(printf '%s\n%s' "11.5.1" "$(npm --version)" | sort -V | head -n 1)" = "11.5.1"
+
+      - name: Refuse non-stable tag names
+        shell: bash
+        run: |
+          if ! [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "not a stable version tag: ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+
+      - name: Match tag version with package.json
+        shell: bash
+        run: |
+          TAG_VER="${GITHUB_REF_NAME#v}"
+          PKG_VER="$(node -p "require('./package.json').version")"
+          test "$TAG_VER" = "$PKG_VER"
+
+      - name: Require the tag commit on main
+        shell: bash
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Format check
+        run: pnpm format:check
+
+      - name: Test
+        run: pnpm test
+
+      # A re-run after a successful publish stops here instead of
+      # republishing. Creating the GitHub Release for that case needs
+      # manual integrity review, so the workflow never proceeds
+      # automatically when the version already exists.
+      - name: Refuse an already-published version
+        shell: bash
+        run: |
+          PKG_VER="$(node -p "require('./package.json').version")"
+          if npm view "@j1nn0/a5er-cli@${PKG_VER}" version 2>npm-err.txt; then
+            echo "version ${PKG_VER} is already published; refusing to republish"
+            exit 1
+          fi
+          grep -q "E404" npm-err.txt
+
+      # OIDC authentication comes from id-token: write. No NODE_AUTH_TOKEN,
+      # no caches and no long-lived credentials are used here. The default
+      # dist-tag (latest) applies; do not pass --tag.
+      - name: Publish to npm with OIDC
+        shell: bash
+        run: npm publish --access public
+
+      - name: Confirm the published package
+        shell: bash
+        run: |
+          PKG_VER="$(node -p "require('./package.json').version")"
+          for i in 1 2 3 4 5 6; do
+            if npm view "@j1nn0/a5er-cli@${PKG_VER}" version 2>/dev/null | grep -q "$PKG_VER"; then
+              npm view "@j1nn0/a5er-cli@${PKG_VER}"
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "published version did not appear on the registry"
+          exit 1
+
+  # Runs only after the release job fully succeeds. A publish success
+  # followed by a failure here stays visible as that exact partial
+  # outcome; it is never retried automatically.
+  github-release:
+    name: create GitHub Release
+    needs: [release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 10
+    steps:
+      - name: Create GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VER="${TAG#v}"
+          gh release create "$TAG" --title "$TAG" \
+            --notes "Release $TAG of @j1nn0/a5er-cli ($VER), published to npm as @j1nn0/a5er-cli@$VER. Install with: npm install -g @j1nn0/a5er-cli@$VER"
