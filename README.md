@@ -28,8 +28,8 @@ of them appears in `--help`.
 
 ## Install
 
-The CLI can be run from a checkout, or installed from npm once `@j1nn0/a5er-cli` is published.
-The Agent Skill can be installed separately with the `skills` installer below.
+The CLI can be run from a checkout, or installed from npm. The Agent Skill can be installed
+separately with the `skills` installer below.
 
 ### Verified: run the CLI from a checkout
 
@@ -52,16 +52,15 @@ last two commands run from its root. That last command reads a synthetic fixture
 it works on a fresh checkout — replace the path with your own diagram. The small file already
 produces about 22 KB of JSON, so extract fields instead of printing the whole envelope.
 
-### Install the package from npm (requires publication)
+### Install the package from npm
 
 ```bash
 npm install -g @j1nn0/a5er-cli
 ```
 
-Registry installation requires the published package: until `@j1nn0/a5er-cli@0.1.0` is published,
-`npm view @j1nn0/a5er-cli` answers `E404` and the install below fails. Installing a locally
-built tarball has been verified instead; installing from the public registry has not been
-tested yet.
+`@j1nn0/a5er-cli@0.1.0` is published: the command above installs it globally, and installing
+from the public registry has been verified. Installing a locally built tarball has also been
+verified. Future versions are not covered by that verification.
 
 ### Verified: install the agent skill from the default branch
 
