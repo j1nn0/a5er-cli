@@ -1,6 +1,6 @@
 {
   "name": "@j1nn0/a5er-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Read-only CLI for A5:SQL Mk-2 ER diagram (.a5er) files",
   "homepage": "https://github.com/j1nn0/a5er-cli#readme",
   "bugs": "https://github.com/j1nn0/a5er-cli/issues",

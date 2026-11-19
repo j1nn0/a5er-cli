@@ -596,7 +596,7 @@ describe('json goldens — full-envelope sweep', () => {
           'completeness',
         ]);
         expect(golden.contractVersion).toBe('0.1.0');
-        expect(golden.tool).toEqual({ name: '@j1nn0/a5er-cli', version: '0.1.0' });
+        expect(golden.tool).toEqual({ name: '@j1nn0/a5er-cli', version: '0.1.1' });
         expect(golden.command).toBe('inspect');
         expect(golden.limits).toEqual({ maxBytes: 64 * 1024 * 1024, truncated: false });
 
@@ -1584,7 +1584,7 @@ describe('json goldens — counting identities, FORMAT and the byte fixtures (st
       // §12's ten fields, in construction order.
       expect(Object.keys(raw), name).toEqual([...FIELDS]);
       expect(raw['contractVersion'], name).toBe('0.1.0');
-      expect(raw['tool'], name).toEqual({ name: '@j1nn0/a5er-cli', version: '0.1.0' });
+      expect(raw['tool'], name).toEqual({ name: '@j1nn0/a5er-cli', version: '0.1.1' });
       expect(raw['command'], name).toBe('inspect');
       expect(raw['limits'], name).toEqual({ maxBytes: 64 * 1024 * 1024, truncated: false });
       const source = raw['source'];

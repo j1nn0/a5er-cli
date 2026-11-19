@@ -2,7 +2,7 @@
   "contractVersion": "0.1.0",
   "tool": {
     "name": "@j1nn0/a5er-cli",
-    "version": "0.1.0"
+    "version": "0.1.1"
   },
   "command": "inspect",
   "status": "ok",

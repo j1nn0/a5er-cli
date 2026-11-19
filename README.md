@@ -43,7 +43,7 @@ git clone https://github.com/j1nn0/a5er-cli.git
 cd a5er-cli
 pnpm install --frozen-lockfile
 pnpm build
-node dist/cli.js --version                       # 0.1.0
+node dist/cli.js --version                       # 0.1.1
 node dist/cli.js inspect tests/fixtures/synthetic/fmt-01-baseline.a5er
 ```
 
@@ -58,9 +58,9 @@ produces about 22 KB of JSON, so extract fields instead of printing the whole en
 npm install -g @j1nn0/a5er-cli
 ```
 
-`@j1nn0/a5er-cli@0.1.0` is published: the command above installs it globally, and installing
-from the public registry has been verified. Installing a locally built tarball has also been
-verified. Future versions are not covered by that verification.
+`@j1nn0/a5er-cli` is published: the command above installs the registry's latest version
+globally. Installing v0.1.0 from the public registry has been verified, as has installing
+a locally built tarball. The v0.1.1 registry installation has not been tested yet.
 
 ### Verified: install the agent skill from the default branch
 

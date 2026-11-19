@@ -69,7 +69,7 @@ export const CONTRACT_VERSION = '0.1.0';
 export const TOOL_NAME = '@j1nn0/a5er-cli';
 
 /** The package version, mirrored from `package.json`; a test asserts all three agree. */
-export const TOOL_VERSION = '0.1.0';
+export const TOOL_VERSION = '0.1.1';
 
 /** The two commands the envelope is built for (§12; the commands themselves are stage 7). */
 export type JsonCommand = 'inspect' | 'validate';
