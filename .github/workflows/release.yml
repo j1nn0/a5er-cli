@@ -39,7 +39,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: pnpm
 
       - name: Check npm CLI supports OIDC publishing
         shell: bash
@@ -98,6 +97,28 @@ jobs:
             exit 1
           fi
           grep -q "E404" npm-err.txt
+
+      - name: Inspect the publish candidate tarball
+        shell: bash
+        run: |
+          CAND="$RUNNER_TEMP/publish-candidate"
+          rm -rf "$CAND"
+          mkdir -p "$CAND"
+          pnpm pack --pack-destination "$CAND"
+          PKG_NAME="$(node -p "require('./package.json').name")"
+          PKG_VER="$(node -p "require('./package.json').version")"
+          test "$PKG_NAME" = "@j1nn0/a5er-cli"
+          TARBALL="$CAND/j1nn0-a5er-cli-$PKG_VER.tgz"
+          test -f "$TARBALL"
+          for f in package/dist/cli.js package/dist/index.js package/dist/index.d.ts package/README.md package/LICENSE package/package.json; do
+            tar -tzf "$TARBALL" | grep -qxF "$f"
+          done
+          test "$(tar -xzOf "$TARBALL" package/dist/cli.js | head -n 1)" = "#!/usr/bin/env node"
+          if tar -tzf "$TARBALL" | grep -iE '\.a5er$|\.npmrc$|\.env$|/(tests?|skills?|fixtures?)/|credentials?|secret'; then
+            echo "forbidden content in publish candidate"
+            exit 1
+          fi
+          rm -rf "$CAND"
 
       # OIDC authentication comes from id-token: write. No NODE_AUTH_TOKEN and
       # no long-lived credentials are used here (the pnpm dependency cache in
