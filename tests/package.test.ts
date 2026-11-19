@@ -29,6 +29,14 @@ describe('package manifest', () => {
     expect(pkg['publishConfig']).toEqual({ access: 'public' });
   });
 
+  it('builds before packing via the prepack hook', () => {
+    const pkg = readPackageJson();
+    const scripts = pkg['scripts'] as Record<string, unknown>;
+
+    expect(scripts['prepack']).toBe('pnpm build');
+    expect(scripts['prepublishOnly']).toBeUndefined();
+  });
+
   it('publishes under the expected name and bin', () => {
     const pkg = readPackageJson();
 

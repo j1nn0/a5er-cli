@@ -29,7 +29,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "prepublishOnly": "pnpm build",
+    "prepack": "pnpm build",
     "dev": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "lint": "pnpm exec oxlint src tests",
