@@ -28,8 +28,47 @@ of them appears in `--help`.
 
 ## Install
 
-The CLI can be run from a checkout, or installed from npm. The Agent Skill can be installed
-separately with the `skills` installer below.
+The CLI is normally installed with npm or mise; both use the same `@j1nn0/a5er-cli` package from the
+npm registry. To run it from source instead, use a checkout. All of these need Node.js 24 or newer.
+The Agent Skill is installed separately from the CLI; see the skill section below.
+
+### Install the package from npm
+
+```bash
+npm install -g @j1nn0/a5er-cli
+```
+
+This installs the registry's latest version globally and requires Node.js 24 or newer
+(`engines.node`). Installing v0.1.0 from the public registry has been verified, as has installing a
+locally built tarball; later versions have not been verified separately.
+
+### Install with mise
+
+mise can install the same npm package through its [npm backend](https://mise.jdx.dev/dev-tools/backends/npm.html).
+`-g` registers the tool in your global mise configuration. The CLI needs Node.js 24 or newer, and
+installing it does not install the Agent Skill (see
+[Verified: install the agent skill from the default branch](#verified-install-the-agent-skill-from-the-default-branch)).
+
+```bash
+mise use -g 'npm:@j1nn0/a5er-cli'
+a5er --version
+```
+
+To pin an exact version:
+
+```bash
+mise use -g 'npm:@j1nn0/a5er-cli@0.1.0'
+a5er --version
+```
+
+Verified: on macOS arm64 with mise 2026.11.10, the pinned command above installed the CLI and
+`a5er --version` printed `0.1.0`. Only the installation and the version output were checked; running
+`inspect` or `validate` through a mise-installed CLI has not been verified.
+
+mise may exclude very recent releases from version resolution (`minimum_release_age`, 24 hours by
+default; see [mise troubleshooting](https://mise.jdx.dev/troubleshooting.html)). If a just-published
+version is not yet resolved as the latest, pin the exact version as shown above. Disabling that
+global security setting is not required.
 
 ### Verified: run the CLI from a checkout
 
@@ -51,16 +90,6 @@ Run the block from any directory outside an existing checkout; the clone creates
 last two commands run from its root. That last command reads a synthetic fixture committed here, so
 it works on a fresh checkout — replace the path with your own diagram. The small file already
 produces about 22 KB of JSON, so extract fields instead of printing the whole envelope.
-
-### Install the package from npm
-
-```bash
-npm install -g @j1nn0/a5er-cli
-```
-
-`@j1nn0/a5er-cli` is published: the command above installs the registry's latest version
-globally. Installing v0.1.0 from the public registry has been verified, as has installing
-a locally built tarball. The v0.1.1 registry installation has not been tested yet.
 
 ### Verified: install the agent skill from the default branch
 
