@@ -35,15 +35,14 @@ local mistake.
 ### Verified: run the CLI from a checkout
 
 The package is not published to npm — `package.json` is `"private": true` and the registry has no
-`@j1nn0/a5er-cli` — so the CLI is run from source. The branch that carries the build described here
-is `phase2`; `main` does not contain `src/cli.ts` yet.
+`@j1nn0/a5er-cli` — so the CLI is run from source. The default branch `main` carries the CLI source
+(`src/cli.ts`), the tests and the agent skill described here.
 
 Requirements: Node.js 24 or newer (`engines.node`) and pnpm 11.28.12 (`packageManager`).
 
 ```bash
 git clone https://github.com/j1nn0/a5er-cli.git
 cd a5er-cli
-git checkout phase2
 pnpm install --frozen-lockfile
 pnpm build
 node dist/cli.js --version                       # 0.1.0
@@ -64,14 +63,15 @@ npm install -g @j1nn0/a5er-cli
 UNAVAILABLE. `package.json` is `"private": true` and nothing is published: `npm view @j1nn0/a5er-cli`
 answers `E404`, so this install fails today.
 
-### Unverified: install the agent skill from the default branch
+### Verified: install the agent skill from the default branch
 
 ```bash
 npx skills@latest add j1nn0/a5er-cli -s a5er-cli
 ```
 
-UNVERIFIED. `main` carries no `skills/a5er-cli`, so a real run stops with `SKILLS_NO_VALID_SKILLS`.
-The verified form names the branch that carries both the CLI and the skill — see
+Verified on the default branch: the command above installs `a5er-cli` (skill files,
+`LICENSE`, references, evals) and records the resolved commit in `skills-lock.json`.
+Details — including that installing the skill alone does not install the CLI — are in
 [Agent skill](#agent-skill).
 
 ## Output and exit codes
@@ -144,14 +144,14 @@ from what was parsed. Every branch — `ok`, `degraded`, `failed`, exit `3`, exi
 has its stdout, stderr and exit code recorded in
 [`references/examples.md`](skills/a5er-cli/references/examples.md).
 
-Install it into the current project with the `skills` installer, from the branch that carries it:
+Install it into the current project with the `skills` installer, from the default branch:
 
 ```bash
-npx skills@latest add j1nn0/a5er-cli#phase2 -s a5er-cli
+npx skills@latest add j1nn0/a5er-cli -s a5er-cli
 ```
 
-`add` resolves `phase2` at install time and records the ref plus the commit it resolved in
-`skills-lock.json`. Because `phase2` is a moving branch, a later `add` resolves whatever `phase2`
+`add` resolves the default branch at install time and records the source plus the commit it resolved in
+`skills-lock.json`. Because the default branch moves, a later `add` resolves whatever `main`
 points at then and overwrites the recorded commit, so the saved `skills-lock.json` is what pins the
 install. To restore the commit a lock records, keep the file and run:
 
@@ -162,8 +162,7 @@ npx skills@latest experimental_install --frozen-lockfile
 `experimental_install` restores the skills listed in `skills-lock.json` (`install` and `i` are
 aliases). It needs a saved lock: `--frozen-lockfile` makes the command fail with exit `1` rather
 than write a new `skills-lock.json` when none is saved, and CI enables it by default. Restored that
-way, the installed files match `skills/a5er-cli` in this repository. The unpinned form is the
-UNVERIFIED command above.
+way, the installed files match `skills/a5er-cli` in this repository.
 
 The skill runs `a5er`, so it needs the CLI on `PATH`. In a checkout, use `node dist/cli.js` in its
 place — the skill documents that substitution itself.
