@@ -1,246 +1,132 @@
 # a5er-cli
 
 A read-only command-line tool for A5:SQL Mk-2 ER diagram (`.a5er`) files. It parses one file and
-writes one JSON envelope to stdout — entities, views, relations, diagnostics, unsupported constructs
-and completeness counts — so a person, a script or an agent can read a diagram without the GUI. The
-input file is never modified.
+writes one JSON envelope to stdout, so a person, a script or an agent can read a diagram without the
+GUI. The input file is never modified.
 
-## What ships today
+- **Complete accounting:** the envelope holds entities, views, relations, diagnostics, unsupported
+  constructs and completeness counts. A construct the parser does not model is kept verbatim in
+  `unsupported` with its span, never reported as interpreted.
+- **Traceable and machine-readable:** values carry their origin and raw text; JSON is the only
+  output format, and prose goes to stderr, never stdout.
 
-Two commands read a file:
+> **Confidentiality:** ER diagrams are confidential, and an envelope echoes names, comments and raw
+> text from the file. Do not commit, paste or quote a real `.a5er` file or an envelope produced from
+> one; keep such envelopes outside the repository and delete them when you are done. `.a5er` files
+> are gitignored; only synthetic fixtures are tracked.
 
-| Invocation                             | What it does                                                                       |
-| -------------------------------------- | ---------------------------------------------------------------------------------- |
-| `a5er inspect [--format json] <file>`  | Reads the file and emits one JSON envelope                                         |
-| `a5er validate [--format json] <file>` | Emits the same envelope, and also exits `3` when a diagnostic has severity `error` |
-| `a5er --help`, `-h`                    | Prints the help and exits `0`; `a5er` with no arguments does the same              |
-| `a5er --version`, `-v`                 | Prints the version and exits `0`                                                   |
+## Installation
 
-Both commands take exactly one file. `--format json` is accepted and is the only format — it is also
-the default; there is no text renderer.
-
-`a5er` is the name `package.json` declares for its `bin` entry (`./dist/cli.js`). In a checkout, run
-`node dist/cli.js` with the same arguments; that is the form every example below uses.
-
-**Not shipped in this build:** `tables`, `table`, `relations`, `search` and `export`. None of them
-is a command yet, so each exits `2` with the usage block on stderr and nothing on stdout, and none
-of them appears in `--help`.
-
-## Install
-
-The CLI is normally installed with npm or mise; both use the same `@j1nn0/a5er-cli` package from the
-npm registry. To run it from source instead, use a checkout. All of these need Node.js 24 or newer.
-The Agent Skill is installed separately from the CLI; see the skill section below.
-
-### Install the package from npm
+The executable is `a5er`, from the npm package `@j1nn0/a5er-cli`. It requires Node.js 24 or later.
 
 ```bash
 npm install -g @j1nn0/a5er-cli
 ```
 
-This installs the registry's latest version globally and requires Node.js 24 or newer
-(`engines.node`). Installing v0.1.0 from the public registry has been verified, as has installing a
-locally built tarball; later versions have not been verified separately.
-
-### Install with mise
-
-mise can install the same npm package through its [npm backend](https://mise.jdx.dev/dev-tools/backends/npm.html).
-`-g` registers the tool in your global mise configuration. The CLI needs Node.js 24 or newer, and
-installing it does not install the Agent Skill (see
-[Verified: install the agent skill from the default branch](#verified-install-the-agent-skill-from-the-default-branch)).
-
 ```bash
 mise use -g 'npm:@j1nn0/a5er-cli'
-a5er --version
 ```
 
-To pin an exact version:
-
-```bash
-mise use -g 'npm:@j1nn0/a5er-cli@0.1.0'
-a5er --version
-```
-
-Verified: on macOS arm64 with mise 2026.11.10, the pinned command above installed the CLI and
-`a5er --version` printed `0.1.0`. Only the installation and the version output were checked; running
-`inspect` or `validate` through a mise-installed CLI has not been verified.
-
-mise may exclude very recent releases from version resolution (`minimum_release_age`, 24 hours by
-default; see [mise troubleshooting](https://mise.jdx.dev/troubleshooting.html)). If a just-published
-version is not yet resolved as the latest, pin the exact version as shown above. Disabling that
-global security setting is not required.
-
-### Verified: run the CLI from a checkout
-
-The CLI is run from source: the default branch `main` carries the CLI source (`src/cli.ts`),
-the tests and the agent skill described here.
-
-Requirements: Node.js 24 or newer (`engines.node`) and pnpm 11.28.12 (`packageManager`).
+To run from a source checkout (pnpm 11.28.12) instead:
 
 ```bash
 git clone https://github.com/j1nn0/a5er-cli.git
 cd a5er-cli
 pnpm install --frozen-lockfile
 pnpm build
-node dist/cli.js --version                       # prints the package version
-node dist/cli.js inspect tests/fixtures/synthetic/fmt-01-baseline.a5er
+node dist/cli.js --version
 ```
 
-Run the block from any directory outside an existing checkout; the clone creates `a5er-cli`, and the
-last two commands run from its root. That last command reads a synthetic fixture committed here, so
-it works on a fresh checkout — replace the path with your own diagram. The small file already
-produces about 22 KB of JSON, so extract fields instead of printing the whole envelope.
+In a checkout, use `node dist/cli.js` wherever this README says `a5er`.
 
-### Verified: install the agent skill from the default branch
+Verified so far: installing v0.1.0 from the public npm registry and from a locally built tarball,
+and installing v0.1.0 with mise on macOS arm64 (mise 2026.11.10), where only the installation and
+`a5er --version` were checked. Other versions and platforms have not been verified separately. If
+mise does not yet resolve a just-published release as the latest, pin the exact version
+(`npm:@j1nn0/a5er-cli@X.Y.Z`).
+
+## Usage
+
+`diagram.a5er` below stands for your own file. Each command takes exactly one file.
+
+```bash
+a5er inspect diagram.a5er     # emit the JSON envelope
+a5er validate diagram.a5er    # same envelope; also exits 3 on an error diagnostic
+a5er --help                   # also -h, or run a5er with no arguments
+a5er --version                # also -v
+```
+
+`--format json` is accepted but is the default and only format. No other command exists yet: any
+other word, such as `tables` or `export`, exits 2 with the usage text on stderr.
+
+To keep the envelope, redirect stdout only:
+
+```bash
+a5er inspect diagram.a5er > envelope.json
+node -p "JSON.parse(require('fs').readFileSync('envelope.json', 'utf8')).status"
+```
+
+Do not merge stderr into stdout (`2>&1`): the diagnostic prose would break JSON parsing.
+
+## Output
+
+`stdout` carries exactly one JSON envelope and a final newline. `stderr` carries one line per `fatal`
+or `error` diagnostic; `warning` and `info` findings appear only in the envelope.
+
+Every envelope has the keys `contractVersion`, `tool`, `command`, `status`, `source`, `limits`,
+`schema`, `unsupported`, `diagnostics` and `completeness`. `status` is `ok`, `degraded` (readable,
+with findings) or `failed`. A `failed` envelope is still valid JSON, with `source`, `schema` and
+`completeness` set to `null`. `contractVersion` is versioned independently of the package. The full
+contract is in [docs/architecture.md](docs/architecture.md#12-json-contract-initial).
+
+| Exit | Meaning                                                                                      |
+| ---- | -------------------------------------------------------------------------------------------- |
+| `0`  | Envelope written. `inspect`: any read that is not `failed`; `validate`: no `error` diagnostic |
+| `1`  | Any `fatal` diagnostic; the envelope is `failed`                                             |
+| `2`  | Incorrect usage; nothing on stdout, usage text on stderr, decided before any input is read   |
+| `3`  | `validate` only: an `error`-severity diagnostic; the envelope is `degraded`                  |
+
+`inspect` never exits 3: it reports what is in the file, while `validate` decides whether it is
+acceptable. An `error` finding under `inspect` still exits 0 and appears on stderr.
+
+## Agent Skill
+
+[`skills/a5er-cli/SKILL.md`](skills/a5er-cli/SKILL.md) is an agent skill that runs the CLI and reads
+the envelope in a fixed order, so an agent answers only from what was parsed. Its expected outputs
+for each case are in [`references/examples.md`](skills/a5er-cli/references/examples.md).
 
 ```bash
 npx skills@latest add j1nn0/a5er-cli -s a5er-cli
 ```
 
-Verified on the default branch: running the command above with explicit agent selection in
-noninteractive mode (`--agent '*' -y`) installs `a5er-cli` (skill files, `LICENSE`, references,
-evals) and records the resolved commit in `skills-lock.json`.
-Details — including that installing the skill alone does not install the CLI — are in
-[Agent skill](#agent-skill).
+The skill and the CLI are installed separately. The skill only invokes `a5er`, so install the CLI
+and keep it on `PATH`. In a checkout, the skill documents the `node dist/cli.js` substitution.
 
-## Output and exit codes
-
-`stdout` carries exactly one JSON envelope and nothing else: the stream is one JSON document plus
-the single newline that ends it, so a consumer can parse it whole. Prose goes to `stderr`, one line
-per `fatal` or `error` diagnostic — the two severities that can decide a non-zero exit. `warning`
-and `info` findings are recorded only in the envelope.
-
-Every envelope has the same ten top-level keys: `contractVersion`, `tool`, `command`, `status`,
-`source`, `limits`, `schema`, `unsupported`, `diagnostics` and `completeness`. `status` is `ok`,
-`degraded` or `failed`; a `failed` envelope is still valid JSON, with `source`, `schema` and
-`completeness` `null`, so automation never has to tell "no output" from "crashed".
-`contractVersion` is versioned independently of the package version.
-
-| Exit | `inspect`                                          | `validate`                      | What is written                                                                          |
-| ---- | -------------------------------------------------- | ------------------------------- | ---------------------------------------------------------------------------------------- |
-| `0`  | any read that is not `failed`, `degraded` included | no `error`-severity diagnostic  | one envelope on stdout; stderr only for a `fatal`/`error` line                           |
-| `1`  | any `fatal` diagnostic                             | any `fatal` diagnostic          | one envelope with `source`, `schema` and `completeness` `null`; the fatal line on stderr |
-| `3`  | never                                              | any `error`-severity diagnostic | one envelope with `status` `degraded`; the error line on stderr                          |
-| `2`  | —                                                  | —                               | nothing on stdout; the usage block on stderr. Decided before any input is read           |
-
-`inspect` never exits `3`: an `error` finding under `inspect` still exits `0` and puts the same line
-on stderr. The split is deliberate — `inspect` reports what is in the file, `validate` decides
-whether it is acceptable. The full contract, with the field order and the completeness accounting,
-is in [architecture §12](docs/architecture.md#12-json-contract-initial).
-
-## Reading the envelope
-
-Extract the fields you need instead of printing the document. Run this from the repository root:
-
-```bash
-(
-  file=tests/fixtures/synthetic/fmt-01-baseline.a5er
-  tmp=$(mktemp -d) || exit 70
-  trap 'rm -rf "$tmp"' EXIT
-  node dist/cli.js validate "$file" >"$tmp/envelope.json" 2>"$tmp/diagnostics.txt"; code=$?
-  echo "exit=$code"
-  cat "$tmp/diagnostics.txt"
-  if [ "$code" -ne 2 ] && [ -s "$tmp/envelope.json" ]; then
-    node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
-console.log(j.status, j.completeness ? "dropped=" + j.completeness.dropped : "");
-for (const d of j.diagnostics) console.log(d.severity, d.code, d.span ? "line " + d.span.startLine : "");' "$tmp/envelope.json"
-  fi
-  exit "$code"
-)
-```
-
-`file=` and the temporary directory are both assigned inside the parentheses, so the whole example
-is a subshell: the `EXIT` trap deletes the temporary directory the moment the block finishes, and
-neither a variable nor a trap is left behind in your shell. The last line is `exit "$code"`, so the
-subshell hands back the CLI's status rather than the status of the last helper command. The
-redirects capture the CLI's own streams to files — stdout to `envelope.json`, stderr to
-`diagnostics.txt` — so everything the block prints is the wrapper's stdout: the `echo` of the exit
-code, the diagnostics that `cat` copies back, and the parsed fields. The wrapper writes nothing on
-stderr.
-
-With the committed fixture above the block prints `exit=0`, copies back no diagnostic line, then
-`ok dropped=0` and `info V_VIEW_COLUMNS_UNKNOWN line 35`. Point `file=` at
-`tests/fixtures/synthetic/sem-08-duplicate-pname.a5er` for the failure branch: `exit=3`, the
-error line, `degraded dropped=0`, and the `error` and `info` diagnostics. A misuse (exit `2`)
-writes nothing to the CLI's stdout, so the guard skips `JSON.parse` and the block prints `exit=2`,
-the CLI error message, and the usage text. Set `file=` to your own diagram to run it against another file.
-
-## Agent skill
-
-[`skills/a5er-cli/SKILL.md`](skills/a5er-cli/SKILL.md) is an agent skill for this CLI: it checks the
-prerequisites, runs the command, and reads the envelope in a fixed order so an agent answers only
-from what was parsed. Every branch — `ok`, `degraded`, `failed`, exit `3`, exit `2`, missing CLI —
-has its stdout, stderr and exit code recorded in
-[`references/examples.md`](skills/a5er-cli/references/examples.md).
-
-Install it into the current project with the `skills` installer, from the default branch:
-
-```bash
-npx skills@latest add j1nn0/a5er-cli -s a5er-cli
-```
-
-`add` resolves the default branch at install time and records the source plus the commit it resolved in
-`skills-lock.json`. Because the default branch moves, a later `add` resolves whatever `main`
-points at then and overwrites the recorded commit, so the saved `skills-lock.json` is what pins the
-install. To restore the commit a lock records, keep the file and run:
-
-```bash
-npx skills@latest experimental_install --frozen-lockfile
-```
-
-`experimental_install` restores the skills listed in `skills-lock.json` (`install` and `i` are
-aliases). It needs a saved lock: `--frozen-lockfile` makes the command fail with exit `1` rather
-than write a new `skills-lock.json` when none is saved, and CI enables it by default. Restored that
-way, the installed files match `skills/a5er-cli` in this repository.
-
-The skill runs `a5er`, so it needs the CLI on `PATH`. In a checkout, use `node dist/cli.js` in its
-place — the skill documents that substitution itself.
+The installer records the resolved commit in `skills-lock.json`. To restore that commit later, keep
+the file and run `npx skills@latest experimental_install --frozen-lockfile`. Installing from the
+default branch with `--agent '*' -y` has been verified.
 
 ## Development
 
-A change must pass these gates. CI runs exactly them on Node.js 24 and 26 under Linux and Windows:
+CI runs these gates on Node.js 24 and 26 under Linux and Windows:
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm build
 pnpm typecheck
-pnpm lint          # oxlint src tests
-pnpm format:check  # oxfmt
-pnpm test          # pretest runs pnpm build, then vitest
+pnpm lint
+pnpm format:check
+pnpm test
 ```
-
-## Design principles
-
-- **Accuracy first:** never silently invent or discard schema information. A construct the parser
-  does not model is kept verbatim in `unsupported` with its span, and `completeness` reconciles
-  every section, key and line to zero dropped.
-- **Read-only:** no command writes to the input file.
-- **Traceability:** every interpreted value carries its origin and the raw text it came from, and
-  every node the file declares carries a span.
-- **Machine-readable:** one stable JSON envelope per invocation, with prose kept off stdout.
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) — modules, data model, diagnostics and the JSON contract
-  (§12). This is the current description of the shipped pipeline.
-- [Format coverage](docs/format-coverage.md) — what the v2.21 specification defines, item by item,
-  and what remains unconfirmed.
-- [Parser evaluation](docs/parser-evaluation.md) — why the parser is built from the specification
-  instead of depending on an existing one.
-- [Test strategy](docs/test-strategy.md) — test levels, fixture policy and the gates a change must
-  pass. Its opening status paragraph predates the parser; the policy and gates are current.
-- [Golden provenance](docs/json-golden-provenance.md) — one row per committed golden, with the
-  counts a reader can re-derive from the fixture's own bytes.
+- [Architecture](docs/architecture.md): modules, data model, diagnostics and the JSON contract
+- [Format coverage](docs/format-coverage.md): what the specification defines, and what is unconfirmed
+- [Parser evaluation](docs/parser-evaluation.md): why the parser is built from the specification
+- [Test strategy](docs/test-strategy.md): test levels, fixture policy and quality gates
+- [Golden provenance](docs/json-golden-provenance.md): one row per committed golden
 - [A5:SQL Mk-2 ER Diagram File Specification](https://a5m2.mmatsubara.com/document/v2.21/a5er_specification.html)
-
-## Confidentiality
-
-ER diagrams are confidential, and an envelope echoes names, comments and raw text from the file.
-`.a5er` files are gitignored; the only tracked ones are the 39 synthetic fixtures under
-`tests/fixtures/synthetic/`, each on an explicit allowlist in `.gitignore`. Any other `.a5er` file, a
-real diagram included, stays ignored. Do not commit, paste or quote a real `.a5er` file or an
-envelope produced from one; keep such envelopes outside the repository and delete them when the
-command ends.
 
 ## License
 
