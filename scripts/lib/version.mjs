@@ -60,12 +60,24 @@ export const read = (root, relative) => readFileSync(join(root, relative), 'utf8
 /**
  * Writes one file of the version surface.
  *
- * `A5ER_RELEASE_FAIL_WRITE=<repo-relative path>` makes exactly that one write throw, so the recovery
- * path in `release:prepare` can be exercised on every platform. Nothing in CI sets it.
+ * `A5ER_RELEASE_FAIL_WRITE=<repo-relative path>` makes the first matching write throw, so the recovery
+ * path in `release:prepare` can be exercised on every platform. With a `:partial` suffix the write
+ * first stores a truncated prefix, standing in for a real write that fails after modifying its
+ * target, so recovery of the failing file itself is exercised too. Only the first matching write
+ * fails, modelling a transient fault: the restore that follows must succeed. Nothing in CI sets it.
  */
+const failedWrites = new Set();
 export const write = (root, relative, text) => {
-  if (process.env.A5ER_RELEASE_FAIL_WRITE === relative) {
-    throw new Error(`simulated write failure for ${relative} (A5ER_RELEASE_FAIL_WRITE)`);
+  const failWrite = process.env.A5ER_RELEASE_FAIL_WRITE;
+  const partial = failWrite === `${relative}:partial`;
+  if ((failWrite === relative || partial) && !failedWrites.has(failWrite)) {
+    failedWrites.add(failWrite);
+    if (partial) {
+      writeFileSync(join(root, relative), text.slice(0, Math.max(1, Math.floor(text.length / 2))));
+    }
+    throw new Error(
+      `simulated ${partial ? 'partial ' : ''}write failure for ${relative} (A5ER_RELEASE_FAIL_WRITE)`,
+    );
   }
   writeFileSync(join(root, relative), text);
 };

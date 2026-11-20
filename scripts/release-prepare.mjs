@@ -239,6 +239,25 @@ if (changes.length === 0) {
   process.exit(0);
 }
 
+// ---- 5b. the current tree must already agree before anything is written ----
+// The proposal validation above covers the three version files, but the golden and contract
+// invariants are checked by consistencyReport() only after writing. A corrupted golden must not
+// cost the version files their contents, so the complete existing check runs here instead.
+let preexisting;
+try {
+  preexisting = consistencyReport(ROOT);
+} catch (error) {
+  die(`cannot verify the current tree: ${error.code ?? error.message}`, 'nothing was written');
+}
+if (preexisting.problems.length > 0) {
+  printProblems(
+    `refusing to prepare ${target}; the version surfaces already disagree`,
+    preexisting.problems,
+    'nothing was written',
+  );
+  process.exit(1);
+}
+
 // ---- 6. write, restoring this run's own writes if one of them fails ---------
 
 const written = [];
@@ -262,6 +281,24 @@ try {
       restored.push(file);
     } catch (restoreError) {
       unrecovered.push({ file, error: restoreError });
+    }
+  }
+  // A failing write may still have modified its target, so the file that threw is verified
+  // against the bytes this run read, using the same restore path as the files above.
+  if (writing !== undefined) {
+    let current;
+    try {
+      current = read(ROOT, writing);
+    } catch {
+      current = undefined;
+    }
+    if (current !== original.get(writing)) {
+      try {
+        write(ROOT, writing, original.get(writing));
+        restored.push(writing);
+      } catch (restoreError) {
+        unrecovered.push({ file: writing, error: restoreError });
+      }
     }
   }
   if (restored.length > 0) process.stderr.write(`  restored: ${restored.join(', ')}\n`);

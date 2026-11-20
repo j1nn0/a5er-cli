@@ -170,6 +170,37 @@ describe('version management — release:check', () => {
     expect(snapshot(root)).toEqual(before);
   });
 
+  it('restores the failing target when a write partially modifies it', () => {
+    const root = makeRoot();
+    const before = snapshot(root);
+
+    // The seam stores a truncated prefix before throwing, standing in for a real write that
+    // fails after modifying its target. Recovery must notice the difference and restore it.
+    const result = prepare(root, [NEXT], { A5ER_RELEASE_FAIL_WRITE: 'src/index.ts:partial' });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('writing src/index.ts failed');
+    expect(result.stderr).toContain('restored: package.json, src/index.ts');
+    expect(result.stderr).not.toContain('still modified');
+    expect(snapshot(root)).toEqual(before);
+  });
+
+  it('refuses to write anything when the goldens already disagree', () => {
+    // A hardcoded number is not the placeholder drift gate's business: it spells neither the
+    // current nor the target version, so only the pre-write consistency check can refuse it.
+    const root = makeRoot({
+      'tests/fixtures/json-goldens/one.expected.json':
+        '{\n  "contractVersion": "0.1.0",\n  "tool": {\n    "name": "@j1nn0/a5er-cli",\n    "version": "9.9.9"\n  }\n}\n',
+    });
+    const before = snapshot(root);
+
+    const result = prepare(root, [NEXT]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('the version surfaces already disagree');
+    expect(snapshot(root)).toEqual(before);
+  });
+
   it('accepts the largest safe integer and rejects components that would round', () => {
     const accepted = makeRoot();
     const bumped = prepare(accepted, ['9007199254740991.0.0']);
