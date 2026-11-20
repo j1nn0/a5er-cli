@@ -66,7 +66,13 @@
  * part of the comparison. `serialize` is called without a `limits` override, which is exactly the
  * documented default (an explicit `limits: undefined` is not representable under
  * `exactOptionalPropertyTypes`), so `limits.maxBytes` is `DEFAULT_LIMITS.maxBytes`.
- * part of the comparison.
+ *
+ * **The one placeholder: `tool.version`.** Each golden stores `"<package-version>"` there instead of
+ * a release-bound number, and `readGolden` expands exactly that field to the manifest version before
+ * comparing; every other field, and the shape of `tool` itself, is compared as authored. A golden
+ * therefore survives a release without an edit, and a release cannot bless a wrong version: the
+ * expansion is the manifest's value while the envelope carries `TOOL_VERSION`, so drift between the
+ * two shows up as a diff. The disk-only pass at the end of this file pins the placeholder itself.
  *
  * **Catalog supersessions, preserved not bent.** `enc-03`/`enc-05` carry decode-only catalog
  * expectations. Their full-pipeline envelopes add `V_MISSING_REQUIRED_KEY` (error: no `PageInfo`)
@@ -116,6 +122,7 @@ import { assertCodes } from './helpers/assert-codes.js';
 import { classificationOf } from './helpers/classified.js';
 import type { FixtureSpec } from './helpers/fixture-registry.js';
 import { FIXTURES } from './helpers/fixture-registry.js';
+import { PACKAGE_VERSION, VERSION_PLACEHOLDER } from './helpers/package-version.js';
 import { stage } from './helpers/stage.js';
 
 const GOLDEN_DIR = fileURLToPath(new URL('./fixtures/json-goldens/', import.meta.url));
@@ -219,8 +226,30 @@ function goldenPath(id: string): string {
   return join(GOLDEN_DIR, `${id}.expected.json`);
 }
 
+/**
+ * Reads one authored golden from disk and expands its single placeholder.
+ *
+ * `tool.version` is the only field a golden does not carry as a number: it stores
+ * `VERSION_PLACEHOLDER`, and this function asserts that — a golden that hardcoded a number fails
+ * here instead of quietly comparing against itself — before replacing it with the manifest version.
+ * Every other field, and the shape of `tool`, stays exactly as authored.
+ */
 function readGolden(id: string): JsonEnvelope {
-  return JSON.parse(readFileSync(goldenPath(id), 'utf8')) as JsonEnvelope;
+  const parsed: unknown = JSON.parse(readFileSync(goldenPath(id), 'utf8'));
+  const document = isRecord(parsed) ? parsed : undefined;
+  const tool = document === undefined ? undefined : document['tool'];
+  if (!isRecord(tool)) throw new Error(`${id}: golden has no tool object`);
+  const stored = tool['version'];
+  if (stored !== VERSION_PLACEHOLDER) {
+    throw new Error(
+      `${id}: tool.version is ${JSON.stringify(stored)}, expected ${JSON.stringify(VERSION_PLACEHOLDER)}`,
+    );
+  }
+  const golden = parsed as JsonEnvelope;
+  // `tool.version` is the literal type of `TOOL_VERSION`, so the manifest's value needs an
+  // assertion; the deep equality below is what proves the two are the same string.
+  const version = PACKAGE_VERSION as JsonEnvelope['tool']['version'];
+  return { ...golden, tool: { ...golden.tool, version } };
 }
 
 /** Replace the only volatile field: the staging directory around the fixture's file name. */
@@ -596,7 +625,7 @@ describe('json goldens — full-envelope sweep', () => {
           'completeness',
         ]);
         expect(golden.contractVersion).toBe('0.1.0');
-        expect(golden.tool).toEqual({ name: '@j1nn0/a5er-cli', version: '0.1.1' });
+        expect(golden.tool).toEqual({ name: '@j1nn0/a5er-cli', version: PACKAGE_VERSION });
         expect(golden.command).toBe('inspect');
         expect(golden.limits).toEqual({ maxBytes: 64 * 1024 * 1024, truncated: false });
 
@@ -695,10 +724,12 @@ describe('json goldens — full-envelope sweep', () => {
         }
 
         // The golden file is valid JSON and ends with a newline; formatting is not contractual.
+        // On disk it carries the version placeholder, so expanding that one field is the only
+        // difference allowed here: the file proves exactly the document the sweep compares.
         const text = readFileSync(goldenPath(spec.id), 'utf8');
         expect(text.startsWith('{')).toBe(true);
         expect(text.endsWith('\n')).toBe(true);
-        expect(JSON.parse(text)).toEqual(golden);
+        expect(JSON.parse(text.replace(VERSION_PLACEHOLDER, PACKAGE_VERSION))).toEqual(golden);
       });
     });
   }
@@ -1584,7 +1615,8 @@ describe('json goldens — counting identities, FORMAT and the byte fixtures (st
       // §12's ten fields, in construction order.
       expect(Object.keys(raw), name).toEqual([...FIELDS]);
       expect(raw['contractVersion'], name).toBe('0.1.0');
-      expect(raw['tool'], name).toEqual({ name: '@j1nn0/a5er-cli', version: '0.1.1' });
+      // The one field a golden never carries as a number: the placeholder survives a release.
+      expect(raw['tool'], name).toEqual({ name: '@j1nn0/a5er-cli', version: VERSION_PLACEHOLDER });
       expect(raw['command'], name).toBe('inspect');
       expect(raw['limits'], name).toEqual({ maxBytes: 64 * 1024 * 1024, truncated: false });
       const source = raw['source'];

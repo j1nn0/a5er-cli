@@ -82,7 +82,7 @@ git clone https://github.com/j1nn0/a5er-cli.git
 cd a5er-cli
 pnpm install --frozen-lockfile
 pnpm build
-node dist/cli.js --version                       # 0.1.1
+node dist/cli.js --version                       # prints the package version
 node dist/cli.js inspect tests/fixtures/synthetic/fmt-01-baseline.a5er
 ```
 

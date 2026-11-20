@@ -886,7 +886,7 @@ the default; a `text` renderer remains a later command-level concern.
 ```json
 {
   "contractVersion": "0.1.0",
-  "tool": { "name": "@j1nn0/a5er-cli", "version": "0.1.1" },
+  "tool": { "name": "@j1nn0/a5er-cli", "version": "…" },
   "command": "inspect",
   "status": "degraded",
   "source": {

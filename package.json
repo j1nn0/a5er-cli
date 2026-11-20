@@ -37,7 +37,9 @@
     "format:check": "oxfmt --check .",
     "pretest": "pnpm build",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "release:prepare": "node scripts/release-prepare.mjs",
+    "release:check": "node scripts/release-check.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
