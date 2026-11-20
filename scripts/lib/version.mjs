@@ -153,10 +153,10 @@ function occurrences(text, needle) {
  *
  * Line-based, not a TypeScript parser: a small state machine blanks `//` tails, block-comment spans,
  * and backtick spans (with `\\` escapes and `${ … }` expressions understood, including nesting).
- * Single- and double-quoted strings are left alone: without a backslash-newline they cannot span
- * lines, so they can never hide or fake a whole-line declaration. A regex literal containing a
- * backtick, brace or comment marker would desync the scan; these version files contain none, and a
- * desync fails closed because no declaration line matches anymore.
+ * Single- and double-quoted strings are copied through so their contents cannot start a comment
+ * or a template literal; no output line is hidden or faked by them because a plain string cannot
+ * span lines (a backslash-newline continuation or a regex literal containing a backtick, brace or
+ * comment marker would desync the scan, and these version files contain none of those).
  */
 function maskIgnored(text) {
   const out = new Array(text.length);
@@ -179,6 +179,18 @@ function maskIgnored(text) {
     const char = text[index];
     const next = text[index + 1] ?? '';
     if (!frame.template) {
+      if (char === "'" || char === '"') {
+        // A quoted string cannot start a comment or a template literal, so skip it verbatim:
+        // the declaration's own quotes stay intact for the line match below.
+        const quote = char;
+        copyTo(index + 1);
+        while (index < text.length && text[index] !== quote && text[index] !== '\n') {
+          if (text[index] === '\\') copyTo(Math.min(index + 2, text.length));
+          else copyTo(index + 1);
+        }
+        copyTo(Math.min(index + 1, text.length));
+        continue;
+      }
       if (char === '/' && next === '/') {
         const end = text.indexOf('\n', index);
         blankTo(end === -1 ? text.length : end);
@@ -241,7 +253,7 @@ function declarationLine(text, name) {
   if (found.length === 1) {
     const extra = lines.findIndex(
       (line, index) =>
-        index !== found[0].index && new RegExp(`^export const ${name}\\b`).test(line),
+        index !== found[0].index && new RegExp(`^[ \t]*export const ${name}\\b`).test(line),
     );
     if (extra !== -1) {
       throw new Error(
@@ -255,7 +267,7 @@ function declarationLine(text, name) {
       `${name} is declared ${found.length} times; exactly one plain declaration is required`,
     );
   }
-  if (new RegExp(`^export const ${name}\\b`, 'm').test(lines.join('\n'))) {
+  if (new RegExp(`^[ \t]*export const ${name}\\b`, 'm').test(lines.join('\n'))) {
     throw new Error(
       `${name} is not a plain single-quoted string literal (expected \`export const ${name} = 'X.Y.Z';\`)`,
     );
@@ -336,21 +348,33 @@ export function versionDrift(root, version) {
       const asRepositoryPath = relative(root, path).split(sep).join('/');
       const text = readFileSync(path, 'utf8');
       if (!text.includes(version)) continue;
-      // A version-carrying file still scans: only its one authorized declaration line is excused.
-      // If that line cannot be identified, nothing is excused and the file is reported as drift.
-      let excused = -1;
+      // A version-carrying file still scans: only the exact source range of its authorized version
+      // literal is excused. The rest of that line stays subject to the drift check, so a trailing
+      // comment that spells out the version is reported. If the literal cannot be located,
+      // nothing is excused and the file is reported as drift.
+      let excused = null;
       const declared = CARRYING_DECLARATIONS[asRepositoryPath];
       if (declared !== undefined) {
         try {
-          excused = declarationLine(text, declared).index + 1;
+          const found = declarationLine(text, declared);
+          const literal = `'${found.value}'`;
+          const start = text.split('\n')[found.index].indexOf(literal);
+          if (start !== -1) excused = { line: found.index + 1, start, end: start + literal.length };
         } catch {
-          excused = -1;
+          excused = null;
         }
       }
       const lines = text
         .split('\n')
         .map((line, index) => ({ line, number: index + 1 }))
-        .filter((entry) => entry.number !== excused && entry.line.includes(version))
+        .filter((entry) => {
+          if (excused === null || entry.number !== excused.line)
+            return entry.line.includes(version);
+          return (
+            entry.line.slice(0, excused.start).includes(version) ||
+            entry.line.slice(excused.end).includes(version)
+          );
+        })
         .map((entry) => entry.number);
       if (lines.length > 0) drift.push({ file: asRepositoryPath, lines });
     }

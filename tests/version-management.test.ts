@@ -334,6 +334,48 @@ describe('version management — release:check', () => {
     expect(snapshot(future)).toEqual(futureBefore);
   });
 
+  it('refuses trailing version references on the authorized declaration line', () => {
+    const staleComment = makeRoot({
+      'src/index.ts': `export const VERSION = '${CURRENT}'; // --version prints ${CURRENT}\n`,
+    });
+    const staleCommentBefore = snapshot(staleComment);
+    const blockedStale = prepare(staleComment, [NEXT]);
+    expect(blockedStale.status).toBe(1);
+    expect(blockedStale.stderr).toContain('src/index.ts');
+    expect(blockedStale.stderr).toContain('would leave it stale');
+    expect(snapshot(staleComment)).toEqual(staleCommentBefore);
+
+    const futureComment = makeRoot({
+      'src/index.ts': `export const VERSION = '${CURRENT}'; // will print ${NEXT}\n`,
+    });
+    const futureCommentBefore = snapshot(futureComment);
+    const blockedFuture = prepare(futureComment, [NEXT]);
+    expect(blockedFuture.status).toBe(1);
+    expect(blockedFuture.stderr).toContain('src/index.ts');
+    expect(blockedFuture.stderr).toContain('the version being prepared');
+    expect(snapshot(futureComment)).toEqual(futureCommentBefore);
+
+    const staleEnvelope = makeRoot({
+      'src/json/envelope.ts': `export const TOOL_VERSION = '${CURRENT}'; // reports ${CURRENT}\n\nexport const CONTRACT_VERSION = '0.1.0';\n`,
+    });
+    const staleEnvelopeBefore = snapshot(staleEnvelope);
+    const blockedEnvelope = prepare(staleEnvelope, [NEXT]);
+    expect(blockedEnvelope.status).toBe(1);
+    expect(blockedEnvelope.stderr).toContain('src/json/envelope.ts');
+    expect(blockedEnvelope.stderr).toContain('would leave it stale');
+    expect(snapshot(staleEnvelope)).toEqual(staleEnvelopeBefore);
+
+    const futureEnvelope = makeRoot({
+      'src/json/envelope.ts': `export const TOOL_VERSION = '${CURRENT}'; // will report ${NEXT}\n\nexport const CONTRACT_VERSION = '0.1.0';\n`,
+    });
+    const futureEnvelopeBefore = snapshot(futureEnvelope);
+    const blockedFutureEnvelope = prepare(futureEnvelope, [NEXT]);
+    expect(blockedFutureEnvelope.status).toBe(1);
+    expect(blockedFutureEnvelope.stderr).toContain('src/json/envelope.ts');
+    expect(blockedFutureEnvelope.stderr).toContain('the version being prepared');
+    expect(snapshot(futureEnvelope)).toEqual(futureEnvelopeBefore);
+  });
+
   it('ignores declaration-like text inside template literals', () => {
     const shadowed = makeRoot({
       'src/index.ts': `const doc = \`\nexport const VERSION = '9.9.9';\n\`;\nexport const VERSION = '${CURRENT}' as const;\n`,
@@ -388,6 +430,30 @@ describe('version management — release:check', () => {
     expect(fileOf(nestedRoot, 'src/index.ts')).toBe(
       nested.replace(`export const VERSION = '${CURRENT}';`, `export const VERSION = '${NEXT}';`),
     );
+  });
+
+  it('ignores a backtick inside a quoted string when masking declarations', () => {
+    // The stray backtick must not flip the scanner into a template literal: the unsupported
+    // declaration stays visible and the declaration-looking template stays masked.
+    const root = makeRoot({
+      'src/index.ts': `const s = 'it\`s';\nexport const VERSION = '8.8.8' as const;\nconst doc = \`\nexport const VERSION = '9.9.9';\n\`;\n`,
+    });
+    const before = snapshot(root);
+    const result = prepare(root, [NEXT]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('not a plain single-quoted string literal');
+    expect(snapshot(root)).toEqual(before);
+  });
+
+  it('rejects an indented duplicate declaration', () => {
+    const root = makeRoot({
+      'src/index.ts': `export const VERSION = '${CURRENT}';\n  export const VERSION = '9.9.9' as const;\n`,
+    });
+    const before = snapshot(root);
+    const result = prepare(root, [NEXT]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('VERSION has an additional non-plain declaration on line 2');
+    expect(snapshot(root)).toEqual(before);
   });
 
   it('prepares a bump once, reports it, and stays idempotent', () => {
