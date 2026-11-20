@@ -76,6 +76,31 @@ Top-level keys: `contractVersion`, `tool`, `command`, `status`, `source`, `limit
 
 Answer only from what the envelope parsed, and label anything in `unsupported` as present in the file but not interpreted.
 
+## List tables and views
+
+When the request is "what tables and views are in this file?", keep the run block above, put `a5er inspect "$file"` on its subcommand line and replace its `node -e` command with this one. The first three lines are the ones already there; the rest prints one row per `schema.objects` entry, in array order: array index, `sectionIndex` (the 1-based section ordinal), `kind`, `pname`, `lname`, column facts.
+
+```sh
+node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
+console.log(j.status,"unsupported="+j.unsupported.length,JSON.stringify(j.completeness));
+for(const d of j.diagnostics)console.log(d.severity,d.code,d.span?"line "+d.span.startLine:"");
+if(j.schema===null)console.log("no listing: status="+j.status);
+else{const nm=(v,d)=>v?v.value:d,o=j.schema.objects;
+for(const[i,x]of o.entries()){const e=x.effectiveColumns;let c="no columns member";
+if(x.kind==="entity")c=e.status==="partial"?"partial "+e.reason+" declared="+e.declared.length+" composed withheld":
+"declared="+e.declared.length+" columns="+e.columns.length;
+else if(x.kind==="view")c="columns "+e.status+" ("+e.reason+")";
+console.log([i,x.sectionIndex,x.kind,nm(x.pname,"(no PName)"),nm(x.lname,"(none)"),c].join(" | "));}
+const s=o.filter(x=>x.kind==="subtype").length;
+console.log("objects="+o.length+" subtypes="+s+(s?" membership=unsupported":""));}' "$tmp/out.json"
+```
+
+- A `null` name prints `(no PName)` or `(none)`, never `0` or an empty string; an object with no `PName` is still a row, and two objects with the same `pname` stay two rows in array order.
+- `entity` shows `declared` beside `columns`; with `partial` the composition is withheld, so the row prints its reason and no effective count. `view` shows `status` and `reason` text and has no `columns` member, so no count can appear. `subtype` has neither member: its row says `no columns member`, and the summary counts subtypes, whose `membership` is unsupported.
+- The `status`, `unsupported`, `completeness` and diagnostic lines are the ones items 1-3 describe: report them there. A `failed` envelope (`schema` is `null`) prints `no listing` and no row (item 1).
+- `degraded` still lists, but name each `warning` and `error` code and treat values at an affected `span` as suspect (item 1). A view's `V_VIEW_COLUMNS_UNKNOWN` is expected (item 4), and `subtype-membership` in `unsupported` means no member list exists (item 2).
+- Names are printed because the listing is the answer. The temp directory and `trap` still apply: show the rows, never the envelope.
+
 ## Confidentiality
 
 ER diagrams are confidential, and the envelope echoes names, comments and raw text from the file. Keep envelopes in a temp directory outside any repository, removed when the command ends (the `trap` above). Report counts, kinds, diagnostic codes and line numbers, and quote an identifier only when the user's question needs it. Keep real `.a5er` content and envelopes out of commits, issues and external services.
