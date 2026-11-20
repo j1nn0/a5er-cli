@@ -12,14 +12,16 @@
  * current manifest version at comparison time and compares everything else as authored. A golden
  * therefore never has to be edited for a release, and a release can never bless a wrong version.
  *
- * **Nothing here runs git, npm or a registry.** `release:prepare` rewrites the three declarations and
- * leaves version control to a human; `release:check` is read-only apart from the lockfile proof,
- * which pnpm performs with `--frozen-lockfile` and therefore refuses to write.
+ * **Nothing here runs git, npm, pnpm or a registry.** `release:prepare` rewrites the three
+ * declarations and leaves version control to a human; `release:check` is read-only — it reads the
+ * manifest, the two declarations, the goldens and `pnpm-lock.yaml` and writes nothing. The lockfile
+ * is compared by parsing it, not by shelling out to pnpm: a subprocess depends on the runner's store
+ * and platform, which broke the Windows CI job, while the specifier comparison a manifest edit can
+ * break is a plain text comparison.
  */
 
-import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** Repository root, resolved from this module so a script works from any working directory. */
@@ -40,6 +42,7 @@ export const MANIFEST = 'package.json';
 export const LIBRARY_VERSION_FILE = 'src/index.ts';
 export const ENVELOPE_FILE = 'src/json/envelope.ts';
 export const GOLDEN_DIR = 'tests/fixtures/json-goldens';
+export const LOCKFILE = 'pnpm-lock.yaml';
 
 /** The two source files allowed (indeed required) to carry the package version. */
 const VERSION_CARRYING_SOURCES = new Set([LIBRARY_VERSION_FILE, ENVELOPE_FILE]);
@@ -80,10 +83,15 @@ export function manifest(root) {
   return parsed;
 }
 
-export function manifestVersion(root) {
-  const version = manifest(root).version;
+/** The manifest's `version` string, or a throw. */
+function versionOf(document) {
+  const version = document.version;
   if (typeof version !== 'string') throw new Error('package.json has no string version');
   return version;
+}
+
+export function manifestVersion(root) {
+  return versionOf(manifest(root));
 }
 
 function occurrences(text, needle) {
@@ -152,9 +160,11 @@ function walk(directory, out) {
 /** Source and test files that still spell out the version, outside the two that must. */
 export function versionDrift(root, version) {
   const drift = [];
-  for (const relative of DRIFT_SCAN_ROOTS) {
-    for (const path of walk(join(root, relative), [])) {
-      const asRepositoryPath = path.slice(root.length);
+  for (const directory of DRIFT_SCAN_ROOTS) {
+    for (const path of walk(join(root, directory), [])) {
+      // Normalised to repository form: `relative` yields backslashes on Windows and the allowlist
+      // above is written with forward slashes.
+      const asRepositoryPath = relative(root, path).split(sep).join('/');
       if (VERSION_CARRYING_SOURCES.has(asRepositoryPath)) continue;
       const text = readFileSync(path, 'utf8');
       if (!text.includes(version)) continue;
@@ -170,24 +180,176 @@ export function versionDrift(root, version) {
 }
 
 /**
- * pnpm owns lockfile consistency: `--frozen-lockfile` makes a disagreement an error instead of a
- * silent rewrite, and `--lockfile-only` keeps `node_modules` out of it. The project version is not
- * recorded in the lockfile, so a release must leave it untouched, which this also proves.
+ * The lockfile as the one thing a release can desync: the recorded specifiers of the root importer.
+ *
+ * `pnpm-lock.yaml` is machine-written and shallow at the top — `importers:` → `.` → a dependency
+ * section → `<name>:` → `specifier:`/`version:` — so this reads exactly that shape with a line
+ * scanner and throws on anything it does not recognise instead of guessing. Nothing else in the file
+ * is interpreted (resolutions, snapshots, peer sets); those are pnpm's business at install time.
+ *
+ * Comparing `specifier` values with the manifest is the part of `pnpm install --frozen-lockfile` that
+ * a manifest edit can break. Doing it in Node rather than through a subprocess keeps the check
+ * read-only, network-free and identical on Windows, macOS and Linux: an `--offline` install depends
+ * on the runner's store and failed on fresh Windows runners.
  */
-export function lockfileProblems(root) {
-  try {
-    execFileSync('pnpm', ['install', '--lockfile-only', '--frozen-lockfile', '--offline'], {
-      cwd: root,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return [];
-  } catch (error) {
-    const detail = `${error.stdout ?? ''}${error.stderr ?? ''}`.trim();
-    return [
-      `pnpm install --lockfile-only --frozen-lockfile --offline failed (run \`pnpm install\` first): ${detail}`,
-    ];
+
+/** Dependency sections pnpm records for the root importer. */
+const RECORDED_SECTIONS = ['dependencies', 'devDependencies', 'optionalDependencies'];
+
+/** One line of the lockfile: 1-based number, indentation width, trimmed text. */
+function indentedLines(text) {
+  return text.split(/\r?\n/).map((raw, index) => {
+    const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
+    const number = index + 1;
+    if (/^[ ]*\t/.test(line)) throw new Error(`line ${number}: tab indentation is not YAML`);
+    return { number, indent: line.length - line.trimStart().length, text: line.trim() };
+  });
+}
+
+/** A YAML scalar as pnpm writes it: plain, single-quoted or double-quoted. */
+function scalar(text) {
+  if (text.length >= 2 && text.startsWith("'") && text.endsWith("'")) {
+    return text.slice(1, -1).replaceAll("''", "'");
   }
+  if (text.length >= 2 && text.startsWith('"') && text.endsWith('"')) {
+    return text.slice(1, -1).replaceAll('\\"', '"').replaceAll('\\\\', '\\');
+  }
+  return text;
+}
+
+/** `key:` or `key: value`; a mapping key yields `value: null`. */
+function entry(text, number) {
+  const colon = text.indexOf(':');
+  if (colon <= 0) throw new Error(`line ${number}: expected "key: value"`);
+  const key = scalar(text.slice(0, colon).trim());
+  const rest = text.slice(colon + 1).trim();
+  return { key, value: rest === '' ? null : rest };
+}
+
+/** Rejects a mapping written inline, because only `{}` is understood. */
+function requireBlock(parsed, number) {
+  if (parsed.value !== null && parsed.value !== '{}') {
+    throw new Error(`line ${number}: ${parsed.key} must be a block mapping`);
+  }
+  return parsed.value === null;
+}
+
+/** `importers` → `.` → sections → entries → fields, as nested plain objects. */
+function lockfileImporter(text) {
+  const significant = indentedLines(text).filter(
+    (line) => line.text !== '' && !line.text.startsWith('#'),
+  );
+  const importersAt = significant.findIndex(
+    (line) => line.indent === 0 && line.text === 'importers:',
+  );
+  if (importersAt === -1) throw new Error('no top-level "importers:" block');
+
+  const block = [];
+  for (let index = importersAt + 1; index < significant.length; index += 1) {
+    if (significant[index].indent === 0) break;
+    block.push(significant[index]);
+  }
+  if (block.length === 0) throw new Error('the "importers:" block is empty');
+
+  const importerIndent = Math.min(...block.map((line) => line.indent));
+  const rootAt = block.findIndex(
+    (line) => line.indent === importerIndent && entry(line.text, line.number).key === '.',
+  );
+  if (rootAt === -1) throw new Error('no "." importer');
+  requireBlock(entry(block[rootAt].text, block[rootAt].number), block[rootAt].number);
+
+  const sections = {};
+  let index = rootAt + 1;
+  while (index < block.length && block[index].indent > importerIndent) {
+    const section = block[index];
+    const sectionEntry = entry(section.text, section.number);
+    const sectionHasChildren = requireBlock(sectionEntry, section.number);
+    const names = {};
+    sections[sectionEntry.key] = names;
+    index += 1;
+    if (!sectionHasChildren) continue;
+    while (index < block.length && block[index].indent > section.indent) {
+      const name = block[index];
+      const nameEntry = entry(name.text, name.number);
+      const nameHasChildren = requireBlock(nameEntry, name.number);
+      const fields = {};
+      names[nameEntry.key] = fields;
+      index += 1;
+      if (!nameHasChildren) continue;
+      while (index < block.length && block[index].indent > name.indent) {
+        const field = entry(block[index].text, block[index].number);
+        if (field.value === null) {
+          throw new Error(`line ${block[index].number}: ${field.key} has no value`);
+        }
+        fields[field.key] = scalar(field.value);
+        index += 1;
+      }
+    }
+  }
+  return sections;
+}
+
+/** Recorded specifiers that disagree with the manifest, or one reason the lockfile could not be read. */
+export function lockfileProblems(root, document) {
+  let text;
+  try {
+    text = read(root, LOCKFILE);
+  } catch (error) {
+    return [`${LOCKFILE} is unreadable (${error.code ?? error.message}); run \`pnpm install\``];
+  }
+  let importer;
+  try {
+    importer = lockfileImporter(text);
+  } catch (error) {
+    return [`${LOCKFILE} is not a lockfile this check understands: ${error.message}`];
+  }
+
+  // Peer dependencies are compared only when the lockfile records them: pnpm resolves a package's
+  // peers per package, so a root importer often has no `peerDependencies` block to compare with.
+  const sections = new Set(RECORDED_SECTIONS);
+  for (const name of Object.keys(importer)) {
+    if (name.endsWith('Dependencies')) sections.add(name);
+  }
+
+  const problems = [];
+  for (const section of [...sections].sort()) {
+    const declared = document[section];
+    if (
+      declared !== undefined &&
+      (typeof declared !== 'object' || declared === null || Array.isArray(declared))
+    ) {
+      problems.push(`package.json ${section} is not an object`);
+      continue;
+    }
+    const expected = declared ?? {};
+    const recorded = importer[section] ?? {};
+    for (const name of Object.keys(recorded).sort()) {
+      const specifier = recorded[name]?.specifier;
+      if (specifier === undefined) {
+        problems.push(`${LOCKFILE}: ${section}.${name} records no specifier; run \`pnpm install\``);
+        continue;
+      }
+      if (!Object.hasOwn(expected, name)) {
+        problems.push(
+          `${LOCKFILE}: ${section}.${name} is recorded but package.json does not declare it; run \`pnpm install\``,
+        );
+        continue;
+      }
+      if (specifier !== expected[name]) {
+        problems.push(
+          `${LOCKFILE}: ${section}.${name} records ${JSON.stringify(specifier)}, package.json declares ${JSON.stringify(expected[name])}; run \`pnpm install\``,
+        );
+      }
+    }
+    for (const name of Object.keys(expected).sort()) {
+      if (!Object.hasOwn(recorded, name)) {
+        problems.push(
+          `${LOCKFILE}: ${section}.${name} is declared but not recorded; run \`pnpm install\``,
+        );
+      }
+    }
+  }
+  return problems;
 }
 
 /**
@@ -198,7 +360,8 @@ export function consistencyReport(root) {
   const problems = [];
   const facts = {};
 
-  facts.package = manifestVersion(root);
+  const document = manifest(root);
+  facts.package = versionOf(document);
   if (parseVersion(facts.package) === null) {
     problems.push(`package.json version is not a stable X.Y.Z: ${JSON.stringify(facts.package)}`);
   }
@@ -259,7 +422,7 @@ export function consistencyReport(root) {
     problems.push(`${file}: hardcodes the package version on line(s) ${lines.join(', ')}`);
   }
 
-  facts.lockfile = lockfileProblems(root);
+  facts.lockfile = lockfileProblems(root, document);
   problems.push(...facts.lockfile);
 
   return { facts, problems };
