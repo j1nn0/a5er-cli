@@ -277,7 +277,6 @@ jobs:
               echo "confirmed $PKG after ${ATTEMPTS} attempt(s): registry integrity matches the inspected tarball"
               echo "expected dist.integrity: $TARBALL_SRI"
               echo "observed dist.integrity: $OBSERVED_SRI"
-              npm view "$PKG" --registry="$REGISTRY" "$SCOPE_REGISTRY"
               rm -rf "$RUNNER_TEMP/publish-candidate"
               exit 0
             fi
@@ -314,7 +313,7 @@ jobs:
             echo "| expected dist.integrity | \`${TARBALL_SRI}\` |"
             echo "| observed | E404 from ${REGISTRY} on all ${ATTEMPTS} attempts over ${WAIT_BUDGET_SECONDS}s |"
             echo ""
-            echo "This run is **not** a verified integrity match. The GitHub Release is created because the publish itself succeeded."
+            echo "GitHub Release creation may proceed because npm publish succeeded; registry integrity remains unconfirmed."
             echo ""
             echo "Follow-up: \`npm view ${PKG} dist.integrity\` must return the expected value above."
           } >> "$SUMMARY_FILE"
