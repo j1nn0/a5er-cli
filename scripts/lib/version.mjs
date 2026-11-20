@@ -47,8 +47,11 @@ export const LIBRARY_VERSION_FILE = 'src/index.ts';
 export const ENVELOPE_FILE = 'src/json/envelope.ts';
 export const GOLDEN_DIR = 'tests/fixtures/json-goldens';
 
-/** The two source files allowed (indeed required) to carry the package version. */
-const VERSION_CARRYING_SOURCES = new Set([LIBRARY_VERSION_FILE, ENVELOPE_FILE]);
+/** The one declaration each version-carrying file is allowed to spell the version in. */
+const CARRYING_DECLARATIONS = {
+  [LIBRARY_VERSION_FILE]: 'VERSION',
+  [ENVELOPE_FILE]: 'TOOL_VERSION',
+};
 
 /** Code that must never hardcode the package version: a bump would leave it stale. */
 const DRIFT_SCAN_ROOTS = ['src', 'tests'];
@@ -146,59 +149,107 @@ function occurrences(text, needle) {
 }
 
 /**
- * `text` with every comment blanked out, one output line per input line.
+ * `text` with comments and template literals blanked to spaces, newlines kept.
  *
- * Line-based, not a TypeScript parser: it tracks block-comment state across lines and drops `//`
- * tails. It does not track string literals, which is safe here because the only lines read back are
- * `export const NAME = '…';` declarations, and such a line cannot contain a comment marker.
+ * Line-based, not a TypeScript parser: a small state machine blanks `//` tails, block-comment spans,
+ * and backtick spans (with `\\` escapes and `${ … }` expressions understood, including nesting).
+ * Single- and double-quoted strings are left alone: without a backslash-newline they cannot span
+ * lines, so they can never hide or fake a whole-line declaration. A regex literal containing a
+ * backtick, brace or comment marker would desync the scan; these version files contain none, and a
+ * desync fails closed because no declaration line matches anymore.
  */
-function stripComments(text) {
-  const out = [];
-  let inBlock = false;
-  for (const line of text.split('\n')) {
-    let code = '';
-    let index = 0;
-    while (index < line.length) {
-      if (inBlock) {
-        const end = line.indexOf('*/', index);
-        if (end === -1) {
-          index = line.length;
-          break;
-        }
-        inBlock = false;
-        index = end + 2;
-        code += ' ';
+function maskIgnored(text) {
+  const out = new Array(text.length);
+  const stack = [{ template: false, braces: 0 }];
+  let index = 0;
+  const blankTo = (to) => {
+    while (index < to) {
+      out[index] = text[index] === '\n' ? '\n' : ' ';
+      index += 1;
+    }
+  };
+  const copyTo = (to) => {
+    while (index < to) {
+      out[index] = text[index];
+      index += 1;
+    }
+  };
+  while (index < text.length) {
+    const frame = stack[stack.length - 1];
+    const char = text[index];
+    const next = text[index + 1] ?? '';
+    if (!frame.template) {
+      if (char === '/' && next === '/') {
+        const end = text.indexOf('\n', index);
+        blankTo(end === -1 ? text.length : end);
         continue;
       }
-      const blockAt = line.indexOf('/*', index);
-      const lineAt = line.indexOf('//', index);
-      if (lineAt !== -1 && (blockAt === -1 || lineAt < blockAt)) {
-        code += line.slice(index, lineAt);
-        break;
+      if (char === '/' && next === '*') {
+        const end = text.indexOf('*/', index + 2);
+        blankTo(end === -1 ? text.length : end + 2);
+        continue;
       }
-      if (blockAt === -1) {
-        code += line.slice(index);
-        break;
+      if (char === '`') {
+        blankTo(index + 1);
+        stack.push({ template: true, braces: 0 });
+        continue;
       }
-      code += line.slice(index, blockAt);
-      inBlock = true;
-      index = blockAt + 2;
+      if (frame.braces > 0) {
+        if (char === '{') frame.braces += 1;
+        else if (char === '}') {
+          frame.braces -= 1;
+          if (frame.braces === 0) {
+            copyTo(index + 1);
+            stack.pop();
+            continue;
+          }
+        }
+      }
+      copyTo(index + 1);
+      continue;
     }
-    out.push(code.replace(/[ \t]+$/, ''));
+    if (char === '\\') {
+      blankTo(index + 2);
+      continue;
+    }
+    if (char === '`') {
+      blankTo(index + 1);
+      stack.pop();
+      continue;
+    }
+    if (char === '$' && next === '{') {
+      blankTo(index + 2);
+      stack.push({ template: false, braces: 1 });
+      continue;
+    }
+    blankTo(index + 1);
   }
-  return out.join('\n');
+  return out.join('');
 }
 
 /** Where the one live `export const NAME = '…';` line sits, or a reason it is not usable. */
 function declarationLine(text, name) {
-  const lines = stripComments(text).split('\n');
+  const lines = maskIgnored(text)
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+$/, ''));
   const literal = new RegExp(`^export const ${name} = '([^']*)';$`);
   const found = [];
   for (let index = 0; index < lines.length; index += 1) {
     const match = literal.exec(lines[index]);
     if (match !== null) found.push({ index, value: match[1] });
   }
-  if (found.length === 1) return found[0];
+  if (found.length === 1) {
+    const extra = lines.findIndex(
+      (line, index) =>
+        index !== found[0].index && new RegExp(`^export const ${name}\\b`).test(line),
+    );
+    if (extra !== -1) {
+      throw new Error(
+        `${name} has an additional non-plain declaration on line ${extra + 1}; exactly one plain declaration is required`,
+      );
+    }
+    return found[0];
+  }
   if (found.length > 1) {
     throw new Error(
       `${name} is declared ${found.length} times; exactly one plain declaration is required`,
@@ -210,7 +261,9 @@ function declarationLine(text, name) {
     );
   }
   if (new RegExp(`\\b${name}\\b`).test(text)) {
-    throw new Error(`${name} is only mentioned inside a comment; a live declaration is required`);
+    throw new Error(
+      `${name} is only mentioned inside a comment or string; a live declaration is required`,
+    );
   }
   throw new Error(`${name} is not declared`);
 }
@@ -273,7 +326,7 @@ function walk(directory, out) {
   return out;
 }
 
-/** Source and test files that still spell out the version, outside the two that must. */
+/** Source and test files that still spell out the version, outside the two authorized declarations. */
 export function versionDrift(root, version) {
   const drift = [];
   for (const directory of DRIFT_SCAN_ROOTS) {
@@ -281,15 +334,25 @@ export function versionDrift(root, version) {
       // Normalised to repository form: `relative` yields backslashes on Windows and the allowlist
       // above is written with forward slashes.
       const asRepositoryPath = relative(root, path).split(sep).join('/');
-      if (VERSION_CARRYING_SOURCES.has(asRepositoryPath)) continue;
       const text = readFileSync(path, 'utf8');
       if (!text.includes(version)) continue;
+      // A version-carrying file still scans: only its one authorized declaration line is excused.
+      // If that line cannot be identified, nothing is excused and the file is reported as drift.
+      let excused = -1;
+      const declared = CARRYING_DECLARATIONS[asRepositoryPath];
+      if (declared !== undefined) {
+        try {
+          excused = declarationLine(text, declared).index + 1;
+        } catch {
+          excused = -1;
+        }
+      }
       const lines = text
         .split('\n')
         .map((line, index) => ({ line, number: index + 1 }))
-        .filter((entry) => entry.line.includes(version))
+        .filter((entry) => entry.number !== excused && entry.line.includes(version))
         .map((entry) => entry.number);
-      drift.push({ file: asRepositoryPath, lines });
+      if (lines.length > 0) drift.push({ file: asRepositoryPath, lines });
     }
   }
   return drift;

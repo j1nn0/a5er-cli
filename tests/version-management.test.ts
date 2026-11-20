@@ -202,30 +202,33 @@ describe('version management — release:check', () => {
   });
 
   it('accepts the largest safe integer and rejects components that would round', () => {
+    // Boundary versions are constructed, never spelled out: this file is scanned for hardcoded
+    // versions, so a literal large version here would block preparing exactly that version.
+    const safeTop = `${Number.MAX_SAFE_INTEGER}.0.0`;
+    const justOver = (offset: bigint): string => `${BigInt(Number.MAX_SAFE_INTEGER) + offset}.0.0`;
     const accepted = makeRoot();
-    const bumped = prepare(accepted, ['9007199254740991.0.0']);
+    const bumped = prepare(accepted, [safeTop]);
     expect(bumped.status).toBe(0);
-    expect(versionIn(accepted)).toBe('9007199254740991.0.0');
+    expect(versionIn(accepted)).toBe(safeTop);
 
     const rejected = makeRoot();
     const rejectedBefore = snapshot(rejected);
-    for (const target of ['9007199254740992.0.0', '9007199254740993.0.0']) {
+    for (const target of [justOver(1n), justOver(2n)]) {
       const result = prepare(rejected, [target]);
       expect(result.status).toBe(1);
       expect(result.stderr).toContain('safe integer');
+      expect(snapshot(rejected)).toEqual(rejectedBefore);
     }
-    expect(snapshot(rejected)).toEqual(rejectedBefore);
 
-    // 9007199254740993 is the same double as …992, so a numeric comparison alone would read it as an
-    // upgrade from the largest safe integer; the range check refuses it before any comparison.
+    // 2^53 + 1 has the same double as 2^53, so a numeric comparison alone would read it as
+    // an upgrade from the largest safe integer; the range check refuses it before any comparison.
     const atBoundary = makeRoot({
-      'package.json': '{\n  "name": "@j1nn0/a5er-cli",\n  "version": "9007199254740991.0.0"\n}\n',
-      'src/index.ts': "export const VERSION = '9007199254740991.0.0';\n",
-      'src/json/envelope.ts':
-        "export const TOOL_VERSION = '9007199254740991.0.0';\n\nexport const CONTRACT_VERSION = '0.1.0';\n",
+      'package.json': `{\n  "name": "@j1nn0/a5er-cli",\n  "version": "${safeTop}"\n}\n`,
+      'src/index.ts': `export const VERSION = '${safeTop}';\n`,
+      'src/json/envelope.ts': `export const TOOL_VERSION = '${safeTop}';\n\nexport const CONTRACT_VERSION = '0.1.0';\n`,
     });
     const atBoundaryBefore = snapshot(atBoundary);
-    const rounded = prepare(atBoundary, ['9007199254740993.0.0']);
+    const rounded = prepare(atBoundary, [justOver(1n)]);
     expect(rounded.status).toBe(1);
     expect(rounded.stderr).toContain('safe integer');
     expect(snapshot(atBoundary)).toEqual(atBoundaryBefore);
@@ -256,7 +259,9 @@ describe('version management — release:check', () => {
     const commentedBefore = snapshot(commented);
     const commentedResult = prepare(commented, [NEXT]);
     expect(commentedResult.status).toBe(1);
-    expect(commentedResult.stderr).toContain('VERSION is only mentioned inside a comment');
+    expect(commentedResult.stderr).toContain(
+      'VERSION is only mentioned inside a comment or string',
+    );
     expect(snapshot(commented)).toEqual(commentedBefore);
 
     const duplicated = makeRoot({
@@ -294,6 +299,94 @@ describe('version management — release:check', () => {
     expect(result.status).toBe(0);
     expect(fileOf(root, 'src/index.ts')).toBe(
       `/*\nexport const VERSION = '0.0.9';\n*/\nexport const VERSION = '${NEXT}';\n`,
+    );
+  });
+
+  it('refuses a bump when a carrying file spells the version outside its declaration', () => {
+    const pinnedIndex = makeRoot({
+      'src/index.ts': `export const VERSION = '${CURRENT}';\nexport const PINNED = '${CURRENT}';\n`,
+    });
+    const pinnedIndexBefore = snapshot(pinnedIndex);
+    const blockedIndex = prepare(pinnedIndex, [NEXT]);
+    expect(blockedIndex.status).toBe(1);
+    expect(blockedIndex.stderr).toContain('src/index.ts');
+    expect(blockedIndex.stderr).toContain('would leave it stale');
+    expect(snapshot(pinnedIndex)).toEqual(pinnedIndexBefore);
+
+    const pinnedEnvelope = makeRoot({
+      'src/json/envelope.ts': `export const TOOL_VERSION = '${CURRENT}';\nexport const PINNED = '${CURRENT}';\n\nexport const CONTRACT_VERSION = '0.1.0';\n`,
+    });
+    const pinnedEnvelopeBefore = snapshot(pinnedEnvelope);
+    const blockedEnvelope = prepare(pinnedEnvelope, [NEXT]);
+    expect(blockedEnvelope.status).toBe(1);
+    expect(blockedEnvelope.stderr).toContain('src/json/envelope.ts');
+    expect(blockedEnvelope.stderr).toContain('would leave it stale');
+    expect(snapshot(pinnedEnvelope)).toEqual(pinnedEnvelopeBefore);
+
+    const future = makeRoot({
+      'src/index.ts': `export const VERSION = '${CURRENT}';\n// will become ${NEXT} after review\n`,
+    });
+    const futureBefore = snapshot(future);
+    const blockedFuture = prepare(future, [NEXT]);
+    expect(blockedFuture.status).toBe(1);
+    expect(blockedFuture.stderr).toContain('src/index.ts');
+    expect(blockedFuture.stderr).toContain('the version being prepared');
+    expect(snapshot(future)).toEqual(futureBefore);
+  });
+
+  it('ignores declaration-like text inside template literals', () => {
+    const shadowed = makeRoot({
+      'src/index.ts': `const doc = \`\nexport const VERSION = '9.9.9';\n\`;\nexport const VERSION = '${CURRENT}' as const;\n`,
+    });
+    const shadowedBefore = snapshot(shadowed);
+    const shadowedResult = prepare(shadowed, [NEXT]);
+    expect(shadowedResult.status).toBe(1);
+    expect(shadowedResult.stderr).toContain('not a plain single-quoted string literal');
+    expect(snapshot(shadowed)).toEqual(shadowedBefore);
+
+    const duplicated = makeRoot({
+      'src/index.ts': `export const VERSION = '${CURRENT}';\nexport const VERSION = '${CURRENT}' as const;\n`,
+    });
+    const duplicatedBefore = snapshot(duplicated);
+    const duplicatedResult = prepare(duplicated, [NEXT]);
+    expect(duplicatedResult.status).toBe(1);
+    expect(duplicatedResult.stderr).toContain(
+      'VERSION has an additional non-plain declaration on line 2',
+    );
+    expect(snapshot(duplicated)).toEqual(duplicatedBefore);
+  });
+
+  // An unsupported duplicate with an unrelated version escapes the drift scan (it spells neither
+  // the current nor the target version), so declaration detection itself must reject it.
+  const foreign = makeRoot({
+    'src/index.ts': `export const VERSION = '${CURRENT}';\nexport const VERSION = '9.9.9' as const;\n`,
+  });
+  const foreignBefore = snapshot(foreign);
+  const foreignResult = prepare(foreign, [NEXT]);
+  expect(foreignResult.status).toBe(1);
+  expect(foreignResult.stderr).toContain(
+    'VERSION has an additional non-plain declaration on line 2',
+  );
+  expect(snapshot(foreign)).toEqual(foreignBefore);
+
+  it('ignores a template-literal copy of the declaration and rewrites only the live line', () => {
+    const source = `const doc = \`\nexport const VERSION = '0.0.9';\n\`;\nexport const VERSION = '${CURRENT}';\n`;
+    const root = makeRoot({ 'src/index.ts': source });
+
+    const result = prepare(root, [NEXT]);
+
+    expect(result.status).toBe(0);
+    expect(fileOf(root, 'src/index.ts')).toBe(
+      `const doc = \`\nexport const VERSION = '0.0.9';\n\`;\nexport const VERSION = '${NEXT}';\n`,
+    );
+
+    const nested = `const doc = \`a\${flag ? \`b\nexport const VERSION = '9.9.9';\n\` : 'c'}d\`;\nexport const VERSION = '${CURRENT}';\n`;
+    const nestedRoot = makeRoot({ 'src/index.ts': nested });
+    const nestedResult = prepare(nestedRoot, [NEXT]);
+    expect(nestedResult.status).toBe(0);
+    // Only the live line moves; the nested template survives byte-identical.
+    expect(fileOf(nestedRoot, 'src/index.ts')).toBe(
+      nested.replace(`export const VERSION = '${CURRENT}';`, `export const VERSION = '${NEXT}';`),
     );
   });
 
