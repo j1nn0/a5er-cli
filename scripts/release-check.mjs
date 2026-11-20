@@ -2,8 +2,8 @@
 /**
  * `pnpm release:check` — read-only proof that every version surface agrees.
  *
- * Exit 0 prints the values it checked; exit 1 prints one line per disagreement. It never writes a
- * file: pnpm proves the lockfile with `--frozen-lockfile`, and everything else is a comparison.
+ * Exit 0 prints the values it checked; exit 1 prints one line per disagreement. It never writes a file
+ * and never spawns a process: every check is a comparison of files this repository already commits.
  */
 
 import {
@@ -42,7 +42,6 @@ process.stdout.write(
 process.stdout.write(
   `  hardcoded package versions in src/ and tests/ ${facts.drift === 0 ? 'none' : `${facts.drift} file(s)`}\n`,
 );
-process.stdout.write(
-  `  pnpm-lock.yaml ${facts.lockfile.length === 0 ? 'consistent with package.json' : 'inconsistent'}\n`,
-);
+// The lockfile is deliberately not reported here: `pnpm install --frozen-lockfile` is the gate that
+// proves it, and every documented gate list and CI runs that command before this one.
 report(problems);

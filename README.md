@@ -59,18 +59,20 @@ a5er --version                # also -v
 `--format json` is accepted but is the default and only format. No other command exists yet: any
 other word, such as `tables` or `export`, exits 2 with the usage text on stderr.
 
-To keep the envelope, redirect stdout only:
+To read one field without keeping the envelope, pipe stdout only:
 
 ```bash
-a5er inspect diagram.a5er > envelope.json
-node -p "JSON.parse(require('fs').readFileSync('envelope.json', 'utf8')).status"
+a5er inspect diagram.a5er | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).status"
 ```
 
-Do not merge stderr into stdout (`2>&1`): the diagnostic prose would break JSON parsing.
+Nothing is written to disk, so an envelope from a confidential diagram cannot end up in a checkout or
+a commit. Do not merge stderr into stdout (`2>&1`): the diagnostic prose would break JSON parsing.
 
 ## Output
 
-`stdout` carries exactly one JSON envelope and a final newline. `stderr` carries one line per `fatal`
+`inspect` and `validate` write exactly one JSON envelope and a final newline to `stdout`; no other
+command or option does. `--help` and `--version` print plain text to `stdout`, while a misused command
+exits 2 with the usage text on `stderr` and nothing on `stdout`. `stderr` carries one line per `fatal`
 or `error` diagnostic; `warning` and `info` findings appear only in the envelope.
 
 Every envelope has the keys `contractVersion`, `tool`, `command`, `status`, `source`, `limits`,

@@ -173,7 +173,7 @@ document, and no golden is produced by accepting whatever the parser emitted.
 | Path normalisation | Any absolute path is replaced by `<tmp>` before comparison |
 | Hash normalisation | `source.sha256` is compared, not regenerated, so fixture edits fail loudly |
 | Key order | Compared structurally (deep equal on parsed objects), not textually |
-| Volatile fields | `tool.version` compared as a semver pattern, not a literal |
+| Volatile fields | Only `tool.version`: the golden carries the literal `<package-version>`, which the test expands to the manifest version at comparison time; every other field is compared strictly |
 | Arrays | Order is significant (file order is part of the contract) except `diagnostics`, which is asserted as a per-code multiset plus span checks |
 
 **No inline Vitest snapshots.** `vitest -u` can rewrite a snapshot without a human reading the
