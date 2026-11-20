@@ -354,20 +354,20 @@ describe('version management — release:check', () => {
       'VERSION has an additional non-plain declaration on line 2',
     );
     expect(snapshot(duplicated)).toEqual(duplicatedBefore);
-  });
 
-  // An unsupported duplicate with an unrelated version escapes the drift scan (it spells neither
-  // the current nor the target version), so declaration detection itself must reject it.
-  const foreign = makeRoot({
-    'src/index.ts': `export const VERSION = '${CURRENT}';\nexport const VERSION = '9.9.9' as const;\n`,
+    // An unsupported duplicate with an unrelated version escapes the drift scan (it spells neither
+    // the current nor the target version), so declaration detection itself must reject it.
+    const foreign = makeRoot({
+      'src/index.ts': `export const VERSION = '${CURRENT}';\nexport const VERSION = '9.9.9' as const;\n`,
+    });
+    const foreignBefore = snapshot(foreign);
+    const foreignResult = prepare(foreign, [NEXT]);
+    expect(foreignResult.status).toBe(1);
+    expect(foreignResult.stderr).toContain(
+      'VERSION has an additional non-plain declaration on line 2',
+    );
+    expect(snapshot(foreign)).toEqual(foreignBefore);
   });
-  const foreignBefore = snapshot(foreign);
-  const foreignResult = prepare(foreign, [NEXT]);
-  expect(foreignResult.status).toBe(1);
-  expect(foreignResult.stderr).toContain(
-    'VERSION has an additional non-plain declaration on line 2',
-  );
-  expect(snapshot(foreign)).toEqual(foreignBefore);
 
   it('ignores a template-literal copy of the declaration and rewrites only the live line', () => {
     const source = `const doc = \`\nexport const VERSION = '0.0.9';\n\`;\nexport const VERSION = '${CURRENT}';\n`;
