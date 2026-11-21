@@ -43,7 +43,8 @@ Normative words: **must**, **must not** and **never** are requirements on the im
 | note | A text line that starts with `# ` |
 | escape set | The frozen list of code points that are never written raw to a terminal (§4.4.2) |
 | chunk | One string handed to one `write()` call; always under 262,144 UTF-16 code units (§4.10, §5.10) |
-| settle | The single, final outcome of the stdout write: accepted, closed or failed (§7.2) |
+| settle | The single, final outcome of the stdout write: accepted, closed, failed or generation-failed (§7.2). It is decided once, by the first event that determines it |
+| accepted | Node accepted every chunk (every `write()` callback succeeded). Not a delivery guarantee (§3.7) |
 
 ---
 
@@ -52,14 +53,17 @@ Normative words: **must**, **must not** and **never** are requirements on the im
 `tables` runs the same pipeline as `inspect`. It parses nothing on its own:
 
 ```
-loadSource → scanSource → classify → derivePartialSemantics      (unchanged, src/cli.ts inputFor)
-        → integrate()                 exit policy: exitPolicy.inspect            (unchanged)
-        → serialize(input, { command: 'inspect', path })   the inspect envelope, as an object (unchanged;
-                                                            tables never turns it into a string)
-        → toTablesEnvelope(inspectEnvelope)                 src/view/tables.ts   (new, pure)
-        → --format json: encodeJson(tablesEnvelope)         src/json/stream.ts   (new, bounded chunks, §5.10)
-          --format text: renderTablesText(tablesEnvelope)   src/text/tables.ts   (new, bounded chunks, §4.10)
-        → writeOutput(chunks, stderrText, streams)          src/io/stdout.ts     (new, settles once, §7.2)
+Phase A (eager, before any output; guarded, §7.2 item 10)
+  loadSource → scanSource → classify → derivePartialSemantics    (unchanged, src/cli.ts inputFor)
+        → integrate()                 exit policy: exitPolicy.inspect          (unchanged)
+Phase B (lazy, pulled chunk by chunk by the writer)
+  stdout: serialize(input, { command: 'inspect', path })   the inspect envelope, as an object
+                                                            (unchanged; tables never stringifies it)
+        → toTablesEnvelope(inspectEnvelope)                 src/view/tables.ts        (new, pure)
+        → --format json: encodeJson(tablesEnvelope)         src/json/stream.ts        (new, §5.10)
+          --format text: renderTablesText(tablesEnvelope)   src/text/tables.ts        (new, §4.10)
+  stderr: tablesDiagnosticLines(integration)                src/text/diagnostics.ts   (new, §3.6)
+        → writeOutput({ stdoutChunks, stderrLines, … })     src/io/stdout.ts          (new, §7.2)
 ```
 
 The tables envelope is a pure function of the inspect envelope for the same bytes. Two things
@@ -67,11 +71,18 @@ follow from that. `tables` and `inspect` cannot disagree about a file, and every
 reports can be traced to a member of the inspect envelope. The CLI stays the only parser
 (AGENTS.md), and the view layer only counts and copies.
 
-`tables` never builds its whole output as one string. Both renderers produce a sequence of bounded
-chunks, and the writer sends them one at a time (§4.10, §5.10, §7.2). The in-memory inspect
-envelope is the same object that `inspect` builds, so `tables` has the same peak heap as `inspect`
-up to the end of `serialize()`. The measured limit of that stage is in §7.1, and it is recorded as
-F-4 (§11), not solved by P0.
+`tables` never builds a whole output as one string, on stdout or on stderr. Both renderers and the
+stderr line source are lazy, and the writer pulls bounded chunks from them one at a time (§4.10,
+§5.10, §7.2). Because Phase B is lazy, an exception in `serialize()`, in the projection or in a
+renderer happens inside the writer's guard, and is reported as an output-generation failure
+(§7.2), never as a stack trace.
+
+**Memory is not bounded by P0.** The in-memory inspect envelope is the same object that `inspect`
+builds, so `tables` has the same peak heap as `inspect` up to the end of `serialize()`. Inputs
+within the current read limits can exhaust the default V8 heap in this shared stage (§7.1): the
+process then aborts, outside every exit code of §3.7. This is tracked as F-4 in
+[issue #27](https://github.com/j1nn0/a5er-cli/issues/27). P0 does not fix it. P1 measures it, and
+the release decision for `tables` must address it (§11).
 
 ---
 
@@ -153,8 +164,10 @@ bytes:
 - The same argv and the same bytes give the same stdout, stderr and exit code on a terminal, in a
   pipe and in a file.
 
-This determinism is a property of a successful write only. When the stdout write fails, the bytes
-that reach the reader and the exit code also depend on when and how the failure happened (§7.2).
+This determinism is a property of a successful write only: stdout settled as **accepted** and no
+generation failure happened. When the stdout write fails, the pipe is closed, or output generation
+fails, the bytes that reach the reader and the exit code also depend on when and how that happened
+(§7.2). Even an **accepted** write is accepted by Node, not proven delivered (§3.7).
 
 ### 3.4 Help and usage (exact proposed text)
 
@@ -190,8 +203,10 @@ Exit codes:
   1   The file could not be read into a schema (fatal diagnostic)
   2   Command-line misuse; nothing is read, and stdout stays empty
   3   validate found an error-severity finding
+  70  tables failed internally while generating its output; stdout is
+      incomplete
   74  tables could not write its output (a write error other than a closed
-      pipe)
+      pipe, or stdout closed early); stdout is incomplete
 
 With --format json, stdout carries exactly one JSON envelope and nothing else.
 tables text is one table plus note lines that start with '#'. Human-readable
@@ -249,17 +264,29 @@ that does not exist (§9, item T-1).
 | | `--format text` | `--format json` |
 |---|---|---|
 | stdout | The table and notes (§4), UTF-8 without BOM, LF only, ending in `\n` | One tables envelope on one line, plus `\n` |
-| stderr | One line per `fatal` or `error` diagnostic, from the existing `renderDiagnostics()` | Same |
-| delivery | A sequence of bounded chunks, never one whole-output string (§4.10) | Same (§5.10) |
+| stderr | One line per `fatal` or `error` diagnostic, the same bytes `inspect` prints | Same |
+| delivery | Bounded chunks pulled lazily, never one whole-output string (§4.10) | Same (§5.10) |
 
-**Order (fixed).** The writer (§7.2) first writes every stdout chunk and waits until stdout
-*settles* (all accepted, `EPIPE`, or another error). Only then does it write stderr: first the
-diagnostic lines, which are always written whatever the stdout outcome; then, for a stdout error
-other than `EPIPE`, exactly one line `a5er: error: cannot write to stdout (<CODE>)`. A write
-failure therefore never drops a diagnostic line. The diagnostic lines are lost only when stderr
-itself cannot be written.
+**stderr is generated lazily for `tables`.** `tablesDiagnosticLines(integration)` in
+`src/text/diagnostics.ts` yields one line per `fatal` or `error` diagnostic, in the integration's
+own order. Each line is `a5er: <severity>: <code>: <message>` plus ` (line <startLine>)` when the
+span is not `null`, plus `\n`: the fixed table text and the same line number that the existing
+`renderDiagnostics()` writes. A test asserts that the concatenated lines equal `inspect`'s stderr
+for the same input, byte for byte (§8.5, N-2). `renderDiagnostics()` itself, and the
+`inspect`/`validate` output path, are not changed: they still build their stderr as one string.
 
-stderr carries the same diagnostic lines that `inspect` prints for the same file, byte for byte.
+**Order (fixed).** The writer (§7.2) first writes stdout until it *settles* (§7.2 table). Only then
+does it write stderr, in this order:
+
+1. the diagnostic lines, which are always written whatever the stdout outcome, so a write failure
+   never drops a diagnostic;
+2. then at most one outcome line: the stdout write error, the early close, or the output
+   generation failure (§7.2 item 7);
+3. then, only if the stderr line source itself threw, the stderr generation failure line.
+
+stderr is written in chunks of the same bound as stdout (§4.10), with the same backpressure rule
+(§7.2 item 8). Its errors are ignored. Losing stderr is the only way diagnostic lines can be lost.
+
 `warning` and `info` diagnostics never reach stderr. In text mode they are summarised in the notes,
 and in JSON mode the envelope holds the full record.
 
@@ -267,20 +294,51 @@ and in JSON mode the envelope holds the full record.
 
 | Code | `tables` |
 |---|---|
-| `0` | `status` is `ok` or `degraded`, and stdout settled as accepted or `EPIPE`. This includes `error` diagnostics and 0 rows |
-| `1` | `status` is `failed` (a fatal read), and stdout settled as accepted or `EPIPE`. The output is still written (§3.8) |
+| `0` | `status` is `ok` or `degraded`, and stdout settled as **accepted** or **closed**. This includes `error` diagnostics and 0 rows |
+| `1` | `status` is `failed` (a fatal read), and stdout settled as **accepted** or **closed**. The output is still written (§3.8) |
 | `2` | Misuse (§3.5). Nothing is read, and stdout is empty |
 | `3` | Never. Only `validate` turns an `error` diagnostic into an exit code |
 | `4` | Never. Reserved for a future `columns` selection failure (decision 9) |
-| `74` | stdout settled with an error other than `EPIPE` (§7.2). This takes precedence over `0` and `1`. When the read also failed, the `fatal` line is still on stderr, before the write-error line |
+| `70` | **Internal output-generation failure** (§7.2 table, items 9 and 10): a JavaScript exception while computing the read in Phase A, while generating stdout chunks, or while generating stderr lines. stdout may hold a prefix of the output, or nothing |
+| `74` | stdout settled as **failed**: a write error other than `EPIPE`, or a `'close'` before the output was complete (§7.2). Precedence: `74`, then `70`, then the read's `0`/`1` |
 
 Codes `0` and `1` come from `integrate(input).exitPolicy.inspect`. `ExitPolicy` and `validate/`
 are not changed, and the CLI maps `tables` to the `inspect` policy. A closed pipe (`EPIPE`) keeps
 the code from the read.
 
-The runtime itself can still end the process outside this table, for example a V8 heap
-exhaustion abort on an input that also exhausts `inspect` (§7.1, F-4). That happens before any
-stdout write, so it never leaves partial output behind.
+**Why `70` and not `74` for a generation failure.** `74` (`EX_IOERR` in `sysexits.h`) means here:
+the output was correct, but stdout refused it. A generation failure is a defect in this tool: the
+output itself could not be produced, and retrying the same I/O cannot help. Using `74` for both
+would make "fix the destination" and "report a bug" indistinguishable. `1` is already "failed
+read", and `3`/`4` have other meanings. `70` (`EX_SOFTWARE`, "internal software error") is the
+established code for this case. In both cases stdout must be treated as incomplete. (The Skill's
+recorded run block exits `70` on its own `mktemp` failure, before it runs `a5er`. That is the
+Skill's convention, not a CLI code, and §9 D-9 notes it.)
+
+**What exit `0`/`1` does and does not prove.** **accepted** means that Node accepted every chunk:
+every `write()` callback reported success. It is not a delivery guarantee. The data may still sit
+in a pipe buffer when the reader dies, and when stdout was closed before the process started,
+Node accepts the writes and the bytes go nowhere (§7.1: `>&-` exits `0`). So EOF plus exit `0` or
+`1` does **not** by itself prove that the reader holds the complete output. A JSON consumer
+should check all of the following, which detect most anomalies but are still not a delivery
+guarantee:
+
+1. the process ended normally, with exit `0` or `1` (not `2`, `70`, `74`, nor a signal);
+2. stdout ends with exactly one `\n`, and that is its only line feed (compact JSON escapes every LF
+   inside strings);
+3. the whole stream parses as exactly one JSON value, and that value is an object;
+4. `(command, contractVersion)` is a supported pair (§5.1), the keys match §5.3, `status` is one
+   of the three values, its null rule holds (§5.4 item 8), and `status: failed` goes with exit `1`
+   while `ok`/`degraded` go with exit `0`.
+
+For text, the matching check is that the output ends with `\n` and its last line is the
+completeness note or the dropped warning (§4.1). Text is for humans, and scripts use JSON.
+
+The runtime itself can still end the process outside this table. The known case is a V8 heap
+exhaustion abort on an input that also exhausts `inspect` (§2, §7.1, F-4). That happens in the
+shared `serialize()` stage, before the first stdout chunk is generated, so it does not leave
+partial output behind. It ends the process by signal (`SIGABRT`, exit status `134` in a POSIX
+shell), which a consumer must treat as a failure (check 1 above).
 
 ### 3.8 `failed` and `degraded`
 
@@ -315,7 +373,7 @@ not misuse, help or version, the following must be identical to the baseline for
 
 Outside that scope, the CLI surface changes in exactly these ways (each is listed in §3.4 or §3.5):
 
-- the help text (tables lines, the `--format` description and exit code `74`);
+- the help text (tables lines, the `--format` description and exit codes `70` and `74`);
 - the usage block in misuse messages (one more line);
 - the misuse messages listed in §3.5;
 - `quoteArg`: a misuse message that quotes an argument containing an escape-set code point that
@@ -543,6 +601,14 @@ more, in file order.
   `\u{XXXX}` but never quotes. For the current ASCII messages this changes nothing.
 - The only file-derived text in the output is the two name columns, and both are escaped (§4.4).
   Every other token is fixed vocabulary or a number.
+- **How lists are produced (bounded).** For the diagnostic groups, one pass over `diagnostics`
+  records, per `(severity, code)` key in order of first appearance, the list of diagnostic indexes
+  (numbers). Each group line is then emitted from its index list as separate pieces (§4.10): the
+  fixed `#   <severity> <code>: <message> (` prefix, one `line <n>` or `file` piece per
+  diagnostic with `, ` between them, and `)` plus `\n`. The section lists of the omitted and
+  unknown notes, and the kind counts of the unsupported note, are built the same way: from number
+  lists and counters, emitted piece by piece. No list is ever joined into one string. The order of
+  the fixed message and of the locations is exactly the one stated above.
 
 ### 4.9 Completeness and omissions
 
@@ -598,11 +664,20 @@ width is never read (§3.3).
   surrogate that follows it. This matters for more than display: Node encodes each `write()` string
   to UTF-8 separately, so a split pair would turn into two U+FFFD characters on the wire. Lone
   surrogates cannot reach a chunk boundary raw, because they are escaped (§4.4.2).
-- **Forbidden.** No `rows.join(…)`, no concatenation of the whole output, no `padEnd`/`repeat`
-  wider than the bounded widths above, and no escaped copy of a whole name.
+- **Notes are streamed too** (§4.8). A note line is emitted piece by piece: its fixed prefix, then
+  one piece per listed item (`section 7`, `, 8`, `line 31`, `, line 36`, `file`), then its closing
+  text. A note line may be hundreds of KB long (30,000 diagnostics of one code give one line of
+  about 349,000 characters), but it never exists as one string. Like every other piece, it is cut
+  into chunks at the 65,536-code-unit threshold, so a chunk boundary may fall inside a note line.
+- **stderr** follows the same rule: `tablesDiagnosticLines()` yields one short line at a time
+  (fixed text plus a line number, under 200 code units), and the writer chunks them (§7.2 item 8).
+- **Forbidden.** No `rows.join(…)`, no `locations.join(', ')`, no `sections.join(', ')`, no
+  concatenation of a whole output, note line or stderr text, no `padEnd`/`repeat` wider than the
+  bounded widths above, and no escaped copy of a whole name.
 
-Memory for the output is therefore one chunk plus the per-row width numbers, whatever the input
-size. The inspect envelope that the renderer reads is already in memory (§2).
+Memory for the output is therefore one chunk, plus the per-row width numbers and the per-group
+index lists of §4.8 (numbers, not strings), whatever the input size. The inspect envelope that the
+renderer reads is already in memory (§2).
 
 ### 4.11 Display width (frozen)
 
@@ -931,10 +1006,15 @@ export interface JsonTablesOmitted {
 but by the bounded encoder of §5.10. The package entry point (`src/index.ts`) exports only
 `VERSION` today, and it keeps doing so: none of these types become public library API.
 
-**`?: never` is type-level only.** It makes `envelope.schema` on a tables envelope, and
-`document.result` on an inspect document, a compile error once narrowed. It does not add a JSON
-member, and the encoder never writes `undefined` (§5.10 rejects it). The runtime guarantee comes
-from the construction rule in §5.3, and both are tested (§8.4).
+**`?: never` is type-level only.** It does not add a JSON member, and the encoder never writes
+`undefined` (§5.10 rejects it). TypeScript still allows *reading* the key: `envelope.schema` on a
+tables envelope compiles and has type `undefined`. What it forbids is *assigning* a value that has
+the key. A variable with `schema: JsonSchema | null` is not assignable to `JsonTablesEnvelope`,
+and under the repository's `exactOptionalPropertyTypes: true` neither is `schema: undefined`. The
+same holds for `result` on `JsonSchemaDocument`. The two arms likewise reject a `failed` value with
+a non-null `source`/`completeness` and an `ok`/`degraded` value with a `null` `result`. §8.4 tests
+exactly these assignments. Runtime absence of the keys does not follow from the types: it comes
+from the construction rule of §5.3, and the CLI JSON contract tests of §8.4 check it.
 
 ### 5.3 `schema` and `result`
 
@@ -973,8 +1053,9 @@ and the goldens already pin them.
 **Status and nulls (runtime).** `JsonEnvelope` does not tie `status` to the nulls in its type, so
 `toTablesEnvelope` checks it when it narrows into one of the two arms. `failed` requires `source`,
 `schema` and `completeness` all `null`. `ok`/`degraded` requires all three non-null. Any other
-combination is a defect: `toTablesEnvelope` throws before anything is written, and no fixture or
-generated document may reach it (§8.4).
+combination is a defect: `toTablesEnvelope` throws. It runs inside the first `next()` of the
+stdout generator (§2, Phase B), before any chunk exists, so the writer reports a generation failure
+(exit `70`, §7.2) with an empty stdout. No fixture or generated document may reach it (§8.4).
 
 **Numbers: counted versus copied.**
 
@@ -1184,42 +1265,85 @@ unknown keys (within `maxBytes` and `maxLines`) makes today's `inspect` throw
 `RangeError: Invalid string length` inside `toJsonString` (§7.1). Its envelope would exceed V8's
 maximum string length of 536,870,888 code units. A tables envelope carries the same `unsupported`
 and `diagnostics`, so it can be just as large. Tables JSON is therefore produced by a streaming
-encoder:
+encoder, `encodeJson(document: JsonTablesEnvelope): Iterable<string>` in `src/json/stream.ts`. It
+is lazy: each `next()` does a bounded amount of work.
 
-- `encodeJson(document: JsonTablesEnvelope): Iterable<string>` in `src/json/stream.ts` walks the
-  document depth-first, keys in insertion order (which is the construction order of §5.3) and
-  arrays in order. It writes `{`, `"key":`, `,`, `[` and `]` itself.
-- **Same rules as `toJsonString`.** For every value, with its key (`''` for the root, the index as
-  a string inside arrays), it calls the strict replacer of `serialize.ts` (exported for this, with
-  no behaviour change). So `undefined`, functions, symbols, `bigint` and non-finite numbers throw
-  a `TypeError`, exactly as they do today. Only plain objects (prototype `Object.prototype` or
-  `null`) and arrays are walked. Anything else, including objects with `toJSON`, throws instead of
-  being guessed; the envelope contains none.
-- **Strings** are written as `"`, then the string in slices of at most 16,384 code units, each
-  escaped as `JSON.stringify(slice).slice(1, -1)`, then `"`. Slices are cut only at code point
-  boundaries, never between a high surrogate and the low surrogate that follows it. `JSON.stringify`
-  escapes per code unit, apart from lone surrogates, and code-point-boundary slicing never changes
-  whether a surrogate is lone. So the concatenation equals `JSON.stringify` of the whole string.
-- Numbers, booleans and `null` are written with `JSON.stringify(value)`.
-- **Chunks.** Pieces go into a buffer, which is yielded once it holds at least 65,536 code units.
-  A piece is at most 6 × 16,384 + 2 code units, so every chunk is under 262,144 code units. The last
-  chunk ends with `\n`.
-- **Equivalence.** For every document that `JSON.stringify` can hold as one string,
-  `[...encodeJson(d)].join('')` must equal `JSON.stringify(d, strictReplacer) + '\n'`, the same
-  call `toJsonString` makes. This is tested on every fixture
-  and generated document (§8.4). For larger documents, the bytes are by definition the ones
-  `JSON.stringify` would produce if it had no length limit.
+**Scope.** The encoder accepts exactly the data that `serialize()` and `toTablesEnvelope()`
+produce: plain objects and arrays whose leaves are strings, finite numbers, booleans and `null`.
+For that data it guarantees byte equivalence with `JSON.stringify(document, strictReplacer)`.
+Nothing outside that scope is accepted, so nothing outside it needs to be equivalent.
 
-**Measured feasibility** (throwaway prototype outside the repository, Linux, Node v24.22.3). The
-same envelope as above (1,999,000 `unsupported` and 1,999,001 `diagnostics` records), written by
-this chunking scheme, produced 951,520,194 bytes of valid JSON in 13.8 s. The largest chunk was
-65,792 code units, the heap held 2,455 MiB after encoding, and peak RSS was 2.75 GB. Python's
-`json` module parsed the result.
+**Traversal (the same order `JSON.stringify` uses):**
+
+- **Objects:** keys in `Object.keys(value)` order. That is the JavaScript own-property order:
+  array-index keys (canonical decimal integers below 2³² − 1, such as `"0"` or `"42"`) first, in
+  ascending numeric order, then every other string key in insertion order. So `"01"` and
+  `"4294967295"` are ordinary keys. `JSON.stringify` uses the same `[[OwnPropertyKeys]]` order, so
+  the encoder never sorts and never relies on insertion order alone. In the tables envelope every
+  key is a contract name or a `details` name from the code, never file text and never numeric, but
+  the rule is stated so that equivalence does not depend on that.
+- **Arrays:** indexes `0` to `length − 1`, in order. A hole reads as `undefined`, and the strict
+  replacer rejects it, just as `JSON.stringify` with that replacer would.
+- **Replacer:** for every value, the encoder calls `strictReplacer.call(holder, key, value)`. The
+  key is `''` for the root, the index as a string inside arrays and the property key inside
+  objects, and the holder is the containing object (`{ '': document }` for the root). `undefined`,
+  functions, symbols, `bigint` and non-finite numbers therefore throw a `TypeError`, exactly as
+  today. `strictReplacer` is exported from `serialize.ts` with no behaviour change.
+
+**Explicitly rejected (a `TypeError`, which the writer reports as a generation failure, §7.2):**
+
+- an object whose prototype is not `Object.prototype` or `null`, or an array whose prototype is not
+  `Array.prototype`. This covers class instances, `Date`, `Map`, `Set`, boxed primitives and typed
+  arrays;
+- any object or array that has a `toJSON` member, own or inherited (`'toJSON' in value`), because
+  `JSON.stringify` would call it;
+- an accessor property among the `Object.keys` (`Object.getOwnPropertyDescriptor(value, key)`
+  without a `value` member), because `JSON.stringify` would run the getter.
+
+Symbol-keyed and non-enumerable properties are not in `Object.keys`, and `JSON.stringify` ignores
+them too, so they need no rule. A `Proxy` cannot be detected and is out of scope: neither
+`serialize()` nor the projection ever creates one.
+
+**Strings, including keys.** A string or a key is written as `"`, then the string in slices of at
+most 16,384 code units, each escaped as `JSON.stringify(slice).slice(1, -1)`, then `"`. A slice
+never ends on a high surrogate that is followed by a low surrogate: the cut moves back by one code
+unit. `JSON.stringify` escapes code unit by code unit, except that a surrogate is written raw when
+it is part of a pair and as `\uXXXX` when it is lone. A cut that never separates a pair cannot
+change whether any surrogate is lone, so the concatenated slices equal `JSON.stringify` of the
+whole string. Keys use the same slicing, so a long key could not build a large string either.
+
+**Other values:** numbers, booleans and `null` are written with `JSON.stringify(value)`, so `-0`
+becomes `0` as in `JSON.stringify`.
+
+**Chunks.** Pieces go into a buffer, which is yielded once it holds at least 65,536 code units. A
+piece is at most 6 × 16,384 + 2 code units, so every chunk is under 262,144 code units. The last
+chunk ends with `\n`.
+
+**Equivalence**, tested by B-5 and the encoder cases of §8.4: for every in-scope document that
+`JSON.stringify` can hold as one string, `[...encodeJson(d)].join('')` equals
+`JSON.stringify(d, strictReplacer) + '\n'`, the same call `toJsonString` makes. For larger documents,
+the bytes are by definition the ones `JSON.stringify` would produce if it had no length limit.
+`toJsonString`, `serialize()` and the `inspect`/`validate` bytes do not change.
+
+**Measured feasibility** (throwaway prototypes outside the repository, Linux, Node v24.22.3):
+
+- The large envelope above (1,999,000 `unsupported` and 1,999,001 `diagnostics` records), written
+  by this chunking scheme, produced 951,520,194 bytes of valid JSON in 13.8 s. The largest chunk
+  was 65,792 code units, the heap held 2,455 MiB after encoding, and peak RSS was 2.75 GB. Python's
+  `json` module parsed the result.
+- An encoder prototype following the rules above gave output equal to `JSON.stringify` on 10 of 10
+  edge-case documents. They covered numeric and non-index keys (the order came out as `"1"`, `"2"`,
+  `"b"`, `"01"`, `"4294967295"`, `"a"`), keys with quotes, backslashes, controls and lone
+  surrogates, a 40,001-code-unit key, a pair straddling code unit 16,384, a lone high surrogate at
+  code units 16,383 and at the end, a lone low surrogate at 16,384, a pair at code unit 65,535, and
+  `-0`/`1e21`. It rejected an accessor, `toJSON`, `Date`, `Map`, a boxed number, a class instance,
+  an array hole and an `undefined` member.
 
 **Consumer note.** A valid tables document can be larger than what a consumer can hold as one
 string. `JSON.parse(readFileSync(…, 'utf8'))` on the 951 MB output above failed in Node with
-`ERR_STRING_TOO_LONG`. Consumers that must handle the largest inputs need a streaming parser.
-P0 does not add a size option or a summary-only JSON mode.
+`ERR_STRING_TOO_LONG`. Consumers that must handle the largest inputs need a streaming parser, and
+the completeness checks of §3.7 still apply. P0 does not add a size option or a summary-only JSON
+mode.
 
 ---
 
@@ -1229,24 +1353,29 @@ P0 does not add a size option or a summary-only JSON mode.
 |---|---|---|
 | `src/json/envelope.ts` | The types of §5.2 (types only, as today) | unchanged set |
 | `src/json/serialize.ts` | Unchanged behaviour. `strictReplacer` becomes an `export` so that §5.10 reuses it | unchanged |
-| `src/json/stream.ts` (new) | `encodeJson(document: JsonTablesEnvelope): Iterable<string>`: bounded chunks (§5.10) | `serialize.ts` (`strictReplacer`), `envelope.ts` types |
+| `src/json/stream.ts` (new) | `encodeJson(document: JsonTablesEnvelope): Iterable<string>`: lazy, bounded chunks, the scope and rejections of §5.10 | `serialize.ts` (`strictReplacer`), `envelope.ts` types |
 | `src/json/index.ts` | barrel: also exports the new types and `encodeJson` | — |
 | `src/view/tables.ts` (new) | `projectTables(schema: JsonSchema): JsonTablesResult`, `toTablesEnvelope(envelope: JsonEnvelope): JsonTablesEnvelope`, and the key-list constants of §5.3. Pure, no I/O, no `node:` imports | `src/json/` types |
 | `src/view/index.ts` (new) | barrel | — |
-| `src/text/escape.ts` (new) | the escape set, the whitespace set, `renderNamePieces(value: string \| null): Iterable<string>` and `renderedNameWidth(value: string \| null): number` (§4.4.1, §4.10), `escapeText(text: string): string` (escape-set replacement only, §4.8), and `quoteArg(arg: string): string` (§3.5) | none |
+| `src/text/escape.ts` (new) | the escape set, the whitespace set, `renderNamePieces(value: string \| null): Iterable<string>` and `renderedNameWidth(value: string \| null): number` (§4.4.1, §4.10), `escapeText(text: string): string` for fixed short text only (§4.8), and `quoteArg(arg: string): string` (§3.5) | none |
 | `src/text/width.ts` (new) | `codePointWidth(cp: number): 0 \| 1 \| 2` and `displayWidth(text: string): number` with the table of §4.11 | none |
-| `src/text/chunks.ts` (new) | the chunk buffer shared by the text renderer: append pieces, yield at 65,536 code units, never split a surrogate pair | none |
-| `src/text/tables.ts` (new) | `renderTablesText(envelope: JsonTablesEnvelope): Iterable<string>`: the two passes of §4.10, the layout of §4.3 and the notes of §4.8 | `src/json/` types, `escape.ts`, `width.ts`, `chunks.ts` |
+| `src/text/chunks.ts` (new) | the chunk buffer shared by both renderers and by the stderr writer: append pieces, yield at 65,536 code units, never split a surrogate pair | none |
+| `src/text/tables.ts` (new) | `renderTablesText(envelope: JsonTablesEnvelope): Iterable<string>`: the two passes of §4.10, the layout of §4.3 and the streamed notes of §4.8 | `src/json/` types, `escape.ts`, `width.ts`, `chunks.ts` |
+| `src/text/diagnostics.ts` (new) | `tablesDiagnosticLines(integration: Integration): Iterable<string>`: one `fatal`/`error` line per `next()`, the same bytes as `renderDiagnostics()` (§3.6) | `src/validate/` types only |
 | `src/text/index.ts` (new) | barrel | — |
-| `src/io/stdout.ts` (new) | `writeOutput(chunks, stderrText, streams, readCode): Promise<number>` (§7.2). It is the only module that touches the output streams, and it takes them as parameters | `node:stream` types only |
-| `src/cli.ts` | the argv rules of §3.2, `quoteArg` in misuse messages, `tables` dispatch through `writeOutput`. `run()` for `inspect`/`validate` is unchanged | the above |
+| `src/io/stdout.ts` (new) | `writeOutput(options): Promise<0 \| 1 \| 70 \| 74>`, the state machine of §7.2. It takes the streams as parameters, so tests can pass fakes | `node:events`/`node:stream` types only |
+| `src/tables-command.ts` (new) | `runTablesCommand({ path, format, stdout, stderr, pipeline })`: Phase A under the guard of §7.2 item 10, and Phase B as lazy generators handed to `writeOutput`. `pipeline` defaults to the real stages and is the seam that R-20 uses | the above, plus the existing stages |
+| `src/cli.ts` | the argv rules of §3.2, `quoteArg` in misuse messages, and dispatch of `tables` to `runTablesCommand`. `run()` and `renderDiagnostics()` for `inspect`/`validate` are unchanged | the above |
 
-Dependencies go one way: `cli → text, view, json, io/stdout`, `text → json` (types), `view → json`
-(types). Neither `view` nor `text` imports a pipeline stage (`decode`, `syntax`, `schema`,
-`semantic`, `validate`), so they cannot parse or re-decide anything. `src/json/stream.ts` sits in
-`src/json/` because it is the JSON contract's encoder. `src/io/stdout.ts` sits in `src/io/`
-because it is a process I/O boundary, and it is separate from `cli.ts` so that tests can import it
-without running `main()`. No `package.json` dependency is added.
+Dependencies go one way: `cli → tables-command → text, view, json, io/stdout`, `text → json` and
+`validate` (types only), `view → json` (types). Neither `view` nor `text` imports a pipeline stage's
+code (`decode`, `syntax`, `schema`, `semantic`, `validate`), so they cannot parse or re-decide
+anything. `src/json/stream.ts` sits in `src/json/` because it is the JSON contract's encoder.
+`src/io/stdout.ts` sits in `src/io/` because it is a process I/O boundary. `src/tables-command.ts`
+is separate from `cli.ts` so that tests can import it without running `main()`. Decision 8 places
+new modules in `src/view/` and `src/text/` "where needed". These three files sit elsewhere for the
+reasons just given, and the re-review is asked to confirm that (§9). No `package.json` dependency
+is added.
 
 ---
 
@@ -1291,93 +1420,182 @@ Findings:
   `inspect`. It hits the heap limit, not the string limit, at the maximum input size. P0 does not
   change that stage (§11 F-4).
 
-A throwaway prototype of the §7.2 writer (64 KiB chunks, backpressure, settle once) gave the
-following results. `| head -c 100000` exited `0`, received exactly 100,000 bytes, and stderr held
-only the diagnostic line, with no trace. `| true` exited `0`. `> /dev/full` exited `74` with the
-diagnostic line followed by `a5er: error: cannot write to stdout (ENOSPC)`. A complete read
-received exactly the expected 8,388,609 bytes.
+A throwaway prototype of the §7.2 state machine, run against real pipes and against a controlled
+fake, gave the results recorded under "Feasibility" in §7.3. In particular, `>&-` (stdout closed
+before start) settled as **accepted** with exit `0` while no byte reached anyone. That is why exit
+`0` is not treated as proof of delivery (§3.7).
 
 ### 7.2 Output writer policy (`tables` only)
 
-`writeOutput(chunks, stderrText, streams, readCode)` writes one invocation's output and returns the
-exit code. Its outcome is **settled exactly once**.
+```ts
+writeOutput(options: {
+  stdoutChunks: () => Iterable<string>;   // lazy: Phase B of §2 runs inside next()
+  stderrLines: () => Iterable<string>;    // tablesDiagnosticLines(integration), lazy
+  stdout: NodeJS.WritableStream;          // process.stdout in the CLI, a fake in tests
+  stderr: NodeJS.WritableStream;
+  readCode: 0 | 1;                        // integrate(input).exitPolicy.inspect
+}): Promise<0 | 1 | 70 | 74>
+```
 
-1. **Before writing.** The CLI sets `process.exitCode = readCode` (`0` or `1`). `process.exit()`
-   is never called. On POSIX, pipe writes are asynchronous (Node docs, "A note on process I/O"),
-   and `process.exit()` could cut off queued output.
-2. **Listeners.** An `'error'` listener goes on `stdout` and on `stderr` before the first write.
-   Both stay attached until the process exits, so a late or repeated `'error'` event is never
-   unhandled and never produces a stack trace.
-3. **Recording a stdout failure.** `record(error)` stores the first stdout error and ignores every
-   later one. It is fed by the `'error'` event, by the error argument of every `write()` callback,
-   and by a `try`/`catch` around every `write()` call, in case of a synchronous throw. One failure
-   that is reported both by a callback and by an event is therefore recorded once, and reported
-   once.
-4. **Writing chunks.** The chunks are written in order, one `write(chunk, callback)` at a time.
-   The loop stops as soon as a failure is recorded. When `write()` returns `false`, the writer
-   waits for `'drain'`, for a recorded failure, or for `'close'` (a `'close'` without an error
-   counts as a closed pipe, like `EPIPE`), whichever comes first. This is the backpressure rule. It
-   bounds the queued output to about one chunk beyond the stream's high-water mark.
-5. **Settling stdout.** After the last chunk, the writer waits for the callback of every write it
-   made. The outcome is then fixed, once: **accepted** (every callback succeeded), **closed**
-   (`EPIPE`, or `'close'` without an error), or **failed** with `error.code`. Events that arrive
-   after this point are ignored by the listeners of item 2.
-6. **Then stderr, in fixed order.** First `stderrText`, the `renderDiagnostics()` lines (§3.6). It
-   is written whatever the stdout outcome, so a stdout failure never drops a diagnostic. Then, only
-   for **failed**, one line: `a5er: error: cannot write to stdout (<CODE>)`, where `<CODE>` is
-   `error.code` when it is a string of `[A-Z0-9_]+` and `UNKNOWN` otherwise. There is no stack, no
-   path and no system message text.
-7. **stderr errors** of any kind are ignored, as before: there is nowhere left to report them. They
-   never change the exit code. They are the one case in which diagnostic lines can be lost.
-8. **Exit code.** **failed** gives `74`, and it overrides `readCode`. **accepted** and **closed**
-   keep `readCode` (§3.7). For **closed** nothing extra is printed: `a5er tables f | head -n 3`
-   exits `0` for a readable file and `1` for a failed read, the same as without `head`.
-9. **Same rules for every chunk and both formats.** Text and JSON go through the same writer. A
-   chunk is just the unit of `write()`; none of the rules depend on how many chunks there are.
+The stdout outcome is a small state machine. It starts in **writing** and moves to exactly one
+terminal state, once. The first event that determines a terminal state wins. Every later event
+(callback, `'error'`, `'close'`, `'drain'`) is ignored, and it never changes the outcome, the
+stderr text or the exit code.
 
-**Partial output.** If stdout fails, or the reader closes it, after some chunks were accepted, the
-reader may hold any prefix of the complete output. It may end inside a row, inside a JSON token,
-or even inside a UTF-8 sequence that the OS accepted only partly. The writer adds no completion
-marker. **A complete output is identified by the exit code, never by its content.** A process that
-read stdout to EOF and got exit `0` or `1` without closing the pipe early has the whole document.
-Exit `74` means stdout is incomplete and must be discarded, even when the prefix happens to look
-complete. A JSON prefix that lacks only the final `\n` parses as valid JSON, so parseability proves
-nothing. A reader that closed the pipe early knows it stopped reading.
+| Terminal state | Entered when (first of these, in arrival order) | stderr outcome line | Exit |
+|---|---|---|---|
+| **accepted** | The chunk iterator returned `done: true`, **and** every `write()` callback has been called without an error, while still in **writing** | none | read code |
+| **closed** | An `EPIPE` arrives from a `write()` callback, an `'error'` event or a synchronous `write()` throw. Or a `'close'` arrives while `stdout.errored` is an `EPIPE` error | none | read code |
+| **failed** (error) | Any other error arrives the same ways: from a callback, an `'error'` event, a synchronous throw, or a `'close'` while `stdout.errored` holds that error | `a5er: error: cannot write to stdout (<CODE>)` | `74` |
+| **failed** (early close) | A `'close'` arrives while `stdout.errored` is `null`, **before** accepted: the iterator is not exhausted, or a callback is still outstanding | `a5er: error: stdout closed before the output was complete` | `74` |
+| **generation-failed** | Creating the chunk iterator, or one of its `next()` calls, throws | `a5er: error: internal error while generating output; the output is incomplete` | `70` |
 
-Only an `EPIPE` (or a `'close'` without an error) on stdout counts as "reader closed". If a
-platform reports a closed pipe with a different code, the tests in §7.3 fail on that platform. The
-fix is then a reviewed change to this list, never a wider catch-all.
+`<CODE>` is `error.code` when it is a string matching `[A-Z0-9_]+`, and `UNKNOWN` otherwise.
+`stdout.errored` is the public `Writable.errored` property (Node 18 and later), read when `'close'`
+arrives. It classifies a stream that was destroyed with an error, such as a generic `Writable` or a
+test fake. It is **not** what classifies real errors on `process.stdout`. Measured on Linux with
+Node v24.22.3, for both a pipe whose reader left (`EPIPE`) and `/dev/full` (`ENOSPC`), the events
+arrive as: every pending write callback with the error, then one `'error'` event, then `'close'`,
+and at `'close'` `process.stdout.errored` is still `null` (the `hadError` argument is
+`undefined`). The real error is therefore always recorded from the callback before `'close'`
+arrives, and the `'close'` is ignored. If a platform delivered `'close'` first, the writer would
+report an early close (`74`) instead of **closed**. R-1 and R-1j would then fail with exit `74`,
+which makes that platform difference visible instead of hiding it.
 
-`inspect` and `validate` keep their current single synchronous `write()` path and are not routed
-through `writeOutput` (§3.10, F-1).
+Rules:
+
+1. **Before writing.** The CLI sets `process.exitCode = readCode`. `process.exit()` is never
+   called: on POSIX, pipe writes are asynchronous (Node docs, "A note on process I/O"), and
+   `process.exit()` could cut off output that is still queued. When `writeOutput` resolves, the CLI
+   sets `process.exitCode` to its result.
+2. **Listeners.** `'error'` and `'close'` listeners go on `stdout` and on `stderr` before the first
+   write, and stay attached until the process exits. A late or repeated event is therefore never
+   unhandled and never prints a stack trace.
+3. **Pulling and writing.** While in **writing**: call `next()` (guarded). If it is done, go to the
+   settle step. Otherwise call `stdout.write(chunk, callback)`, guarded by `try`/`catch`. Each
+   chunk is written once, in order, and there is never a write after a terminal state.
+4. **Backpressure.** When `write()` returns `false`, the writer waits for the first of: `'drain'`,
+   or any transition to a terminal state. The terminal-state signal is one promise, resolved by
+   the transition itself. So a `'close'`, an `'error'` or an error callback releases a pending
+   `'drain'` wait at once. The `'drain'` listener is removed after the wait.
+5. **Settling.** After `done`, the writer waits for the first of: the last outstanding callback,
+   or a terminal state. If the state is still **writing** and no callback is outstanding, the
+   state becomes **accepted**. A `'close'` that arrives after **accepted** is ignored. Callbacks
+   that arrive after any terminal state only decrement the counter and are otherwise ignored.
+6. **Races.** Events are processed in the order Node delivers them. In practice the same failure
+   can arrive two or three times: as a callback error, then as an `'error'` event, then as a
+   `'close'`. Only the first one is recorded. Between an error and an early close, whichever
+   arrives first decides. A `'close'` consults `stdout.errored`, so a stream destroyed with an error
+   is classified by that error. On `process.stdout`, the error callbacks and the `'error'` event
+   come before `'close'` (measured above). An `'error'` without
+   a preceding callback (for example after `destroy(err)`) is handled the same way as a callback
+   error.
+7. **Then stderr**, in the fixed order of §3.6. First the lines of `stderrLines()`, always and
+   whatever the stdout outcome. Then the outcome line of the table, if any. Then, if `stderrLines()`
+   threw while being created or iterated, the line
+   `a5er: error: internal error while generating diagnostics; the diagnostics are incomplete`.
+   No outcome line ever contains an exception message, a stack trace, file text or a path: the
+   exception object is caught and discarded.
+8. **stderr writing** uses the same chunk buffer as stdout (append lines, write at 65,536 code
+   units, so every chunk is under 262,144). When `write()` returns `false`, the writer waits for
+   `'drain'`, `'error'` or `'close'`. A stderr `'error'`, a synchronous throw or a `'close'` stops
+   all further stderr writing, silently. As before, stderr errors never change the exit code:
+   there is nowhere left to report them.
+9. **Exit code.** **failed** gives `74`. Otherwise, **generation-failed**, or a throw from
+   `stderrLines()`, gives `70`. Otherwise **accepted** and **closed** keep `readCode`. For
+   **closed** nothing extra is printed: `a5er tables f | head -n 3` exits `0` for a readable file
+   and `1` for a failed read, the same as without `head`.
+10. **Phase A guard.** If load, scan, classification, semantics or `integrate()` throws (an
+    internal defect, since a bad file is reported through diagnostics and never thrown), the CLI
+    writes nothing to stdout. It writes only the generation-failure line of the table to stderr,
+    with the rule 8 behaviour, and exits `70`. A V8 heap exhaustion is not an exception and cannot
+    be caught (§3.7, F-4).
+11. **Same rules for every chunk and both formats.** Text and JSON go through the same writer. A
+    chunk is just the unit of `write()`, and none of the rules depend on how many chunks there are.
+
+**Partial output.** After **closed**, **failed** or **generation-failed**, stdout may hold any
+prefix of the complete output, or nothing. The prefix can end inside a row, inside a JSON token,
+or even inside a UTF-8 sequence the OS accepted only in part. The writer never adds a completion
+marker and never writes to stdout after a terminal state. A prefix must not be mistaken for a
+complete output: a JSON prefix that lacks only its final `\n` still parses. The consumer checks of
+§3.7 exist for this reason, and exit `70` or `74` always means "discard stdout". **accepted** means
+"accepted by Node", not "delivered" (§3.7).
+
+Only an `EPIPE` counts as "reader closed". A `'close'` without an error before the output is
+complete is a failure (`74`), not a closed pipe, because nothing tells the writer that the reader
+wanted it. If a platform reports a closed pipe with a different code, the real-pipe tests of §7.3
+fail on that platform. The fix is then a reviewed change to this list, never a wider catch-all.
+
+`inspect` and `validate` keep their current single synchronous `write()` path and their
+`renderDiagnostics()` stderr, and are not routed through `writeOutput` (§3.10, F-1).
 
 ### 7.3 Write-error tests
 
-Unit tests use `writeOutput` with fake `Writable` streams, so they run identically on both CI
-operating systems. Real-pipe tests spawn the built CLI.
+**State-transition tests (`tests/io-stdout.test.ts`, all platforms).** They use a controlled fake,
+`ControlledWritable` (in the test file, extending `EventEmitter`). Each `write(chunk, cb)` call
+records the chunk and returns a value the test chose in advance (`true`, `false`, or "throw an
+error with code X"). Each callback is held until the test calls `complete(i, error?)`. The test
+also decides when to emit `'error'`, `'drain'` and `'close'`, and what `errored` holds. `stdoutChunks`
+and `stderrLines` are explicit arrays wrapped in generators, which can be told to throw at a given
+step. Between steps the test lets pending promise reactions run with
+`await new Promise((resolve) => setImmediate(resolve))`. There is no `setTimeout`, no wall-clock
+delay and no fake timer, so every event order is chosen by the test, and the expectations are
+exact. `D` below stands for the one diagnostic line
+`a5er: error: V_DUPLICATE_OBJECT_NAME: Two objects declare the same physical name (line 12)\n`.
+Unless stated otherwise, the input is two stdout chunks `A` and `B`, the stderr lines are `[D]`,
+`readCode` is `0`, and every `write()` returns `true`.
 
-| ID | Test | Platforms | Expectation |
+| ID | Event order (test-controlled) | Final state | Exit | stderr (exact) | stdout writes |
+|---|---|---|---|---|---|
+| R-18 | complete(0); complete(1). Run again with `readCode` 1 | accepted | `0` / `1` | `D` | `A`, `B` |
+| R-3 | complete(0, `EIO`). Repeat with `ENOSPC`, `EBADF`, and an error with no `code` | failed | `74` | `D` + `cannot write to stdout (EIO)` (`ENOSPC`, `EBADF`, `UNKNOWN`) | `A`, `B` |
+| R-3e | (a) complete(0, `EPIPE`); (b) `write` returns `false`, then set `errored = EPIPE`, emit `'error'`, emit `'close'`; (c) `write` returns `false`, then set `errored = EPIPE` and emit `'close'` with no `'error'` | closed | `0` | `D` | (a) `A`, `B`; (b), (c) `A` only |
+| R-5 | **Delayed error**: complete(0); the iterator is exhausted; then complete(1, `EIO`) | failed | `74` | `D` + `cannot write to stdout (EIO)` | `A`, `B` |
+| R-6 | **Diagnostics coexist**: explicit chunks `A`, `B`, lines `[D]`; complete(0); complete(1, `EIO`) | failed | `74` | exactly `D` then `a5er: error: cannot write to stdout (EIO)\n` | `A`, `B` |
+| R-8 | **Double notification**, order 1: complete(0, e₁ = `EIO`); emit `'error'` e₁; emit `'error'` e₂ = `ENOSPC`; emit `'close'`. Order 2: emit `'error'` e₁ first, then complete(0, e₁) | failed | `74` | `D` + exactly one `cannot write to stdout (EIO)` | `A`, `B` |
+| R-9 | **Synchronous throw**: the first `write` throws an error with code `ERR_STREAM_DESTROYED` | failed | `74` | `D` + `cannot write to stdout (ERR_STREAM_DESTROYED)` | `A` attempted, `B` never |
+| R-10 | **Backpressure**: the first `write` returns `false`. After the reactions run, exactly 1 write has been made. complete(0); emit `'drain'`; complete(1) | accepted | `0` | `D` | `A`, then `B` only after `'drain'` |
+| R-12 | **Early close while waiting for drain**: the first `write` returns `false`; complete(0); emit `'close'` with `errored = null` | failed (early close) | `74` | `D` + `stdout closed before the output was complete` | `A` only; the `'drain'` wait is released |
+| R-13 | **Early close with a callback outstanding**: the iterator is exhausted, complete(0) but not (1); emit `'close'` with `errored = null`; then complete(1) | failed (early close) | `74` | `D` + `stdout closed before the output was complete` | `A`, `B`; the late callback is ignored |
+| R-14 | **Events after a terminal state**: R-18, then emit `'error'` `EIO`, then `'close'` | accepted | `0` | `D` | `A`, `B`; no unhandled `'error'` |
+| R-15 | **Generation failure in `next()`**: the generator yields `A` and then throws `new Error('/secret/path: file text')` | generation-failed | `70` | `D` + `internal error while generating output; the output is incomplete` | `A` only; the message text appears nowhere |
+| R-16 | **Generation failure at creation**: `stdoutChunks()` throws | generation-failed | `70` | `D` + the same internal-error line | none |
+| R-17 | **stderr source throws** after yielding `D`; stdout as R-18 | accepted | `70` | `D` + `internal error while generating diagnostics; the diagnostics are incomplete` | `A`, `B` |
+| R-3s | stdout as R-18. stderr's first `write` emits `'error'` `EPIPE` (and separately `EIO`). Run with `readCode` 1 | accepted | `1` | the first stderr write is attempted, and nothing after it | `A`, `B` |
+| R-7 | **Both fail**: complete(0, `EIO`) on stdout, and stderr's first `write` emits `'error'` `EIO` | failed | `74` | one stderr write attempted, then silence; no throw | `A`, `B` |
+| R-19 | **stderr backpressure**: 100,000 diagnostic lines; the first stderr `write` returns `false`; the test emits `'drain'`, then on the next `false` emits `'close'` | accepted | `0` | every stderr chunk is under 262,144 code units, no write happens after `'close'`, and the writer resolves (no hang) | `A`, `B` |
+| R-20 | **Phase A guard**: the CLI's `integrate` step throws (injected through the `pipeline` parameter of `runTablesCommand`, §6) | — | `70` | exactly the internal-error line | none |
+
+**Real-pipe smoke tests (`tests/cli-tables-io.test.ts`).** These spawn `node dist/cli.js` with
+`stdio: ['ignore', 'pipe', 'pipe']` and check only what a real pipe can promise. They never assume
+that `EPIPE` is observed: depending on timing and the platform, the child may finish writing into
+the pipe buffer before the reader goes away. `<big>` is a generated synthetic document of 4,000
+entities, each with a 200-character CJK `LName` (about 600 UTF-8 bytes per row). The test first
+measures that its full text output is over 1 MiB, by running it to a file.
+
+| ID | Input and event order | Platforms | Expectation |
 |---|---|---|---|
-| R-1 | Spawn `node dist/cli.js tables <big>` with `stdio: ['ignore', 'pipe', 'pipe']`. `<big>` is a generated synthetic document of 4,000 entities, each with a 200-character CJK `LName` (about 600 UTF-8 bytes per row). The test first asserts that the full text output of `<big>` is over 1 MiB, by running it to a file, so the precondition is measured, not assumed. Read the first `data` chunk, then `child.stdout.destroy()` | Ubuntu, Windows (CI); macOS manual | exit `0`, stderr `''`, no `EPIPE` or `Error` text anywhere, and the received byte count is above 0 and below the full length |
+| R-1 | `tables <big>`: read the first `data` chunk, then `child.stdout.destroy()` | Ubuntu, Windows (CI); macOS manual | exit `0`, not killed by a signal; stderr is exactly `''` (`<big>` has no `fatal`/`error` diagnostic); received bytes > 0 and ≤ the full length |
 | R-1j | R-1 with `--format json` | same | same |
-| R-2 | Spawn as R-1, but destroy stdout before the child's first write (right after `spawn`) | same | exit `0`, stderr `''` |
-| R-2f | R-2 on a document that fails to read (an empty file) | same | exit `1`, stderr is exactly the `fatal` line |
-| R-C | **Observation of today's `inspect`** (not an acceptance condition): R-1 run against `inspect` on the same document | same | Record what happens: exit code, and whether stderr contains `EPIPE`. On Linux with Node v24.22.3 it exits `1` with an `EPIPE` stack trace (§7.1), but other operating systems may not reproduce it. The test reports the observed result per platform and does not fail on a difference. It does not pin the crash as required behaviour. Whether `tables` is EPIPE-safe is decided by R-1, R-1j, R-2, R-2f and R-3 to R-11, which stay mandatory |
-| R-3 | Fake stdout whose `write` callback gets an error with code `EIO`, `ENOSPC` or `EBADF`, or with no code | all | returns `74`, and stderr ends with exactly `a5er: error: cannot write to stdout (EIO)\n`, `(ENOSPC)`, `(EBADF)` or `(UNKNOWN)` |
-| R-3e | Fake stdout that fails with `EPIPE`, and separately one that emits `'close'` without an error | all | returns the read code. stderr is exactly the diagnostic lines, with nothing extra |
-| R-3s | Fake stderr that fails with `EPIPE` or `EIO` while stdout succeeds | all | no throw, no unhandled `'error'`, the read code is returned |
-| R-4 | Real `tables txt-01 > /dev/full` | Linux only: `it.runIf(process.platform === 'linux')`, because `/dev/full` exists only there. Reported as a platform skip elsewhere | exit `74`, stderr `a5er: error: cannot write to stdout (ENOSPC)\n` |
-| R-5 | **Delayed error**: fake stdout whose `write()` returns `true` and whose callback gets `EIO` 50 ms later, after the last chunk was handed over | all | returns `74`. The write-error line comes after the diagnostic lines |
-| R-6 | **Diagnostics coexist with a write error**: the staged sem-08 (`degraded`, one `error` diagnostic) through a fake stdout that fails with `EIO` on the second chunk | all | stderr is exactly the `V_DUPLICATE_OBJECT_NAME` line followed by the write-error line; returns `74` |
-| R-7 | **stdout and stderr fail together**: stdout `EIO`, stderr `EIO` | all | returns `74`, no throw, no unhandled `'error'` |
-| R-8 | **Double notification**: fake stdout that reports one failure through both the callback and an `'error'` event, then emits a second `'error'` (`ENOSPC`) | all | exactly one write-error line, naming the first code (`EIO`); returns `74` |
-| R-9 | **Synchronous throw**: fake stdout whose `write()` throws | all | returns `74`, and no further chunk is written |
-| R-10 | **Backpressure**: fake stdout whose `write()` returns `false` and emits `'drain'` 10 ms later | all | every chunk is written exactly once, in order, never more than one outstanding past `false`; the concatenated bytes equal the expected output |
-| R-11 | **Real pipe, full read**: spawn `tables` on txt-01 (text and JSON) and on R-1's `<big>`, and read stdout to EOF | Ubuntu, Windows (CI) | the received bytes equal the expected output exactly: for txt-01 the hand-authored expectation of §8.3, and for `<big>` the length and SHA-256 of the same output written to a file. Exit `0`, last byte `\n` |
+| R-2 | `tables <big>`: destroy stdout right after `spawn`, before any data | same | exit `0`, stderr `''`, received bytes `0` |
+| R-2f | R-2 on an empty file | same | exit `1`, stderr is exactly the `E_EMPTY_INPUT` fatal line |
+| R-4 | `tables txt-01 > /dev/full` | Linux only (`it.runIf(process.platform === 'linux')`), reported as a platform skip elsewhere | exit `74`, stderr exactly `a5er: error: cannot write to stdout (ENOSPC)\n` |
+| R-11 | Read stdout to EOF. Inputs: txt-01 (text and JSON) and `<big>` (text and JSON) | Ubuntu, Windows (CI) | exit `0`, and the received bytes equal the expected bytes exactly. txt-01 text: the hand-authored expectation of §8.3. txt-01 JSON: the §8.4 expected envelope (golden-derived shared members plus the hand-authored `result`), built as `JSON.stringify(expected) + '\n'`. `<big>` JSON: the B-5 reference, `JSON.stringify(toTablesEnvelope(serialize(…)), strictReplacer) + '\n'`, computed in the test process from the same staged file. `<big>` text: equal to the same command's output redirected to a file, and every row's decoded names equal the generated names, in order |
+| R-C | **Observation of today's `inspect`** (not an acceptance condition): R-1 run against `inspect` | same | Records the exit code, and whether stderr contains `EPIPE`. On Linux with Node v24.22.3 it exits `1` with an `EPIPE` stack trace (§7.1), but other platforms may not reproduce it. The test reports what it observed and does not fail on a difference. It does not pin the crash as required behaviour |
 
-The tests time out at 20 s, like `runCli`, and clean up their temp directories in `finally`. The
-generated documents are written to a `mkdtemp` directory and removed afterwards. They are never
-committed (§3.1 of `test-strategy.md`).
+The `tables` write paths are proven by R-3 to R-20 (deterministic) and R-1, R-1j, R-2, R-2f, R-4
+and R-11 (real pipes). All of these stay mandatory. Real-pipe tests time out at 20 s, like
+`runCli`, and clean up their temp directories in `finally`. The generated documents are written to
+a `mkdtemp` directory and removed afterwards. They are never committed (§3.1 of
+`test-strategy.md`).
+
+**Feasibility.** A throwaway prototype of this writer and of `ControlledWritable` (outside the
+repository, about 60 lines) ran the event orders of R-3 to R-19 (except R-20, which needs the CLI
+seam) and gave exactly the states, exit codes and stderr lines in the table above. Against real
+pipes on Linux with Node v24.22.3: `| head -c 100000` gave **closed**, exit `0`, exactly 100,000
+bytes received. `| true` gave **closed**, exit `0`. `> /dev/full` gave **failed**, exit `74`,
+with `ENOSPC` after the diagnostic line. `>&-` gave **accepted**, exit `0`, with no bytes delivered
+(§3.7). A full read gave **accepted** with the same SHA-256 as the reference output.
 
 ### 7.4 Terminal-control neutralisation tests
 
@@ -1410,8 +1628,9 @@ authored with `\n`, and the comparison is byte for byte.
   `String.fromCodePoint` and plain loops, and no `Intl`, `\p{…}`, `Intl.Segmenter` or ICU data.
   Output therefore does not depend on the ICU or Unicode version, and the same expected strings
   must pass in both matrix versions.
-- The `'error'` event behaviour of `process.stdout` is checked on both versions by R-1 to R-11
-  in CI. It is never assumed.
+- The writer's state machine is checked on both versions by the deterministic R-3 to R-20, and the
+  real `process.stdout` behaviour by R-1, R-1j, R-2, R-2f, R-4 and R-11 in CI. Neither is assumed.
+  `Writable.errored`, which §7.2 reads on `'close'`, exists in both versions.
 
 ### 7.7 Line width, long identifiers and bounded output
 
@@ -1423,10 +1642,13 @@ authored with `\n`, and the comparison is byte for byte.
 | W-4 | Cap boundary: rendered `PNAME` widths of 47, 48 and 49 cells. 47 and 48 are aligned, and with the 48-cell name present `W = 48`. 49 is followed by exactly two spaces and `LNAME`, and does not change `W` |
 | B-1 | **Review reproduction**: one entity with a 200,001-character `PName` and 3,999 entities with 5-character names, generated. Real CLI, text: exit `0`. The long row holds the whole name, then exactly two spaces, then `LNAME`. Every other row is aligned at `W = 5`. The stdout size is below 1 MiB (the input is 616,068 bytes). The run finishes inside the 20 s timeout. JSON: `pname` of that row equals inspect's `pname.value` |
 | B-2 | **Escape expansion**: one `PName` of 400,000 ESC characters, plus 3,999 short names, generated. Text: the row holds `"` + 400,000 × `\u{001B}` + `"` (3,200,002 code units), and decoding it gives the value back. JSON: `pname` equals inspect's `pname.value` |
-| B-3 | **Chunk bound**, as a unit test with a spy sink on in-memory envelopes (B-1, B-2, and 200,000 unknown keys): every chunk from `renderTablesText` and from `encodeJson` is under 262,144 code units. No chunk ends with a high surrogate, and no chunk starts with a low surrogate that belongs to a pair |
+| B-3 | **Chunk bound**, as a unit test with a spy sink on in-memory envelopes (B-1, B-2, N-1 to N-3, and 200,000 unknown keys): every chunk from `renderTablesText`, from `encodeJson` and from the stderr writer is under 262,144 code units. No chunk ends with a high surrogate, and no chunk starts with a low surrogate that belongs to a pair |
 | B-4 | **Surrogate boundaries**: names and raw values with astral code points placed at code units 16,383, 16,384 and 65,535 of a string. Text and JSON outputs decode to the original values, with no U+FFFD |
 | B-5 | **JSON equivalence**: `[...encodeJson(d)].join('')` equals `JSON.stringify(d, strictReplacer) + '\n'` for every fixture and every generated document of §8.6 and B-1 to B-4 |
 | B-6 | **Beyond the string limit** (manual measurement, not CI, recorded in the implementation PR): the 1,999,000-unknown-key document of §7.1 through `tables --format json`. Expected: exit `0`, more than 536,870,888 bytes of stdout, and a streaming JSON parse succeeds. It is manual because it needs about 3 GB of RAM and tens of seconds per run. CI covers the same code paths at bounded size (B-3, B-5) |
+| N-1 | **Many identical diagnostics in notes**: one entity with 30,000 unknown keys (`Unknown0=1` … `Unknown29999=1`), generated. Real CLI, text: exit `0`. The `#   info S_UNKNOWN_KEY: …` line lists exactly 30,000 `line <n>` locations, in the order of the key lines (the test computes the expected numbers from the document it wrote), and the unsupported note says `unknown-key 30000`. In the unit part, every chunk from `renderTablesText` is under 262,144 code units, and the group line (about 349,000 characters) is split across chunks. JSON: `unsupported` holds 30,000 `unknown-key` records and `diagnostics` 30,000 `S_UNKNOWN_KEY` records, and B-5 equivalence holds. Locally, this input made `inspect` take 0.38 s with a 14,333,347-byte envelope |
+| N-2 | **Many stderr lines**: 30,000 entities without `PName`, generated, so each raises the `error` `V_MISSING_REQUIRED_KEY`. Real CLI: tables stderr equals `inspect`'s stderr for the same staged file byte for byte (30,000 lines, 2,786,302 bytes measured locally), exit `0`, and the text group line lists 30,000 locations. In the unit part, with a spy stderr, every stderr chunk is under 262,144 code units and the concatenation equals `tablesDiagnosticLines()` joined. Timeout 60 s (`inspect` took 4.6 s locally) |
+| N-3 | **Long section lists**: 30,000 views, generated. The `# unknown: a view does not store its columns (sections …)` note lists 30,000 section numbers in file order, and its chunks obey the bound. Timeout 60 s |
 
 ### 7.8 Original file immutability and confidentiality
 
@@ -1551,26 +1773,118 @@ exactly and the exit code:
   `Object.keys` at every level equals the lists of §5.3 in order: envelope, `result`, every row,
   every row `span`, every `columns`, `omitted` and `omitted.subtypes`. There is no `schema` key at
   any level. For `failed`, `source`, `result` and `completeness` are `null`. For `ok`/`degraded`
-  they are non-null objects.
+  they are non-null objects. This is the runtime proof that the forbidden keys are absent, which
+  the type tests below cannot give.
 - **Inspect has no `result`.** On `a5er inspect` and `a5er validate` stdout for the same fixtures,
   `Object.keys` equals `ENVELOPE_KEYS`, with no `result` key (the existing CLI test, plus this
   explicit absence check).
-- **Type level** (`tsc`, `@ts-expect-error`): `.schema` on a narrowed `JsonTablesEnvelope`,
-  `.result` on a narrowed `JsonSchemaDocument`, a non-null `source` on
-  `JsonTablesEnvelopeFailed`, and a `null` `result` on `JsonTablesEnvelopeRead` do not compile.
-  `JsonCommand` is exactly `'inspect' | 'validate'` (K-1).
-- **Status narrowing**: `toTablesEnvelope` throws on hand-built inspect envelopes that break the
-  status and null correlation (`failed` with a source; `ok` with a `null` schema).
+- **Status narrowing at runtime**: `toTablesEnvelope` throws on hand-built inspect envelopes that
+  break the status and null correlation (`failed` with a source; `ok` with a `null` schema).
 - **Shared members.** For every synthetic and byte fixture, the tables JSON without `command` and
   `result` deep-equals the inspect JSON without `command` and `schema`. For each shared member,
   the `JSON.stringify` bytes are equal too (§5.5).
 - **Result.** `result` equals the hand-authored expectation of §8.1, and §5.4 holds against the
-  inspect golden of the same fixture.
-- **Encoder.** `encodeJson` rejects `undefined`, functions, symbols, `bigint`, non-finite numbers
-  and non-plain objects anywhere in a tables envelope (the strict replacer still applies). B-5
-  equivalence holds.
+  inspect golden of the same fixture. The expected txt-01 envelope used by R-11 is built from these
+  two parts.
+- **Encoder (unit, `tests/json-stream.test.ts`).** Each case compares
+  `[...encodeJson(d)].join('')` with `JSON.stringify(d, strictReplacer) + '\n'`, and checks every
+  chunk bound:
+  - key order: `{ b, 2, 1, '01', '4294967295', a }` encodes in `Object.keys` order
+    (`1, 2, b, 01, 4294967295, a`);
+  - key escaping: keys containing `"`, `\`, LF, U+0001, a lone U+D800 and a lone U+DC00; a
+    40,001-code-unit key;
+  - string slicing: a surrogate pair straddling code unit 16,384; a lone high surrogate at code
+    unit 16,383 followed by ASCII; a lone high surrogate as the last code unit; a lone low surrogate
+    at 16,384; a pair at 65,535 (the chunk boundary);
+  - numbers `0`, `-0`, `1.5`, `1e21`;
+  - rejection with `TypeError`: an accessor property, an own and an inherited `toJSON`, `Date`,
+    `Map`, a boxed `Number`, a class instance, an array hole, and `undefined`, a function, a symbol,
+    a `bigint`, `NaN` and `Infinity` as values;
+  - B-5 equivalence on every fixture and generated document.
 - **Framing.** stdout is one line plus `\n`, and `JSON.parse` of the whole stream succeeds (the
   fixtures are far below the string limit).
+
+**Type-level tests (`tests/types/tables-envelope.types.ts`).** This file is compiled by
+`pnpm typecheck`, which uses `tsconfig.typecheck.json` and includes `tests/**/*.ts`. It is not a
+Vitest file (Vitest runs only `tests/**/*.test.ts`), so it needs no runtime. It relies on the
+repository's real settings: TypeScript 7.0.2, `strict`, and `exactOptionalPropertyTypes: true`.
+
+Reading a forbidden key is allowed by TypeScript: `read.schema` has type `undefined`. A read is
+therefore never marked with `@ts-expect-error`, which would itself fail as unused. The tests
+assert **assignments** instead:
+
+```ts
+import type {
+  JsonCommand, JsonCompleteness, JsonEnvelope, JsonSource,
+  JsonSchemaDocument, JsonTablesEnvelope, JsonTablesEnvelopeFailed, JsonTablesEnvelopeRead,
+} from '../../src/json/envelope.js';
+
+declare const failed: JsonTablesEnvelopeFailed;
+declare const read: JsonTablesEnvelopeRead;
+declare const inspect: JsonEnvelope;
+declare const source: JsonSource;
+declare const completeness: JsonCompleteness;
+
+// Reading a forbidden key compiles and has type undefined: no @ts-expect-error on reads.
+export const readSchema: undefined = read.schema;
+export const readResult: undefined = (inspect as JsonSchemaDocument).result;
+
+// A variable that carries a forbidden key is not assignable.
+const withSchema = { ...read, schema: inspect.schema };
+// @ts-expect-error schema is forbidden on a tables envelope
+export const t1: JsonTablesEnvelope = withSchema;
+const withResult = { ...inspect, result: read.result };
+// @ts-expect-error result is forbidden on an inspect/validate document
+export const t2: JsonSchemaDocument = withResult;
+// Even schema: undefined is rejected. This line depends on exactOptionalPropertyTypes.
+const withUndefinedSchema = { ...read, schema: undefined };
+// @ts-expect-error a present schema key is rejected
+export const t3: JsonTablesEnvelope = withUndefinedSchema;
+
+// Null rules: failed needs null source/result/completeness; ok/degraded needs all three.
+const failedWithSource = { ...failed, source };
+// @ts-expect-error failed must have source: null
+export const t4: JsonTablesEnvelope = failedWithSource;
+const readWithNullResult = { ...read, result: null };
+// @ts-expect-error ok/degraded must have a result
+export const t5: JsonTablesEnvelope = readWithNullResult;
+const failedWithCompleteness = { ...failed, completeness };
+// @ts-expect-error failed must have completeness: null
+export const t6: JsonTablesEnvelope = failedWithCompleteness;
+
+// Positive controls: the same shapes without the defect compile.
+export const ok1: JsonTablesEnvelope = { ...failed };
+export const ok2: JsonTablesEnvelope = { ...read };
+export const ok3: JsonSchemaDocument = inspect;
+
+// Narrowing by status.
+declare const any: JsonTablesEnvelope;
+if (any.status === 'failed') {
+  const s: null = any.source;
+  void s;
+} else {
+  const s: JsonSource = any.source;
+  void s;
+}
+```
+
+The variables are exported, so `oxlint` sees no unused binding. Each `@ts-expect-error` line has a
+positive control without the defect (`ok1`, `ok2`, `ok3`), so a line cannot pass because of an
+unrelated error. `JsonCommand` is checked to be exactly `'inspect' | 'validate'` (K-1):
+
+```ts
+type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+export const k1: Exact<JsonCommand, 'inspect' | 'validate'> = true;
+// @ts-expect-error JsonCommand does not include 'tables'
+export const k2: Exact<JsonCommand, 'inspect' | 'validate' | 'tables'> = true;
+```
+
+*Verified:* this file, with the §5.2 declarations inlined and the real `JsonEnvelope`,
+`JsonSource` and `JsonCompleteness` imported from `src/json/envelope.ts`, was compiled outside the
+repository with the repository's `tsc` 7.0.2 and a `tsconfig` extending the repository's. The `Exact` checks were included. It
+passed with exit `0`. With the six `@ts-expect-error` comments removed, `tsc` reported exactly those
+six lines: `schema` and `result` "not assignable to type 'never'", `undefined` "not assignable to
+type 'never'", and the three null-rule mismatches.
 
 ### 8.5 Full regression for `inspect` and `validate`
 
@@ -1606,6 +1920,9 @@ exactly and the exit code:
   agree. If they ever disagree, that is a finding to investigate, never a golden to edit.
 - The argv variants `--format json` before, between and after the operands, and repeated
   `--format json`, give the same bytes as today.
+- **tables stderr matches inspect stderr.** For every staged fixture, and for N-2, the stderr bytes
+  of `tables` (text and JSON) equal those of `inspect` on the same file. This is how the lazy
+  `tablesDiagnosticLines()` (§3.6) is tied to the unchanged `renderDiagnostics()` without editing it.
 
 ### 8.6 Unsupported, partial, same-name and missing-name cases
 
@@ -1660,14 +1977,20 @@ approval (§9).
 3. K-1 to K-5 hold (§5.9), and revisions D-1 to D-7 (§9) have been agreed.
 4. §8.5 passes: 88/88 byte-identical, the goldens are untouched, and `git diff` shows no change
    under `tests/fixtures/`.
-5. §5.4 invariants 7 and 8 and the key-set tests of §8.4 pass on success and failure.
-6. R-1 to R-11 (with R-4 on Linux) and B-1 to B-5 pass. R-C's observations and B-6's manual
-   measurement are reported as measured, including platform differences.
-7. No new entry in `package.json` `dependencies` or `devDependencies`, and `pnpm-lock.yaml` is
+5. §5.4 invariants 7 and 8, the key-set tests of §8.4 (success and failure), and the type-level
+   file compile as specified.
+6. The deterministic writer tests R-3 to R-20 pass with the exact states, exit codes and stderr of
+   §7.3. The real-pipe tests R-1, R-1j, R-2, R-2f, R-11, and R-4 on Linux, pass.
+7. B-1 to B-5 and N-1 to N-3 pass, and so do the encoder cases of §8.4. R-C's observations and
+   B-6's manual measurement are reported as measured, including platform differences.
+8. No new entry in `package.json` `dependencies` or `devDependencies`, and `pnpm-lock.yaml` is
    unchanged.
-8. Every file change matches the inventory in §9. A change to a file not listed there needs its
+9. Every file change matches the inventory in §9. A change to a file not listed there needs its
    own agreement.
-9. Independent review records an explicit PASS. The implementer does not self-certify.
+10. F-4 ([issue #27](https://github.com/j1nn0/a5er-cli/issues/27)) is not an acceptance condition
+    of the implementation PR. A release that ships `tables` needs the P1 measurement and decision
+    recorded there (§11).
+11. Independent review records an explicit PASS. The implementer does not self-certify.
 
 ---
 
@@ -1680,7 +2003,7 @@ these documents and tests. New files are listed as well, so that the inventory i
 
 | ID | File | Change |
 |---|---|---|
-| S-1 | `src/cli.ts` | The argv rules of §3.2, `quoteArg` for every quoted token in misuse messages (§3.5), the help and usage text (§3.4), and `tables` dispatch through `writeOutput`. `run()` for `inspect`/`validate`, `renderDiagnostics()` and their write calls are unchanged |
+| S-1 | `src/cli.ts` | The argv rules of §3.2, `quoteArg` for every quoted token in misuse messages (§3.5), the help and usage text (§3.4), and dispatch of `tables` to `runTablesCommand` (§6). `run()` for `inspect`/`validate`, `renderDiagnostics()` and their write calls are unchanged |
 | S-2 | `src/json/envelope.ts` | The types of §5.2, added. The module header comment's version rule follows D-1. No existing declaration changes |
 | S-3 | `src/json/serialize.ts` | `strictReplacer` gets `export`. No behaviour change |
 | S-4 | `src/json/index.ts` | Re-exports the new types and `encodeJson` |
@@ -1688,8 +2011,11 @@ these documents and tests. New files are listed as well, so that the inventory i
 
 **New source files:** `src/json/stream.ts`, `src/view/tables.ts`, `src/view/index.ts`,
 `src/text/escape.ts`, `src/text/width.ts`, `src/text/chunks.ts`, `src/text/tables.ts`,
-`src/text/index.ts`, `src/io/stdout.ts`. `src/io/index.ts` is unchanged: `cli.ts` imports
-`src/io/stdout.ts` directly.
+`src/text/diagnostics.ts`, `src/text/index.ts`, `src/io/stdout.ts`, `src/tables-command.ts`.
+`src/io/index.ts` is unchanged: `src/tables-command.ts` imports `src/io/stdout.ts` directly. Three
+of these sit outside `src/view/` and `src/text/` (decision 8): `src/json/stream.ts`,
+`src/io/stdout.ts` and `src/tables-command.ts`. §6 gives the reasons, and the re-review is asked to
+accept or relocate them.
 
 **Existing tests:**
 
@@ -1705,9 +2031,12 @@ every file under `tests/helpers/` and `tests/fixtures/`, and the 44 goldens.
 (§8.3), `tests/json-tables-contract.test.ts` (§8.4), `tests/cli-byte-regression.test.ts` (§8.5),
 `tests/cli-tables-cases.test.ts` (§8.6), `tests/cli-argv.test.ts` (§3.2 and §3.5 rules and S-6),
 `tests/text-escape.test.ts` (S-1 to S-3), `tests/text-width.test.ts` (W-1), `tests/text-render.test.ts`
-(W-2 to W-4, B-1 to B-4 unit parts), `tests/json-stream.test.ts` (B-3, B-5),
-`tests/io-stdout.test.ts` (R-3 to R-10), `tests/cli-tables-io.test.ts` (R-1, R-2, R-C, R-4, R-11,
-B-1, B-2, S-4, S-5), `tests/cli-tables-immutability.test.ts` (§7.8),
+(W-2 to W-4, B-1 to B-4 unit parts, N-1 and N-3 unit parts), `tests/json-stream.test.ts` (B-3, B-5,
+the encoder cases of §8.4), `tests/text-diagnostics.test.ts` (the stderr line source of §3.6),
+`tests/io-stdout.test.ts` (R-3 to R-19), `tests/tables-command.test.ts` (R-20),
+`tests/cli-tables-io.test.ts` (R-1, R-1j, R-2, R-2f, R-C, R-4, R-11, B-1, B-2, N-1 to N-3, S-4,
+S-5), `tests/cli-tables-immutability.test.ts` (§7.8), `tests/types/tables-envelope.types.ts` (the
+type-level checks of §8.4, compiled by `pnpm typecheck` only),
 `tests/helpers/tables-expectations.ts`, `tests/helpers/tables-text-expectations.ts` and
 `tests/helpers/cli-expectations.ts`. All are new files. Their generated documents live only in temp
 directories.
@@ -1719,12 +2048,12 @@ directories.
 | D-1 | `docs/architecture.md` §12 rule 6 | The amendment of §5.9: version per command's envelope, selection by `(command, contractVersion)` |
 | D-2 | `docs/architecture.md` §12 rule 1 | "`degraded` (warnings/errors, schema emitted) or `failed` (fatal, `schema: null`)" becomes "the command's payload (`schema` for inspect/validate, `result` for tables) emitted, or `null` when `failed`" |
 | D-3 | `docs/architecture.md` §12 rule 4 | "Raw is always adjacent to interpreted" is scoped to the `schema` payload. `result` is a projection that cites its object by `objectIndex` and `span` instead of carrying `raw`. The raw text stays available from `inspect` |
-| D-4 | `docs/architecture.md` §12 opening paragraph | "`--format json` is the only format and the default; a `text` renderer remains a later command-level concern" becomes per-command formats with a pointer to this specification. "One envelope per invocation, on stdout" is qualified: `tables` in text mode emits no envelope |
+| D-4 | `docs/architecture.md` §12 opening paragraph | "`--format json` is the only format and the default; a `text` renderer remains a later command-level concern" becomes per-command formats with a pointer to this specification. "One envelope per invocation, on stdout … exactly one JSON document plus the newline that ends it" is qualified in two ways. First, `tables` in text mode emits no envelope. Second, for `tables` that framing holds only when the write succeeds: after exit `70` or `74`, or a closed pipe, stdout may hold an incomplete prefix, and "accepted" means accepted by Node, not delivered (§3.7, §7.2). The `inspect`/`validate` sentences stay as they are, because their write path does not change (F-1) |
 | D-5 | `docs/architecture.md` §12 contract example and its caption | The example stays the `inspect` shape, and the caption says so. A pointer to the tables shape (§5.2 here) is added |
 | D-6 | `docs/architecture.md` §3 | The pipeline sketch and the Output row: "stdout: one JSON envelope, or `tables` text". The §11 diagnostic table is not touched, because `tests/catalog.test.ts` parses it |
-| D-7 | `README.md` | Usage gains `tables`. "No other command exists yet: … `tables` … exits 2" is removed. "`inspect` and `validate` write exactly one JSON envelope …; no other command or option does" gains `tables`. "Every envelope has the keys … `schema` …" becomes per command (`schema` for inspect/validate, `result` for tables) with the `(command, contractVersion)` selection rule. The exit table gains `74`, and the text output is described |
+| D-7 | `README.md` | Every statement that is no longer true once `tables` ships: (1) the introduction, "writes one JSON envelope to stdout" and "JSON is the only output format", becomes: `inspect`/`validate` write one JSON envelope, and `tables` writes text by default or JSON with `--format json`; (2) the usage block gains `a5er tables [--format text\|json] <file>`, and "No other command exists yet: any other word, such as `tables` or `export`, exits 2" is reduced to the commands that still do not exist; (3) "`--format json` is accepted but is the default and only format" becomes per command; (4) the Output section's "`inspect` and `validate` write exactly one JSON envelope …; no other command or option does" gains the `tables` text and JSON outputs and the rule that notes start with `#`; (5) "Every envelope has the keys … `schema` …" becomes per command: `schema` for inspect/validate and `result` for tables, with the `(command, contractVersion)` selection rule (§5.1); (6) "A `failed` envelope … with `source`, `schema` and `completeness` set to `null`" becomes `schema` (inspect/validate) or `result` (tables); (7) the exit table gains `70` and `74`, which only `tables` uses, and a note that after `70`, `74` or a closed pipe stdout may be incomplete, with the consumer checks of §3.7; (8) the confidentiality note says that `tables --format json` echoes `raw`, `details` and the path like `inspect`, and that text prints names only |
 | D-8 | `docs/test-strategy.md` | The new test files, the R-4 platform skip in §13 (CI mapping), the byte regression, and B-6 as a manual measurement |
-| D-9 | `skills/a5er-cli/SKILL.md` | Optional. The listing procedure could call `a5er tables --format json` instead of its inline projection. That is a separate decision, and until then the Skill stays as it is |
+| D-9 | `skills/a5er-cli/SKILL.md` | Optional. The listing procedure could call `a5er tables --format json` instead of its inline projection. That is a separate decision, and until then the Skill stays as it is. If it is adopted, the Skill's run block, which exits `70` on its own `mktemp` failure, must keep that apart from the CLI's new exit `70` (§3.7) |
 
 D-1 to D-7 are the conditions K-5 refers to. D-8 is required by AGENTS.md's rule that documents
 describe shipped behaviour. D-9 is optional.
@@ -1764,6 +2093,6 @@ member at position 7 under the same additive rule (§5.9).
 | F-1 | `inspect`/`validate` crash on a broken pipe or a stdout write error: exit `1` (the code for a failed read) and a stack trace that includes the install path (§7.1, measured) | A separate issue to route every command through `writeOutput` (§7.2). It changes observable `inspect`/`validate` behaviour in that error case, so it needs explicit approval outside decision 6. R-C's observation is then expected to change |
 | F-2 | `quote()` in misuse messages leaves C1 and bidi controls raw | **Moved into P0**: `quoteArg` (§3.5, §3.10, S-6) |
 | F-3 | macOS is not in the CI matrix | C-2 in §9, if wanted |
-| F-4 | Large accepted inputs exhaust shared resources in the existing pipeline (§7.1, measured). `inspect`'s `toJsonString` throws `RangeError: Invalid string length` on a 20.9 MB file of 1,999,000 unknown keys, and exits `1` with no envelope. At 64 MiB of `Field` lines, `serialize()` exhausts the default 4,288 MiB heap (exit `134`), and that stage is shared by `tables` | Separate decisions. For `inspect`: route its JSON through `encodeJson` (that changes its failure behaviour, so it needs approval outside decision 6). For both commands: a lower-memory path, for example projecting `tables` without building the whole `schema` object, or revisiting the `maxBytes` default (TBD-O3). P0 bounds every output string, but not this heap use |
+| F-4 | Large accepted inputs exhaust shared resources in the existing pipeline (§7.1, measured). `inspect`'s `toJsonString` throws `RangeError: Invalid string length` on a 20.9 MB file of 1,999,000 unknown keys, and exits `1` with no envelope. At 64 MiB of `Field` lines, `serialize()` exhausts the default 4,288 MiB heap (abort, exit status `134`), and that stage is shared by `tables`. So an out-of-memory abort is possible for inputs **within the current read limits**, for `inspect`, `validate` and `tables` alike | Tracked in [issue #27](https://github.com/j1nn0/a5er-cli/issues/27). **P0 does not fix the parser or `serialize()` memory use**, and does not hide the risk: §2, §3.7 and §7.1 state it. Handed over to P1: measure peak heap per stage (load, scan, classify, semantics, serialize, projection) against input size on Node 24 and 26, and find the smallest accepted input that aborts. Before any release that ships `tables`, a recorded decision is required: for example lower read limits (TBD-O3), a lower-memory projection for `tables` that does not build the whole `schema`, or a documented limit. Routing `inspect`'s JSON through `encodeJson` changes its failure behaviour and needs approval outside decision 6 |
 
 No contract question about `tables` is left open (§5.9).
