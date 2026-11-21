@@ -42,6 +42,8 @@ Normative words: **must**, **must not** and **never** are requirements on the im
 | tables envelope | The new `JsonTablesEnvelope` (§5.2) |
 | note | A text line that starts with `# ` |
 | escape set | The frozen list of code points that are never written raw to a terminal (§4.4.2) |
+| chunk | One string handed to one `write()` call; always under 262,144 UTF-16 code units (§4.10, §5.10) |
+| settle | The single, final outcome of the stdout write: accepted, closed or failed (§7.2) |
 
 ---
 
@@ -52,16 +54,24 @@ Normative words: **must**, **must not** and **never** are requirements on the im
 ```
 loadSource → scanSource → classify → derivePartialSemantics      (unchanged, src/cli.ts inputFor)
         → integrate()                 exit policy: exitPolicy.inspect            (unchanged)
-        → serialize(input, { command: 'inspect', path })   the inspect envelope  (unchanged)
+        → serialize(input, { command: 'inspect', path })   the inspect envelope, as an object (unchanged;
+                                                            tables never turns it into a string)
         → toTablesEnvelope(inspectEnvelope)                 src/view/tables.ts   (new, pure)
-        → --format json: toJsonString(tablesEnvelope) + '\n'                     (widened type)
-          --format text: renderTablesText(tablesEnvelope)   src/text/tables.ts   (new, pure)
+        → --format json: encodeJson(tablesEnvelope)         src/json/stream.ts   (new, bounded chunks, §5.10)
+          --format text: renderTablesText(tablesEnvelope)   src/text/tables.ts   (new, bounded chunks, §4.10)
+        → writeOutput(chunks, stderrText, streams)          src/io/stdout.ts     (new, settles once, §7.2)
 ```
 
 The tables envelope is a pure function of the inspect envelope for the same bytes. Two things
 follow from that. `tables` and `inspect` cannot disagree about a file, and every fact `tables`
-reports can be traced to a field of `inspect`. The CLI stays the only parser (AGENTS.md), and the
-view layer only counts and copies.
+reports can be traced to a member of the inspect envelope. The CLI stays the only parser
+(AGENTS.md), and the view layer only counts and copies.
+
+`tables` never builds its whole output as one string. Both renderers produce a sequence of bounded
+chunks, and the writer sends them one at a time (§4.10, §5.10, §7.2). The in-memory inspect
+envelope is the same object that `inspect` builds, so `tables` has the same peak heap as `inspect`
+up to the end of `serialize()`. The measured limit of that stage is in §7.1, and it is recorded as
+F-4 (§11), not solved by P0.
 
 ---
 
@@ -86,32 +96,55 @@ There is no other option. In particular there is no `--color`, `--no-header`, `-
 
 ### 3.2 Parsing rules, in order
 
-`parse()` keeps its order (rule 1 wins over rule 2, and so on). The token rules are the same as
-today for every token that is not `--format text` or the word `tables`:
+**No arguments.** `a5er` with an empty argv prints the help on stdout and exits `0`. This special
+case comes before every rule below, as it does today.
 
-1. **Token misuse** (decided from the tokens alone, before the command is known):
-   - an unrecognised token that starts with `-`. `--format=json`, `-` and `--` are included, as
-     today;
-   - `--format` as the last token;
-   - `--format` followed by a value other than `text` or `json`;
-   - two `--format` occurrences with different values. Repeating the same value is accepted, as
-     `--format json --format json` is today.
-2. `-h`/`--help` present: help.
-3. `-v`/`--version` present: version.
-4. The first operand names the command, and the second names the file:
-   - no first operand: misuse;
-   - not `inspect`, `validate` or `tables`: misuse;
-   - no second operand, an empty one, or a third operand: misuse;
-   - `inspect` or `validate` with `--format text`: misuse (rule 4 is the first point where the
-     command is known);
-   - otherwise run the command.
+**Scan.** Otherwise argv is scanned once, from left to right. Each token is classified as follows,
+in this order:
 
-The format value is resolved after rule 4: an explicit `--format` value, else the default of the
-command (`json` for `inspect` and `validate`, `text` for `tables`).
+| Token | Effect |
+|---|---|
+| `--help` or `-h` | sets *help* |
+| `--version` or `-v` | sets *version* |
+| `--format` | **always consumes the next token as its value**, whatever it looks like (`--help`, `-v`, `--format`, `""` and `json` alike). It is misuse if there is no next token, or if the value is not `text` or `json`. It is also misuse if an earlier `--format` gave a different value. Repeating the same value is accepted |
+| any other token that starts with `-` | misuse (unknown option). This includes `-`, `--`, `--format=json`, `-hv` and `--FORMAT` |
+| anything else | an operand, in order |
+
+**The first violation wins.** The scan stops at the first token-level misuse and reports it. Tokens
+after it are not examined, so with several violations the leftmost one is reported. Examples:
+
+| argv | Result |
+|---|---|
+| `--format --help` | misuse: `unsupported --format value "--help"; supported values are text and json` (the value is consumed, so *help* is not set) |
+| `--help --format` | misuse: `--format requires a value (text or json)` (token misuse wins over help) |
+| `--bogus --help` | misuse: `unknown option "--bogus"` |
+| `--format yaml --bogus` | misuse: `unsupported --format value "yaml"; …` (leftmost) |
+| `--format json --format text --help` | misuse: `conflicting --format values "json" and "text"` |
+
+**After the scan,** if there was no token misuse, these checks run in order. The first one that
+applies decides:
+
+1. *help* is set: help, exit `0`. This applies even when *version* is also set, and even when an
+   operand check below would fail (`a5er --help bogus` prints the help, as today).
+2. *version* is set: the version, exit `0`.
+3. There is no operand: misuse `missing a command (inspect, validate or tables)`.
+4. The first operand is not `inspect`, `validate` or `tables`: misuse `unknown command "<op>"`.
+5. There is no second operand: misuse `missing the file operand for <command>`.
+6. The second operand is empty: misuse `the file operand is empty`.
+7. There is a third operand: misuse `extra operand "<op>"; exactly one file is read` (the third
+   operand is quoted).
+8. The command is `inspect` or `validate` and the format is `text`: misuse
+   `unsupported --format value "text" for <command>; only json is supported`.
+9. Otherwise the command runs with the explicit format, or the command's default (`json` for
+   `inspect` and `validate`, `text` for `tables`).
+
+Steps 1–7 are today's rules in today's order. Only the command list in step 3, `tables` in step 4,
+and step 8 are new. Every `<op>` and format value in a message is quoted with `quoteArg` (§3.5).
 
 ### 3.3 Format selection is explicit
 
-The output bytes are a function of argv and the file bytes only:
+**When every write succeeds**, the output bytes and the exit code depend only on argv and the file
+bytes:
 
 - `process.stdout.isTTY`, `process.stderr.isTTY`, `COLUMNS`, `LINES`, `TERM`, `NO_COLOR`,
   `FORCE_COLOR`, `LANG`, `LC_ALL` and the time zone are never read. No pager is started.
@@ -119,6 +152,9 @@ The output bytes are a function of argv and the file bytes only:
   used.
 - The same argv and the same bytes give the same stdout, stderr and exit code on a terminal, in a
   pipe and in a file.
+
+This determinism is a property of a successful write only. When the stdout write fails, the bytes
+that reach the reader and the exit code also depend on when and how the failure happened (§7.2).
 
 ### 3.4 Help and usage (exact proposed text)
 
@@ -175,8 +211,18 @@ Usage:
 ### 3.5 Misuse
 
 Misuse keeps its current shape. The exit code is `2`, stdout is empty, nothing is read, and stderr
-is `a5er: <message>\n\n<usage>\nRun 'a5er --help' for details.\n`. User-supplied tokens are quoted
-with the existing `quote()` (`JSON.stringify`).
+is `a5er: <message>\n\n<usage>\nRun 'a5er --help' for details.\n`.
+
+**Quoting user-supplied tokens (`quoteArg`).** Today `quote()` is `JSON.stringify`. That escapes
+C0 controls, `"` and `\` and lone surrogates, but it leaves DEL, C1 controls (including U+009B
+CSI), bidi controls and the other invisible code points of §4.4.2 raw on stderr. `quoteArg` is
+`JSON.stringify` followed by one more step: every escape-set code point (§4.4.2) that
+`JSON.stringify` left raw is replaced by its JSON escape, `\uXXXX` with lowercase hexadecimal, the
+style `JSON.stringify` itself uses. A code point above U+FFFF (the tag characters) is written as
+its two `\uXXXX` surrogate escapes. The result is still a valid JSON string literal. For any
+argument with no such code point, which covers every printable ASCII argument, the bytes are
+exactly `JSON.stringify`'s, so no existing message changes. The `"--bad\ncontrol"` case that
+`cli.test.ts` checks keeps its current text.
 
 | argv (examples) | Message today | Proposed message |
 |---|---|---|
@@ -192,6 +238,7 @@ with the existing `quote()` (`JSON.stringify`).
 | `validate --format text x` | same as above | `unsupported --format value "text" for validate; only json is supported` |
 | `tables --format json --format text x` | — | `conflicting --format values "json" and "text"` |
 | `--format text --help` | misuse (`unsupported --format value "text"…`) | help, exit `0` (`text` is now a known value) |
+| `inspect` + an argument holding U+202E or U+009B | the code point raw inside the quotes | `\u202e` / `\u009b` inside the quotes |
 
 Every message that `cli.test.ts` checks with `toContain` today still contains the checked
 substring. The exceptions are the two assertions that use `tables` as an example of a command
@@ -201,28 +248,39 @@ that does not exist (§9, item T-1).
 
 | | `--format text` | `--format json` |
 |---|---|---|
-| stdout | The table and notes (§4), UTF-8 without BOM, LF only, ending in `\n` | One tables envelope on one line plus `\n` |
+| stdout | The table and notes (§4), UTF-8 without BOM, LF only, ending in `\n` | One tables envelope on one line, plus `\n` |
 | stderr | One line per `fatal` or `error` diagnostic, from the existing `renderDiagnostics()` | Same |
-| order | stdout is written first, then stderr, as today | Same |
+| delivery | A sequence of bounded chunks, never one whole-output string (§4.10) | Same (§5.10) |
 
-stderr carries the same lines that `inspect` prints for the same file, byte for byte. `warning` and
-`info` diagnostics never reach stderr. In text mode they are summarised in the notes, and in JSON
-mode the envelope holds the full record.
+**Order (fixed).** The writer (§7.2) first writes every stdout chunk and waits until stdout
+*settles* (all accepted, `EPIPE`, or another error). Only then does it write stderr: first the
+diagnostic lines, which are always written whatever the stdout outcome; then, for a stdout error
+other than `EPIPE`, exactly one line `a5er: error: cannot write to stdout (<CODE>)`. A write
+failure therefore never drops a diagnostic line. The diagnostic lines are lost only when stderr
+itself cannot be written.
+
+stderr carries the same diagnostic lines that `inspect` prints for the same file, byte for byte.
+`warning` and `info` diagnostics never reach stderr. In text mode they are summarised in the notes,
+and in JSON mode the envelope holds the full record.
 
 ### 3.7 Exit codes
 
 | Code | `tables` |
 |---|---|
-| `0` | `status` is `ok` or `degraded`. This includes `error` diagnostics and 0 rows |
-| `1` | `status` is `failed`: a fatal read. The output is still written (§3.8) |
+| `0` | `status` is `ok` or `degraded`, and stdout settled as accepted or `EPIPE`. This includes `error` diagnostics and 0 rows |
+| `1` | `status` is `failed` (a fatal read), and stdout settled as accepted or `EPIPE`. The output is still written (§3.8) |
 | `2` | Misuse (§3.5). Nothing is read, and stdout is empty |
 | `3` | Never. Only `validate` turns an `error` diagnostic into an exit code |
 | `4` | Never. Reserved for a future `columns` selection failure (decision 9) |
-| `74` | stdout could not be written for a reason other than a closed pipe (§7.2) |
+| `74` | stdout settled with an error other than `EPIPE` (§7.2). This takes precedence over `0` and `1`. When the read also failed, the `fatal` line is still on stderr, before the write-error line |
 
 Codes `0` and `1` come from `integrate(input).exitPolicy.inspect`. `ExitPolicy` and `validate/`
 are not changed, and the CLI maps `tables` to the `inspect` policy. A closed pipe (`EPIPE`) keeps
-the code from the read (§7.2).
+the code from the read.
+
+The runtime itself can still end the process outside this table, for example a V8 heap
+exhaustion abort on an input that also exhausts `inspect` (§7.1, F-4). That happens before any
+stdout write, so it never leaves partial output behind.
 
 ### 3.8 `failed` and `degraded`
 
@@ -260,6 +318,10 @@ Outside that scope, the CLI surface changes in exactly these ways (each is liste
 - the help text (tables lines, the `--format` description and exit code `74`);
 - the usage block in misuse messages (one more line);
 - the misuse messages listed in §3.5;
+- `quoteArg`: a misuse message that quotes an argument containing an escape-set code point that
+  `JSON.stringify` leaves raw (DEL, C1, bidi and the other invisible code points of §4.4.2) now
+  shows that code point as `\uXXXX`. This applies to `inspect` and `validate` misuse too. Misuse
+  is not the `run()` path, and arguments without such a code point give the same bytes as today;
 - `--format text` together with `--help` or `--version` now prints help or the version. Before,
   it was misuse.
 
@@ -311,16 +373,37 @@ are declared. Rows are never sorted, grouped by kind or de-duplicated.
 | `DECLARED` | declared `Field` count, or `unknown` | right |
 | `COMMON` | composed `CommonField` count, or `unknown` | right |
 | `EFFECTIVE` | effective column count, or `unknown` | right |
-| `PNAME` | physical name (§4.4) | left |
+| `PNAME` | physical name (§4.4), aligned up to the cap below | left |
 | `LNAME` | logical name (§4.4); last column, never padded | left |
 
 - Two spaces separate columns.
-- The width of a column is the largest display width (§4.11) of its header and its cells.
+- **Fixed columns.** The width of `SECTION`, `LINE`, `KIND`, `DECLARED`, `COMMON` and `EFFECTIVE`
+  is the largest display width (§4.11) of the header and the cells. These cells are decimal
+  numbers, `unknown`, `entity` or `view`, so their width is bounded by the digits of the largest
+  section, line or count: at most 7 digits under the default `maxLines` of 2,000,000.
+- **`PNAME` alignment cap: 48 display cells.** Let `wᵢ` be the display width of row *i*'s
+  rendered `PNAME` (after quoting and escaping). The `PNAME` column width is
+  `W = max(5, max{ wᵢ : wᵢ ≤ 48 })`, where 5 is the width of the header `PNAME`.
+  - A row with `wᵢ ≤ 48` is padded to `W`, then two spaces, then `LNAME`.
+  - A row with `wᵢ > 48` is **not truncated**. The full name is written, then exactly two
+    spaces, then `LNAME`. Alignment is relaxed for that row only. The other rows and the header
+    keep `W`.
+  - Why 48: before `PNAME` the fixed columns take about 53 cells (with up to 4-digit line numbers).
+    `53 + 48 + 2` leaves `LNAME` starting at about column 104, which is still inside a common 120-
+    to 132-column terminal. 48 cells also cover typical physical names: Oracle's classic 30-byte
+    limit, and most names below PostgreSQL's 63-byte and MySQL's 64-character limits. A larger
+    cap pushes `LNAME` off typical terminals for every row, and a smaller one breaks alignment for
+    common names. The cap is a constant (`PNAME_ALIGN_CAP = 48`), not an option.
 - Right-aligned cells are padded on the left, and left-aligned cells on the right, except
   `LNAME`, which is the last column and gets no trailing padding.
+- **Padding is bounded.** No row gets more than `W ≤ 48` cells of `PNAME` padding, plus the
+  bounded fixed-column padding. The total padding is at most linear in the number of rows, whatever
+  the longest name is. (Without the cap, one 200,001-character name among 4,000 rows would need
+  about 800 million padding characters: §7.1.)
 - The counts come before the names on purpose. Only `PNAME` needs width-dependent padding, so a
   width the terminal measures differently can only shift the `LNAME` column. It can never move a
   count.
+- Row order, column order, cell values and the escaping rules of §4.4 do not depend on the cap.
 
 ### 4.4 Names
 
@@ -446,6 +529,13 @@ more, in file order.
 
 - The unknown notes are typed on `reason`, and the switch is exhaustive. A new reason value is a
   compile error, not a silent fallback.
+- **Order of the unknown notes is fixed by reason, in definition order**, not by row order:
+  `view-columns-not-stored`, then `view-columns-named-from-query` (the order of `ViewColumnReason`
+  in `src/semantic/views.ts`), then `using-common-columns-unrecognised` (the partial entity
+  reason). Each note appears only if at least one row has that reason, and lists all of that
+  reason's sections in file order. So a file with a partial entity in section 2 and a
+  `LNameByComment=1` view in section 3 prints the named-from-query note first, then the partial
+  note.
 - Diagnostic groups are keyed by `(severity, code)` in order of first appearance. That order is the
   envelope's source-line order (Skill item 3).
 - `details` is never printed: it holds file text. `message` is fixed table text. As defence in
@@ -467,17 +557,52 @@ look like the whole file, so the limits are stated:
 3. **`unsupported` and `completeness` are reported.** Text counts `unsupported` by kind, `0`
    included, and prints every `completeness` count; they are never summarised as a single "OK".
    The JSON envelope carries both members in full, verbatim from the inspect envelope (§5.5).
-4. **Relations and column details are not part of `tables`.** Neither the text nor the tables
-   JSON contains relations, pages, domains, common-field definitions, indexes, primary keys,
-   `Comment`, `Query`, or per-column details such as names, data types and NOT NULL. Only the
-   column counts of §4.5 are reported.
-5. **For the full model, use `a5er inspect`.** Its envelope holds everything `tables` leaves out.
+4. **No structured fields for relations, columns or view queries.** `result` has no member for
+   relations, pages, domains, common-field definitions, indexes, primary keys, `Comment`, `Query`,
+   or per-column details such as column names, data types and NOT NULL. Only the column counts of
+   §4.5 are reported. This is a statement about structure, not about strings: the shared members
+   `unsupported` and `diagnostics` are copied verbatim from the inspect envelope, and their
+   evidence can hold source text of such constructs. For example, `unsupported[].raw` of an
+   unknown key inside a `[Relation]`, or of a continuation line of a `Query`, is that line's text
+   (§5.7). The text output never prints those members' text (§4.8).
+5. **For more detail, use `a5er inspect`.** It returns the detailed model that the current parser
+   builds, together with the evidence it retained (`unsupported`, `diagnostics`, `completeness`).
+   It does not claim to interpret or reconstruct every input completely. What it does not model is
+   reported as unsupported evidence or diagnostics instead (`architecture.md` §4.3, §13).
 
 ### 4.10 Long names
 
-Names are never truncated, wrapped or ellipsised, and lines have no length limit. A row is as long
-as its longest name needs. One long name widens the `PNAME` column for every row of that output.
-That is the price of alignment, and it is accepted. The terminal width is never read (§3.3).
+**No truncation.** Names are never truncated, wrapped or ellipsised, and lines have no length
+limit. The full rendered name is always written, and the escaping of §4.4.1 is reversible, so the
+original value can always be recovered from the text. JSON carries the exact value (§5.10).
+
+**Bounded alignment.** A long name never widens the table: the `PNAME` cap of §4.3 limits the
+alignment width to 48 cells. A longer name relaxes alignment for its own row only. The terminal
+width is never read (§3.3).
+
+**Bounded rendering.** `renderTablesText` returns an iterable of string chunks, not one string:
+
+- **Pass 1** walks the rows and computes, for each row, the display width of the rendered `PNAME`,
+  and the fixed-column widths. It does this arithmetically, code point by code point. A bare code
+  point adds its §4.11 width, an escaped code point adds the length of its `\u{…}` text (8 to 10
+  ASCII cells), and quotes add 1 each. The escaped string itself is never built. Pass 1 keeps only
+  numbers.
+- **Pass 2** emits every line as a sequence of pieces: the fixed cells, the padding, the name
+  pieces and `\n`. A name is rendered by walking its code points and escaping them in slices of at
+  most 16,384 code points. One escaped code point is at most 10 code units (`\u{10FFFF}`), so a
+  slice is at most 163,840 code units.
+- **Chunks.** Pieces are appended to a buffer, and the buffer is yielded as a chunk once it holds
+  at least 65,536 code units. Every chunk is therefore under 262,144 code units (a test asserts
+  this bound, §7.7). The last chunk ends with the final `\n`.
+- **Surrogate pairs.** A slice and a chunk boundary never fall between a high surrogate and the low
+  surrogate that follows it. This matters for more than display: Node encodes each `write()` string
+  to UTF-8 separately, so a split pair would turn into two U+FFFD characters on the wire. Lone
+  surrogates cannot reach a chunk boundary raw, because they are escaped (§4.4.2).
+- **Forbidden.** No `rows.join(…)`, no concatenation of the whole output, no `padEnd`/`repeat`
+  wider than the bounded widths above, and no escaped copy of a whole name.
+
+Memory for the output is therefore one chunk plus the per-row width numbers, whatever the input
+size. The inspect envelope that the renderer reads is already in memory (§2).
 
 ### 4.11 Display width (frozen)
 
@@ -590,13 +715,13 @@ Output (`degraded`, exit `0`):
 
 ```
 # status: degraded
-SECTION  LINE  KIND    DECLARED   COMMON  EFFECTIVE  PNAME                                               LNAME
-      2     9  entity         2        1          3  customers                                           顧客
+SECTION  LINE  KIND    DECLARED   COMMON  EFFECTIVE  PNAME                             LNAME
+      2     9  entity         2        1          3  customers                         顧客
       3    16  entity         1  unknown    unknown  order_lines_with_a_deliberately_long_physical_name  受注明細
-      4    22  entity         0        0          0  -                                                   名前のない表
-      5    28  view     unknown  unknown    unknown  customers                                           "顧客 一覧"
-      6    34  entity         1        0          1  社員マスタ                                          社員
-      8    45  entity         0        0          0  "evil\u{001B}[2J\u{202E}txt.exe"                    "-"
+      4    22  entity         0        0          0  -                                 名前のない表
+      5    28  view     unknown  unknown    unknown  customers                         "顧客 一覧"
+      6    34  entity         1        0          1  社員マスタ                        社員
+      8    45  entity         0        0          0  "evil\u{001B}[2J\u{202E}txt.exe"  "-"
 # objects: 7 (entity 5, view 1, subtype 1); listed 6, omitted 1
 # omitted: subtypes are not listed (section 7); 'a5er inspect' reports them
 # unknown: a view does not store its columns (section 5)
@@ -618,9 +743,12 @@ a5er: error: V_MISSING_REQUIRED_KEY: A key the specification requires is absent 
 a5er: error: V_DUPLICATE_OBJECT_NAME: Two objects declare the same physical name (line 28)
 ```
 
-The `社員マスタ` cell is 10 columns wide (five width-2 code points), so it gets 41 spaces of padding
-where `customers` gets 42. Because `LINE` is the `PName` line, row 4 (no `PName`) reports its
-header line, 22.
+The `PNAME` column is `W = 32` cells wide: the widest rendered name within the 48-cell cap is the
+quoted, escaped `"evil\u{001B}[2J\u{202E}txt.exe"`. The `社員マスタ` cell is 10 cells wide (five
+width-2 code points), so it gets 22 spaces of padding where `customers` gets 23. The 50-character
+`order_lines_…` name is over the cap, so it is written in full, followed by exactly two spaces and
+`LNAME`. Only that row is not aligned. Because `LINE` is the `PName` line, row 4 (no `PName`)
+reports its header line, 22.
 
 **C — sem-09-zero-pages** (0 objects; `degraded`, exit `0`)
 
@@ -675,36 +803,71 @@ What `a5er` emits becomes a discriminated union on `command`:
 | `inspect`, `validate` | `JsonEnvelope` (unchanged, field for field) | `schema` |
 | `tables` | `JsonTablesEnvelope` (new) | `result` |
 
-A consumer reads `command` first and then reads the shape for that command. `command` sits at
-position 3 in both shapes, before any member that differs.
+**Decoder selection key: `(command, contractVersion)`.** A consumer selects its decoder from both
+members together. `command` sits at position 3 and `contractVersion` at position 1 in every shape,
+before any member that differs. The supported pairs at this version are `("inspect", "0.1.0")`,
+`("validate", "0.1.0")` and `("tables", "0.1.0")`. A consumer must reject a pair it does not
+support explicitly, an unknown `command` included. It must never guess the shape from which keys
+happen to be present, and never treat an unknown command as `inspect`.
+
+**What is not guaranteed.** A consumer written for 0.1.0 that selects its decoder by
+`contractVersion` alone, and assumes every 0.1.0 document has `schema`, is not guaranteed to
+decode a tables document. Such a consumer keeps working, byte for byte, for every `inspect` and
+`validate` document (§5.9 K-1, K-2). It only meets a tables document if it runs the new
+`a5er tables --format json` (K-3), and then it must fail rather than misread it. This is the
+compatibility boundary on which keeping `0.1.0` rests (§5.9).
 
 ### 5.2 Type definitions (proposed additions to `src/json/envelope.ts`)
 
-Field order is emission order, as for every existing interface. No member is optional. A member
-with nothing to say is `null` or a status object, never `undefined`, so `toJsonString`'s strict
-replacer applies unchanged.
+Field order is emission order, as for every existing interface. No emitted member is optional: a
+member with nothing to say is `null` or a status object, never `undefined`. The only optional
+member is the type-level `schema?: never` below, which is never emitted.
 
 ```ts
 /** The one command whose envelope carries a projection instead of the schema. */
 export type JsonTablesCommand = 'tables';
 
-/** Every document the CLI can emit, discriminated on `command` (§5.1). */
-export type JsonDocument = JsonEnvelope | JsonTablesEnvelope;
+/**
+ * An inspect/validate envelope as a tables-aware consumer sees it. `JsonEnvelope` itself is not
+ * changed; `result?: never` is a type-level statement that the key is absent.
+ */
+export type JsonSchemaDocument = JsonEnvelope & { readonly result?: never };
 
-/** `a5er tables --format json`. Shared members are the inspect envelope's, verbatim. */
-export interface JsonTablesEnvelope {
+/** Every document the CLI can emit, discriminated on `command` (§5.1). */
+export type JsonDocument = JsonSchemaDocument | JsonTablesEnvelope;
+
+/** `a5er tables --format json` for a read that is not fatal. */
+export interface JsonTablesEnvelopeRead {
   readonly contractVersion: typeof CONTRACT_VERSION;
   readonly tool: { readonly name: typeof TOOL_NAME; readonly version: typeof TOOL_VERSION };
   readonly command: JsonTablesCommand;
-  readonly status: IntegrationStatus;
-  readonly source: JsonSource | null;
+  readonly status: 'ok' | 'degraded';
+  readonly source: JsonSource;
   readonly limits: JsonLimits;
-  /** `null` exactly when `status` is `failed`, like `schema`. */
-  readonly result: JsonTablesResult | null;
+  readonly result: JsonTablesResult;
   readonly unsupported: readonly JsonUnsupported[];
   readonly diagnostics: readonly JsonDiagnostic[];
-  readonly completeness: JsonCompleteness | null;
+  readonly completeness: JsonCompleteness;
+  /** Type-level only: a tables envelope never has a `schema` key (§5.3). Not emitted. */
+  readonly schema?: never;
 }
+
+/** `a5er tables --format json` for a fatal read. */
+export interface JsonTablesEnvelopeFailed {
+  readonly contractVersion: typeof CONTRACT_VERSION;
+  readonly tool: { readonly name: typeof TOOL_NAME; readonly version: typeof TOOL_VERSION };
+  readonly command: JsonTablesCommand;
+  readonly status: 'failed';
+  readonly source: null;
+  readonly limits: JsonLimits;
+  readonly result: null;
+  readonly unsupported: readonly JsonUnsupported[];
+  readonly diagnostics: readonly JsonDiagnostic[];
+  readonly completeness: null;
+  readonly schema?: never;
+}
+
+export type JsonTablesEnvelope = JsonTablesEnvelopeRead | JsonTablesEnvelopeFailed;
 
 export interface JsonTablesResult {
   /** `schema.objects.length` of the inspect envelope: every kind, subtypes included. */
@@ -718,7 +881,7 @@ export interface JsonTableRow {
   /** Index into the inspect envelope's `schema.objects`: gaps are subtypes, never renumbered. */
   readonly objectIndex: number;
   readonly sectionIndex: number;
-  /** The object's `span`, verbatim: its last `PName` line, else its header line. */
+  /** The object's `span`, its four members copied: its last `PName` line, else its header line. */
   readonly span: JsonSpan;
   readonly kind: 'entity' | 'view';
   /** `pname.value`, or `null` when the object declares no `PName`; `''` stays `''`. */
@@ -763,24 +926,69 @@ export interface JsonTablesOmitted {
 }
 ```
 
-`JsonCommand` (`'inspect' | 'validate'`), `JsonEnvelope`, `SerializeContext`, `ExitPolicy` and
-`serialize()` do not change. `toJsonString` widens its parameter from `JsonEnvelope` to
-`JsonDocument`. It is the same function with the same replacer, so the bytes for an existing
-envelope are the same. The package entry point (`src/index.ts`) exports only `VERSION` today, and it
-keeps doing so: none of these types become public library API.
+`JsonCommand` (`'inspect' | 'validate'`), `JsonEnvelope`, `SerializeContext`, `ExitPolicy`,
+`serialize()` and `toJsonString()` do not change. Tables JSON is not produced by `toJsonString`
+but by the bounded encoder of §5.10. The package entry point (`src/index.ts`) exports only
+`VERSION` today, and it keeps doing so: none of these types become public library API.
+
+**`?: never` is type-level only.** It makes `envelope.schema` on a tables envelope, and
+`document.result` on an inspect document, a compile error once narrowed. It does not add a JSON
+member, and the encoder never writes `undefined` (§5.10 rejects it). The runtime guarantee comes
+from the construction rule in §5.3, and both are tested (§8.4).
 
 ### 5.3 `schema` and `result`
 
-- A tables envelope has **no** `schema` member. `result` sits at the position `schema` has in the
-  inspect envelope.
+- A tables envelope has **no** `schema` member, and an inspect or validate envelope has **no**
+  `result` member. `result` sits at the position `schema` has in the inspect envelope.
 - `result` is a pure projection of the `schema` that `inspect` emits for the same bytes:
-  `result = projectTables(inspect.schema)`, and `result` is `null` if and only if
-  `inspect.schema` is `null`.
+  `result = projectTables(inspect.schema)`. `result` is `null` if and only if `inspect.schema` is
+  `null`.
 - Why not both: the schema of a small file is already tens of KB (Skill, "Run"). `tables` exists
-  to give a small answer, and it echoes less confidential text than the full schema. For the full
-  model, run `inspect`.
-- `result` invents nothing. Every number is a length of an array in `inspect.schema`. Every string
-  is a `value` copied from it, and every `reason` is copied verbatim.
+  to give a small answer, and its `result` echoes fewer file-derived strings than the full schema.
+  For the full model, run `inspect` (§4.9).
+- `result` invents nothing (see the number table below).
+
+**Construction rule (runtime).** `toTablesEnvelope(e)` builds every object as an object literal
+with its keys spelled out, in emission order. It never uses spread (`...e`), `Object.assign`,
+`structuredClone` or any other copy of an inspect object, because a copy would carry `schema` or
+other keys along. The strict replacer of `serialize.ts` rejects `undefined`, functions, symbols,
+`bigint` and non-finite numbers, but it would serialise an extra *defined* key without complaint.
+So the replacer does not protect the key set. Explicit construction does, and the key-set tests of
+§8.4 check it. The key lists are constants in `src/view/tables.ts`:
+
+| Object | Keys, in order |
+|---|---|
+| envelope | `contractVersion, tool, command, status, source, limits, result, unsupported, diagnostics, completeness` |
+| `result` | `objects, tables, omitted` |
+| row | `objectIndex, sectionIndex, span, kind, pname, lname, columns` |
+| `span` | `sectionIndex, startLine, endLine, keyLine` (copied member by member into a new object) |
+| `columns` | `status, reason, declared, common, effective, collisions` |
+| `omitted` | `subtypes` |
+| `omitted.subtypes` | `count, sectionIndexes` |
+
+The shared members (`tool`, `source`, `limits`, `unsupported`, `diagnostics`, `completeness`) are
+taken by reference from the inspect envelope. Their key sets are those of the existing contract,
+and the goldens already pin them.
+
+**Status and nulls (runtime).** `JsonEnvelope` does not tie `status` to the nulls in its type, so
+`toTablesEnvelope` checks it when it narrows into one of the two arms. `failed` requires `source`,
+`schema` and `completeness` all `null`. `ok`/`degraded` requires all three non-null. Any other
+combination is a defect: `toTablesEnvelope` throws before anything is written, and no fixture or
+generated document may reach it (§8.4).
+
+**Numbers: counted versus copied.**
+
+| Member | Kind | Source |
+|---|---|---|
+| `result.objects` | count | `schema.objects.length` |
+| `columns.declared`, `.common`, `.effective`, `.collisions` | count | `effectiveColumns.declared.length`, `.common.length`, `.columns.length`, `.collisions.length` |
+| `omitted.subtypes.count` | count | the number of `subtype` objects (`=== sectionIndexes.length`) |
+| `objectIndex` | position | the object's index in `schema.objects`, taken while iterating. It is not a count |
+| `sectionIndex` | copied | `object.sectionIndex` |
+| `span.sectionIndex`, `.startLine`, `.endLine`, `.keyLine` | copied | `object.span` |
+| `omitted.subtypes.sectionIndexes[]` | copied | each subtype's `sectionIndex` |
+
+A count is never copied from a stored number, and a copied value is never recomputed.
 
 ### 5.4 Row and omission invariants (tested, §8.4)
 
@@ -801,6 +1009,10 @@ For every input, with `S = inspect.schema` and `R = tables.result`:
    - a view has `status: 'unknown'`, `reason = effectiveColumns.reason` and four `null` counts.
 6. `R.omitted.subtypes.sectionIndexes` lists `sectionIndex` for every subtype in `S.objects`
    order, and `count` is its length.
+7. Every object in the tables envelope has exactly the keys of §5.3, in that order. There is no
+   `schema` key, and the inspect envelope of the same input has no `result` key.
+8. `status: failed` implies `source`, `result` and `completeness` are `null`.
+   `status: ok|degraded` implies all three are non-null.
 
 ### 5.5 Shared members
 
@@ -812,9 +1024,11 @@ semantics apply unchanged.
 
 ### 5.6 `failed`
 
-`status: 'failed'` means `source: null`, `result: null` and `completeness: null`. `diagnostics`
-holds the fatal record, as in the inspect envelope. Sample (empty input; `tool.version` is shown as
-the golden placeholder):
+`status: 'failed'` means `source: null`, `result: null` and `completeness: null`
+(`JsonTablesEnvelopeFailed`). `diagnostics` holds the fatal record, as in the inspect envelope.
+Conversely, `ok` and `degraded` always carry a non-null `source`, `result` and `completeness`
+(`JsonTablesEnvelopeRead`). Sample (empty input; `tool.version` is shown as the golden
+placeholder):
 
 ```json
 {"contractVersion":"0.1.0","tool":{"name":"@j1nn0/a5er-cli","version":"<package-version>"},"command":"tables","status":"failed","source":null,"limits":{"maxBytes":67108864,"truncated":false},"result":null,"unsupported":[],"diagnostics":[{"code":"E_EMPTY_INPUT","severity":"fatal","message":"The input is empty","details":{"sizeBytes":0},"span":null,"construct":"Source"}],"completeness":null}
@@ -880,15 +1094,20 @@ goldens.
 }
 ```
 
-JSON escaping is standard `JSON.stringify` escaping, as in `inspect`. A name keeps its exact
+The JSON bytes are those of standard `JSON.stringify` escaping, as in `inspect`, written by the
+bounded encoder of §5.10. A name keeps its exact
 value: C0 controls appear as `\u001b`, while U+202E and C1 controls appear as raw UTF-8. A consumer
 that prints JSON strings to a terminal must sanitise them itself. The text renderer (§4.4) does
 this for humans.
 
 **Confidentiality.** Like the inspect envelope, `tables --format json` can contain file text and
-local paths, in addition to the names in `result.tables`:
+local paths, in addition to the names in `result.tables`. The absence of structured fields for
+relations, columns or `Query` (§4.9) does not mean that their text cannot appear as strings:
 
-- `unsupported[].raw`: the original source line of each unsupported construct, verbatim;
+- `unsupported[].raw`: the source text fragment that an existing evidence record keeps verbatim,
+  typically the whole line it points at (a header line, a `key=value` line, a continuation line).
+  Its `sectionHeader` and `key` are file text too. Such a line can belong to any section,
+  including a `[Relation]` or a view's `Query`;
 - `diagnostics[].details`: values taken from the file (for example a subtype name) or from the
   read (for example the path and `errno` of `E_IO`);
 - `source.path`: the path exactly as given on the command line.
@@ -912,39 +1131,95 @@ only file-derived text it shows, the names (§4.4). Handle JSON output with the 
 
 **Why it cannot move.** Every committed golden asserts `contractVersion: "0.1.0"`, and
 `release:check` compares the goldens with `CONTRACT_VERSION`. A bump would change the bytes of every
-`inspect` and `validate` envelope, which decision 6 forbids. So decision 6 already decides that the
-version stays, and the contract rules must say clearly why a new command is allowed under it.
+`inspect` and `validate` envelope, which decision 6 forbids. Keeping `0.1.0` is therefore a
+consequence of decision 6. It holds only together with the compatibility boundary of §5.1 and the
+document revisions in §9 (D-1 to D-7).
 
-**Conditions.** The version stays `0.1.0` only if all of these hold. Each is checked by a test in
-§8:
+**Conditions.** Each is checked by a test in §8:
 
 | ID | Condition |
 |---|---|
 | K-1 | `JsonEnvelope` loses, gains, renames and reorders no member, and `JsonCommand` stays `'inspect' \| 'validate'` |
-| K-2 | Every `inspect` and `validate` output is byte-identical to the baseline (§3.10): goldens, CLI tests and the regression in §8.5 |
-| K-3 | The tables envelope can only be reached through `a5er tables --format json`, which is misuse today. So no invocation that produced an envelope before produces a different one |
-| K-4 | The shared members of the tables envelope equal the inspect envelope's (§5.5), so a consumer's handling of the existing fields stays valid for them |
-| K-5 | The rule amendment below is agreed and applied together with the implementation |
+| K-2 | Every `inspect` and `validate` output is byte-identical to the baseline (§3.10): goldens, CLI tests and the byte regression of §8.5 |
+| K-3 | A tables envelope can only be reached through `a5er tables --format json`, which is misuse today. So no invocation that produced an envelope before produces a different one |
+| K-4 | The shared members of the tables envelope equal the inspect envelope's (§5.5), so a consumer's handling of those members stays valid for them |
+| K-5 | The revisions D-1 to D-7 of §9 are agreed and applied together with the implementation |
 
-**Rule amendment** (to apply in the implementation PR, with agreement). The current wording does
-not agree with itself. `architecture.md` §12 rule 6 says unknown fields are *additive*, and only
-removing or renaming one bumps the version. The comments in `src/json/envelope.ts` and
+**What K-1 to K-5 guarantee, exactly:**
+
+- **G-1.** For `command` `inspect` or `validate` at `0.1.0`: the same argv and bytes give the same
+  document, byte for byte, as at the baseline (K-1, K-2).
+- **G-2.** No invocation that was accepted before now yields a tables document (K-3).
+- **G-3.** In a tables document, the eight shared members mean what they mean in the inspect
+  document of the same input, and serialise to the same bytes (K-4).
+- **G-4.** The contract documents describe the per-command shapes, and the selection key of §5.1
+  (K-5).
+
+**What they do not guarantee:** that a consumer selecting its decoder by `contractVersion` alone
+can decode every `0.1.0` document. A tables document has no `schema`. Such a consumer is outside
+the boundary and must reject the document (§5.1).
+
+**Rule amendment** (D-1, applied in the implementation PR with agreement). The current wording
+does not agree with itself. `architecture.md` §12 rule 6 says unknown fields are *additive*, and
+only removing or renaming one bumps the version. The comments in `src/json/envelope.ts` and
 `scripts/lib/version.mjs` say the version moves when a field is *added*, removed or renamed. The
 proposed single wording, for all three places:
 
 > `contractVersion` versions the envelope of each command. It moves when a field of an existing
 > command's envelope is added, removed, renamed or reordered, or when the meaning of a value
-> changes. A new command that has its own envelope shape, is discriminated by `command`, keeps the
-> shared members verbatim and leaves every existing envelope byte-identical is additive and does
-> not move it.
+> changes. A new command that has its own envelope shape, is selected by `(command,
+> contractVersion)`, keeps the shared members verbatim and leaves every existing envelope
+> byte-identical is additive and does not move it. Consumers select decoders by `(command,
+> contractVersion)` and reject pairs they do not support.
 
 **Not covered by `contractVersion`:** the text output of `tables`. Text is for humans. It is
 specified and tested here, and changing it needs a reviewed change to this specification and its
 tests, but it is not the machine contract. Scripts must use `--format json`.
 
-With K-1 to K-5 in place, no contract question is left open: the discriminator, the payload
-position, the null rule for `failed`, the shared members, the version and the status of text are
-all decided above.
+### 5.10 Bounded JSON emission
+
+`toJsonString` (one `JSON.stringify` of the whole envelope) is what `inspect` uses. It is not safe
+to assume for the largest inputs the read accepts. A 20,878,001-byte synthetic file of 1,999,000
+unknown keys (within `maxBytes` and `maxLines`) makes today's `inspect` throw
+`RangeError: Invalid string length` inside `toJsonString` (§7.1). Its envelope would exceed V8's
+maximum string length of 536,870,888 code units. A tables envelope carries the same `unsupported`
+and `diagnostics`, so it can be just as large. Tables JSON is therefore produced by a streaming
+encoder:
+
+- `encodeJson(document: JsonTablesEnvelope): Iterable<string>` in `src/json/stream.ts` walks the
+  document depth-first, keys in insertion order (which is the construction order of §5.3) and
+  arrays in order. It writes `{`, `"key":`, `,`, `[` and `]` itself.
+- **Same rules as `toJsonString`.** For every value, with its key (`''` for the root, the index as
+  a string inside arrays), it calls the strict replacer of `serialize.ts` (exported for this, with
+  no behaviour change). So `undefined`, functions, symbols, `bigint` and non-finite numbers throw
+  a `TypeError`, exactly as they do today. Only plain objects (prototype `Object.prototype` or
+  `null`) and arrays are walked. Anything else, including objects with `toJSON`, throws instead of
+  being guessed; the envelope contains none.
+- **Strings** are written as `"`, then the string in slices of at most 16,384 code units, each
+  escaped as `JSON.stringify(slice).slice(1, -1)`, then `"`. Slices are cut only at code point
+  boundaries, never between a high surrogate and the low surrogate that follows it. `JSON.stringify`
+  escapes per code unit, apart from lone surrogates, and code-point-boundary slicing never changes
+  whether a surrogate is lone. So the concatenation equals `JSON.stringify` of the whole string.
+- Numbers, booleans and `null` are written with `JSON.stringify(value)`.
+- **Chunks.** Pieces go into a buffer, which is yielded once it holds at least 65,536 code units.
+  A piece is at most 6 × 16,384 + 2 code units, so every chunk is under 262,144 code units. The last
+  chunk ends with `\n`.
+- **Equivalence.** For every document that `JSON.stringify` can hold as one string,
+  `[...encodeJson(d)].join('')` must equal `JSON.stringify(d, strictReplacer) + '\n'`, the same
+  call `toJsonString` makes. This is tested on every fixture
+  and generated document (§8.4). For larger documents, the bytes are by definition the ones
+  `JSON.stringify` would produce if it had no length limit.
+
+**Measured feasibility** (throwaway prototype outside the repository, Linux, Node v24.22.3). The
+same envelope as above (1,999,000 `unsupported` and 1,999,001 `diagnostics` records), written by
+this chunking scheme, produced 951,520,194 bytes of valid JSON in 13.8 s. The largest chunk was
+65,792 code units, the heap held 2,455 MiB after encoding, and peak RSS was 2.75 GB. Python's
+`json` module parsed the result.
+
+**Consumer note.** A valid tables document can be larger than what a consumer can hold as one
+string. `JSON.parse(readFileSync(…, 'utf8'))` on the 951 MB output above failed in Node with
+`ERR_STRING_TOO_LONG`. Consumers that must handle the largest inputs need a streaming parser.
+P0 does not add a size option or a summary-only JSON mode.
 
 ---
 
@@ -953,30 +1228,39 @@ all decided above.
 | Module | Role | Imports |
 |---|---|---|
 | `src/json/envelope.ts` | The types of §5.2 (types only, as today) | unchanged set |
-| `src/json/serialize.ts` | `toJsonString(document: JsonDocument)`: parameter type widened only | unchanged |
-| `src/view/tables.ts` | `projectTables(schema: JsonSchema): JsonTablesResult` and `toTablesEnvelope(envelope: JsonEnvelope): JsonTablesEnvelope`. Pure, no I/O, no `node:` imports | `src/json/` types |
-| `src/view/index.ts` | barrel | — |
-| `src/text/escape.ts` | the escape set, the whitespace set, `renderName(value: string \| null): string` (§4.4.1) and `escapeText(text: string): string` (escape-set replacement only, §4.8) | none |
-| `src/text/width.ts` | `displayWidth(text: string): number` with the table of §4.11 | none |
-| `src/text/layout.ts` | `layoutColumns(header, rows, align): string[]`: padding only, no trailing whitespace | `width.ts` |
-| `src/text/tables.ts` | `renderTablesText(envelope: JsonTablesEnvelope): string` | `src/json/` types, `escape.ts`, `layout.ts` |
-| `src/text/index.ts` | barrel | — |
-| `src/cli.ts` | the argv rules of §3.2, `tables` dispatch, the output writer of §7.2 for `tables` | the above |
+| `src/json/serialize.ts` | Unchanged behaviour. `strictReplacer` becomes an `export` so that §5.10 reuses it | unchanged |
+| `src/json/stream.ts` (new) | `encodeJson(document: JsonTablesEnvelope): Iterable<string>`: bounded chunks (§5.10) | `serialize.ts` (`strictReplacer`), `envelope.ts` types |
+| `src/json/index.ts` | barrel: also exports the new types and `encodeJson` | — |
+| `src/view/tables.ts` (new) | `projectTables(schema: JsonSchema): JsonTablesResult`, `toTablesEnvelope(envelope: JsonEnvelope): JsonTablesEnvelope`, and the key-list constants of §5.3. Pure, no I/O, no `node:` imports | `src/json/` types |
+| `src/view/index.ts` (new) | barrel | — |
+| `src/text/escape.ts` (new) | the escape set, the whitespace set, `renderNamePieces(value: string \| null): Iterable<string>` and `renderedNameWidth(value: string \| null): number` (§4.4.1, §4.10), `escapeText(text: string): string` (escape-set replacement only, §4.8), and `quoteArg(arg: string): string` (§3.5) | none |
+| `src/text/width.ts` (new) | `codePointWidth(cp: number): 0 \| 1 \| 2` and `displayWidth(text: string): number` with the table of §4.11 | none |
+| `src/text/chunks.ts` (new) | the chunk buffer shared by the text renderer: append pieces, yield at 65,536 code units, never split a surrogate pair | none |
+| `src/text/tables.ts` (new) | `renderTablesText(envelope: JsonTablesEnvelope): Iterable<string>`: the two passes of §4.10, the layout of §4.3 and the notes of §4.8 | `src/json/` types, `escape.ts`, `width.ts`, `chunks.ts` |
+| `src/text/index.ts` (new) | barrel | — |
+| `src/io/stdout.ts` (new) | `writeOutput(chunks, stderrText, streams, readCode): Promise<number>` (§7.2). It is the only module that touches the output streams, and it takes them as parameters | `node:stream` types only |
+| `src/cli.ts` | the argv rules of §3.2, `quoteArg` in misuse messages, `tables` dispatch through `writeOutput`. `run()` for `inspect`/`validate` is unchanged | the above |
 
-Dependencies go one way: `cli → text → view → json`, and `text` only needs `json` types. Neither
-`view` nor `text` imports a pipeline stage (`decode`, `syntax`, `schema`, `semantic`, `validate`).
-Both work only on the envelope, so they cannot parse or re-decide anything. No `package.json`
-dependency is added.
+Dependencies go one way: `cli → text, view, json, io/stdout`, `text → json` (types), `view → json`
+(types). Neither `view` nor `text` imports a pipeline stage (`decode`, `syntax`, `schema`,
+`semantic`, `validate`), so they cannot parse or re-decide anything. `src/json/stream.ts` sits in
+`src/json/` because it is the JSON contract's encoder. `src/io/stdout.ts` sits in `src/io/`
+because it is a process I/O boundary, and it is separate from `cli.ts` so that tests can import it
+without running `main()`. No `package.json` dependency is added.
 
 ---
 
 ## 7. D — Robustness
 
-### 7.1 Measured baseline (today's `inspect`, before any change)
+### 7.1 Measured baseline (before any change)
 
-Measured once on Linux (Ubuntu, kernel 7.0) with Node `v24.22.3` and the baseline `dist/cli.js`,
-using synthetic inputs in a temp directory. Node 26, Windows and macOS were **not** measured
-locally: a local Node 26 install was incomplete, and no Windows or macOS host was available.
+All measurements were taken once on Linux (Ubuntu, kernel 7.0, 8 CPUs, 30 GB RAM) with Node
+`v24.22.3` (V8 heap limit 4,288 MiB, maximum string length 536,870,888 code units) and the baseline
+`dist/cli.js`. Inputs were synthetic and lived in temp directories outside the repository. Node 26,
+Windows and macOS were **not** measured locally: a local Node 26 install was incomplete, and no
+Windows or macOS host was available.
+
+**Write errors of today's `inspect`:**
 
 | Scenario | Observed exit | Observed stderr |
 |---|---|---|
@@ -986,65 +1270,125 @@ locally: a local Node 26 install was incomplete, and no Windows or macOS host wa
 | `inspect txt-01 > /dev/full` | `1` | `Unhandled 'error' event`, `ENOSPC: no space left on device, write` |
 | `inspect txt-01 >&-` (stdout closed) | `0` | empty. The output is lost without any signal, and the process cannot see it |
 
-Findings: a broken pipe exits `1`, the code for "failed read", and prints a stack trace. That is
-the failure mode `tables` must not have. A throwaway probe that writes 8 MiB with
-`process.stdout.on('error', …)` installed exited `0` with no trace on `| head -c 1` and `| true`,
-and exited `74` with the one-line message on `/dev/full`. That confirms the policy below is
-feasible on this platform. `inspect` and `validate` keep the crash, because they must not change
-(§3.10, §11 F-1).
+**Large but accepted inputs:**
+
+| Input (all accepted by the read limits) | Observation |
+|---|---|
+| Review reproduction: one 200,001-character `PName`, plus 3,999 entities with 5-character names (616,068 bytes) | `inspect`: exit `0`, 17,032,749-byte envelope, 0.69 s, peak RSS 232 MB. A prototype renderer that pads every row to the longest name and joins the output into one string failed with `RangeError: Invalid string length`: about 200,001 × 4,000 ≈ 800 million padding characters. That is the B1 defect, and §4.3 and §4.10 remove it |
+| Escape expansion: one `PName` of 400,000 ESC characters (each renders as the 8-character `\u{001B}`), plus 3,999 short names (816,067 bytes) | `inspect`: exit `0`, 25,832,745-byte envelope, 0.74 s, peak RSS 259 MB |
+| 1,999,000 unknown keys in one entity (20,878,001 bytes, 1,999,008 lines) | `inspect`: exit `1`, no stdout, `RangeError: Invalid string length` thrown from `JSON.stringify` in `toJsonString`, 23.5 s, peak RSS 3.0 GB. With the §5.10 chunking, a tables-like envelope wrote 951,520,194 bytes of valid JSON (13.8 s, peak RSS 2.75 GB, largest chunk 65,792 code units) |
+| 200,000 `Field` lines in one entity (11,377,891 bytes) | `inspect`: exit `0`, 372,293,684-byte envelope (69 % of the maximum string length), 8.0 s, peak RSS 1.78 GB. A tables-like run: heap 791 MiB after `serialize()`, peak RSS 984 MB |
+| 1,155,516 `Field` lines (67,108,851 bytes, just under `maxBytes`) | Pipeline through `integrate()`: heap 2,847 MiB (load 82, scan 594, classify 2,628, semantics 2,847). `serialize()` then exhausted the 4,288 MiB heap: `FATAL ERROR … heap out of memory`, exit `134` (SIGABRT), 28 s. This is the shared stage of §2, so `inspect` and `tables` would both abort on this input. No stdout write happens before the abort |
+
+Findings:
+
+- A broken pipe exits `1`, the code for "failed read", and prints a stack trace. That is the
+  failure mode `tables` must not have. `inspect` and `validate` keep it, because they must not
+  change (§3.10, §11 F-1).
+- Whole-output strings fail on accepted inputs. That covers both the text padding defect and
+  `JSON.stringify` of a large envelope. P0 bounds every output string (§4.10, §5.10).
+- After that, the only stage that still grows with the input is the in-memory pipeline shared with
+  `inspect`. It hits the heap limit, not the string limit, at the maximum input size. P0 does not
+  change that stage (§11 F-4).
+
+A throwaway prototype of the §7.2 writer (64 KiB chunks, backpressure, settle once) gave the
+following results. `| head -c 100000` exited `0`, received exactly 100,000 bytes, and stderr held
+only the diagnostic line, with no trace. `| true` exited `0`. `> /dev/full` exited `74` with the
+diagnostic line followed by `a5er: error: cannot write to stdout (ENOSPC)`. A complete read
+received exactly the expected 8,388,609 bytes.
 
 ### 7.2 Output writer policy (`tables` only)
 
-1. The CLI sets `process.exitCode` to the read's code (`0` or `1`) **before** it writes.
-   `process.exit()` is never called. On POSIX, pipe writes are asynchronous (Node docs, "A note on
-   process I/O"), and `process.exit()` could cut off output that is still queued.
-2. An `'error'` listener goes on `process.stdout` and on `process.stderr` before the first write.
-3. stdout `EPIPE`: the reader closed the pipe on purpose (`head`, `less` closed early). Stop
-   writing, print nothing, and **keep** the read's exit code. So
-   `a5er tables f | head -n 3` exits `0` for a readable file and `1` for a failed read, the
-   same as without `head`.
-4. Any other stdout error (`ENOSPC`, `EIO`, `EBADF`, …): set `process.exitCode = 74` and write one
-   line to stderr: `a5er: error: cannot write to stdout (<code>)`, where `<code>` is
-   `error.code`, or `UNKNOWN` when it is missing or not a string of `[A-Z0-9_]+`. No stack, no
-   path, no message text from the system.
-5. A stderr error of any kind is ignored. There is nowhere left to report it, and it never changes
-   the exit code.
-6. The whole stdout text is written with one `write()` call, as today. stderr is written after
-   stdout has been handed over.
-7. The writer is a function with injected streams (`writeOutput(result, { stdout, stderr })`), so
-   unit tests can feed it fake streams that fail on all three CI platforms (§7.3 R-3).
+`writeOutput(chunks, stderrText, streams, readCode)` writes one invocation's output and returns the
+exit code. Its outcome is **settled exactly once**.
 
-Only an `EPIPE` on stdout counts as "reader closed". If a platform reports a closed pipe with a
-different code, the tests in §7.3 fail on that platform. The fix is a reviewed change to this list,
-never a wider catch-all.
+1. **Before writing.** The CLI sets `process.exitCode = readCode` (`0` or `1`). `process.exit()`
+   is never called. On POSIX, pipe writes are asynchronous (Node docs, "A note on process I/O"),
+   and `process.exit()` could cut off queued output.
+2. **Listeners.** An `'error'` listener goes on `stdout` and on `stderr` before the first write.
+   Both stay attached until the process exits, so a late or repeated `'error'` event is never
+   unhandled and never produces a stack trace.
+3. **Recording a stdout failure.** `record(error)` stores the first stdout error and ignores every
+   later one. It is fed by the `'error'` event, by the error argument of every `write()` callback,
+   and by a `try`/`catch` around every `write()` call, in case of a synchronous throw. One failure
+   that is reported both by a callback and by an event is therefore recorded once, and reported
+   once.
+4. **Writing chunks.** The chunks are written in order, one `write(chunk, callback)` at a time.
+   The loop stops as soon as a failure is recorded. When `write()` returns `false`, the writer
+   waits for `'drain'`, for a recorded failure, or for `'close'` (a `'close'` without an error
+   counts as a closed pipe, like `EPIPE`), whichever comes first. This is the backpressure rule. It
+   bounds the queued output to about one chunk beyond the stream's high-water mark.
+5. **Settling stdout.** After the last chunk, the writer waits for the callback of every write it
+   made. The outcome is then fixed, once: **accepted** (every callback succeeded), **closed**
+   (`EPIPE`, or `'close'` without an error), or **failed** with `error.code`. Events that arrive
+   after this point are ignored by the listeners of item 2.
+6. **Then stderr, in fixed order.** First `stderrText`, the `renderDiagnostics()` lines (§3.6). It
+   is written whatever the stdout outcome, so a stdout failure never drops a diagnostic. Then, only
+   for **failed**, one line: `a5er: error: cannot write to stdout (<CODE>)`, where `<CODE>` is
+   `error.code` when it is a string of `[A-Z0-9_]+` and `UNKNOWN` otherwise. There is no stack, no
+   path and no system message text.
+7. **stderr errors** of any kind are ignored, as before: there is nowhere left to report them. They
+   never change the exit code. They are the one case in which diagnostic lines can be lost.
+8. **Exit code.** **failed** gives `74`, and it overrides `readCode`. **accepted** and **closed**
+   keep `readCode` (§3.7). For **closed** nothing extra is printed: `a5er tables f | head -n 3`
+   exits `0` for a readable file and `1` for a failed read, the same as without `head`.
+9. **Same rules for every chunk and both formats.** Text and JSON go through the same writer. A
+   chunk is just the unit of `write()`; none of the rules depend on how many chunks there are.
+
+**Partial output.** If stdout fails, or the reader closes it, after some chunks were accepted, the
+reader may hold any prefix of the complete output. It may end inside a row, inside a JSON token,
+or even inside a UTF-8 sequence that the OS accepted only partly. The writer adds no completion
+marker. **A complete output is identified by the exit code, never by its content.** A process that
+read stdout to EOF and got exit `0` or `1` without closing the pipe early has the whole document.
+Exit `74` means stdout is incomplete and must be discarded, even when the prefix happens to look
+complete. A JSON prefix that lacks only the final `\n` parses as valid JSON, so parseability proves
+nothing. A reader that closed the pipe early knows it stopped reading.
+
+Only an `EPIPE` (or a `'close'` without an error) on stdout counts as "reader closed". If a
+platform reports a closed pipe with a different code, the tests in §7.3 fail on that platform. The
+fix is then a reviewed change to this list, never a wider catch-all.
+
+`inspect` and `validate` keep their current single synchronous `write()` path and are not routed
+through `writeOutput` (§3.10, F-1).
 
 ### 7.3 Write-error tests
 
+Unit tests use `writeOutput` with fake `Writable` streams, so they run identically on both CI
+operating systems. Real-pipe tests spawn the built CLI.
+
 | ID | Test | Platforms | Expectation |
 |---|---|---|---|
-| R-1 | Spawn `node dist/cli.js tables <big>` with `stdio: ['ignore', 'pipe', 'pipe']`. `<big>` is a generated synthetic document of 4,000 entities, each with a 200-character CJK `LName` (about 600 UTF-8 bytes per row). The test first asserts that the text stdout of the same document is over 1 MiB, so the precondition is measured, not assumed. Read the first `data` chunk, then `child.stdout.destroy()` | Ubuntu, Windows (CI); macOS manual | exit `0`, stderr `''`, no `EPIPE` or `Error` text anywhere |
+| R-1 | Spawn `node dist/cli.js tables <big>` with `stdio: ['ignore', 'pipe', 'pipe']`. `<big>` is a generated synthetic document of 4,000 entities, each with a 200-character CJK `LName` (about 600 UTF-8 bytes per row). The test first asserts that the full text output of `<big>` is over 1 MiB, by running it to a file, so the precondition is measured, not assumed. Read the first `data` chunk, then `child.stdout.destroy()` | Ubuntu, Windows (CI); macOS manual | exit `0`, stderr `''`, no `EPIPE` or `Error` text anywhere, and the received byte count is above 0 and below the full length |
 | R-1j | R-1 with `--format json` | same | same |
 | R-2 | Spawn as R-1, but destroy stdout before the child's first write (right after `spawn`) | same | exit `0`, stderr `''` |
 | R-2f | R-2 on a document that fails to read (an empty file) | same | exit `1`, stderr is exactly the `fatal` line |
-| R-C | **Observation of today's `inspect`** (not an acceptance condition): R-1 run against `inspect` on the same document | same | Record what happens: exit code, and whether stderr contains `EPIPE`. On Linux with Node v24.22.3 it exits `1` with an `EPIPE` stack trace (§7.1), but other operating systems may not reproduce it. The test reports the observed result per platform and does not fail on a difference. It does not pin the crash as required behaviour. Whether `tables` is EPIPE-safe is decided by R-1, R-1j, R-2, R-2f, R-3 and R-3e, which stay mandatory |
-| R-3 | `writeOutput` with a fake stdout whose `write` makes it emit `error` with code `EIO`, `ENOSPC` or `EBADF`, and with no code | all | `exitCode` becomes `74`, and stderr is exactly `a5er: error: cannot write to stdout (EIO)\n`, `(ENOSPC)` or `(UNKNOWN)` |
-| R-3e | `writeOutput` with a fake stdout that emits `EPIPE` | all | `exitCode` stays at the read's code, and stderr gets nothing extra |
-| R-3s | Fake stderr that emits `EPIPE` or `EIO` | all | no throw, and `exitCode` does not change |
+| R-C | **Observation of today's `inspect`** (not an acceptance condition): R-1 run against `inspect` on the same document | same | Record what happens: exit code, and whether stderr contains `EPIPE`. On Linux with Node v24.22.3 it exits `1` with an `EPIPE` stack trace (§7.1), but other operating systems may not reproduce it. The test reports the observed result per platform and does not fail on a difference. It does not pin the crash as required behaviour. Whether `tables` is EPIPE-safe is decided by R-1, R-1j, R-2, R-2f and R-3 to R-11, which stay mandatory |
+| R-3 | Fake stdout whose `write` callback gets an error with code `EIO`, `ENOSPC` or `EBADF`, or with no code | all | returns `74`, and stderr ends with exactly `a5er: error: cannot write to stdout (EIO)\n`, `(ENOSPC)`, `(EBADF)` or `(UNKNOWN)` |
+| R-3e | Fake stdout that fails with `EPIPE`, and separately one that emits `'close'` without an error | all | returns the read code. stderr is exactly the diagnostic lines, with nothing extra |
+| R-3s | Fake stderr that fails with `EPIPE` or `EIO` while stdout succeeds | all | no throw, no unhandled `'error'`, the read code is returned |
 | R-4 | Real `tables txt-01 > /dev/full` | Linux only: `it.runIf(process.platform === 'linux')`, because `/dev/full` exists only there. Reported as a platform skip elsewhere | exit `74`, stderr `a5er: error: cannot write to stdout (ENOSPC)\n` |
+| R-5 | **Delayed error**: fake stdout whose `write()` returns `true` and whose callback gets `EIO` 50 ms later, after the last chunk was handed over | all | returns `74`. The write-error line comes after the diagnostic lines |
+| R-6 | **Diagnostics coexist with a write error**: the staged sem-08 (`degraded`, one `error` diagnostic) through a fake stdout that fails with `EIO` on the second chunk | all | stderr is exactly the `V_DUPLICATE_OBJECT_NAME` line followed by the write-error line; returns `74` |
+| R-7 | **stdout and stderr fail together**: stdout `EIO`, stderr `EIO` | all | returns `74`, no throw, no unhandled `'error'` |
+| R-8 | **Double notification**: fake stdout that reports one failure through both the callback and an `'error'` event, then emits a second `'error'` (`ENOSPC`) | all | exactly one write-error line, naming the first code (`EIO`); returns `74` |
+| R-9 | **Synchronous throw**: fake stdout whose `write()` throws | all | returns `74`, and no further chunk is written |
+| R-10 | **Backpressure**: fake stdout whose `write()` returns `false` and emits `'drain'` 10 ms later | all | every chunk is written exactly once, in order, never more than one outstanding past `false`; the concatenated bytes equal the expected output |
+| R-11 | **Real pipe, full read**: spawn `tables` on txt-01 (text and JSON) and on R-1's `<big>`, and read stdout to EOF | Ubuntu, Windows (CI) | the received bytes equal the expected output exactly: for txt-01 the hand-authored expectation of §8.3, and for `<big>` the length and SHA-256 of the same output written to a file. Exit `0`, last byte `\n` |
 
 The tests time out at 20 s, like `runCli`, and clean up their temp directories in `finally`. The
-generated document is written to a `mkdtemp` directory and removed afterwards. It is never
+generated documents are written to a `mkdtemp` directory and removed afterwards. They are never
 committed (§3.1 of `test-strategy.md`).
 
 ### 7.4 Terminal-control neutralisation tests
 
 | ID | Test |
 |---|---|
-| S-1 | For every code point in each range of §4.4.2, the range ends and the code points just outside them: `renderName` gives `\u{XXXX}` for the inside and the raw character for the outside. This includes U+0000, U+001B, U+007F, U+0085, U+009B, U+009F, U+00A0 (not escaped, but quoted), U+202E, U+2066–U+2069, U+FEFF, U+FFFE, U+10FFFF, U+E0001, and a lone U+D800 and U+DC00 |
-| S-2 | Exhaustive: for all 1,114,112 code points (as one-code-point strings, lone surrogates included), the output contains no escape-set code point, and decoding the output gives the input back (round trip) |
+| S-1 | Pure renderer test (no CLI): for every code point in each range of §4.4.2, the range ends and the code points just outside them, `renderNamePieces` gives `\u{XXXX}` for the inside and the raw character for the outside. This includes U+0000, U+000A (LF), U+000D (CR), U+001B, U+007F, U+0085, U+009B, U+009F, U+00A0 (not escaped, but quoted), U+202E, U+2066–U+2069, U+FEFF, U+FFFE, U+10FFFF, U+E0001, and a lone U+D800 and U+DC00 |
+| S-2 | Pure renderer test: for all 1,114,112 code points (as one-code-point strings, lone surrogates included), the output contains no escape-set code point, and decoding the output gives the input back (round trip). The cases include CR, LF and CRLF inside a longer string. CR and LF cannot reach a name through the current scanner (S-4), so their escaping and round trip are proven here |
 | S-3 | Ambiguity: `null → -`, `'' → ""`, `'-' → "-"`, `'a"b' → "a\"b"`, `'a\\b' → "a\\b"`, `'a b' → "a b"`, `'顧客　一覧' → "顧客　一覧"` |
-| S-4 | Integration: a generated document whose `PName`/`LName` hold ESC-based CSI (`<ESC>[2J`), OSC 8 (`<ESC>]8;;x<ESC>\`), BEL, CR, C1 CSI (U+009B), RLO, LRI/PDI, ZWJ, BOM and a tag sequence (U+E0001 U+E0041). The text stdout has no byte `0x1B`, `0x07` or `0x0D` and no UTF-8 encoding of U+009B, U+202E, U+2066, U+2069, U+200D, U+FEFF or U+E0000–U+E007F, while the JSON stdout keeps the exact values (decoded `pname` equals the written value) |
+| S-4 | Real CLI. The current scanner ends a line at CR, LF or CRLF (`src/syntax/lines.ts`), so a literal CR or LF in a generated `PName` would split the key line. S-4 does not require a parser change and does not use them. Instead the generated document puts, inside one `PName`/`LName` line, only controls that the current parser keeps in the value: ESC-based CSI (`<ESC>[2J`), OSC 8 (`<ESC>]8;;x<ESC>\`), BEL, TAB, DEL, one NUL (below the 10 % binary threshold), U+0085, U+009B, U+2028, U+2029, U+202E, U+2066, U+2069, U+200D, U+FEFF and the tag sequence U+E0001 U+E0041. (A local check with the baseline `inspect` showed all of them in `pname.value`, `status: ok`.) Assertions: the text stdout contains no byte `0x00`, `0x07`, `0x09` or `0x1B`, and no UTF-8 encoding of U+007F, U+0085, U+009B, U+2028, U+2029, U+202E, U+2066, U+2069, U+200D, U+FEFF or U+E0000–U+E007F. In the tables JSON, `pname`/`lname` equal `pname.value`/`lname.value` of `a5er inspect` on the same staged file. The test compares against the interpreted value, not against the string the generator wrote |
 | S-5 | Every output line of S-4 matches `^(# .*\|SECTION .*\|[ 0-9].*)$`. No line ends in whitespace, and no line holds `\r` or `\t` |
+| S-6 | `quoteArg`: printable ASCII arguments give exactly `JSON.stringify(arg)`. `"--bad\ncontrol"` keeps today's text. U+007F, U+009B, U+202E, U+2066, U+FEFF and U+E0041 give `\u007f`, `\u009b`, `\u202e`, `\u2066`, `\ufeff` and `\udb40\udc41`. The result always parses back (`JSON.parse`) to the argument. A real CLI misuse run with such an argument has none of those code points raw on stderr |
 
 ### 7.5 Platforms
 
@@ -1066,23 +1410,30 @@ authored with `\n`, and the comparison is byte for byte.
   `String.fromCodePoint` and plain loops, and no `Intl`, `\p{…}`, `Intl.Segmenter` or ICU data.
   Output therefore does not depend on the ICU or Unicode version, and the same expected strings
   must pass in both matrix versions.
-- The `'error'` event behaviour of `process.stdout` is checked on both versions by R-1 to R-3 in
-  CI. It is never assumed.
+- The `'error'` event behaviour of `process.stdout` is checked on both versions by R-1 to R-11
+  in CI. It is never assumed.
 
-### 7.7 Line width and long identifiers
+### 7.7 Line width, long identifiers and bounded output
 
 | ID | Test |
 |---|---|
 | W-1 | `displayWidth` table test: one sample inside each range and at each range end, a sample outside, U+3099 = 0, U+FF61 = 1, U+3000 = 2, U+1F600 = 2 |
-| W-2 | A 10,000-character ASCII `PName` and a 2,000-character CJK `LName` appear in full in the row. The row length equals the computed sum, and nothing is truncated or wrapped |
-| W-3 | Alignment: for every row, `displayWidth` of the text before `LNAME` is the same, with mixed ASCII, CJK and escaped names (hand-computed expected strings) |
-| W-4 | A line near the read limits: a `PName` line of 1 MiB inside the default `maxLineLength` (4 MiB) renders whole |
+| W-2 | A 10,000-character ASCII `PName` and a 2,000-character CJK `LName` appear in full in the row, and the row length equals the computed sum. Nothing is truncated or wrapped |
+| W-3 | Alignment: in every row whose rendered `PNAME` is at most 48 cells wide, the text before `LNAME` has the same display width, with mixed ASCII, CJK and escaped names (hand-computed expected strings) |
+| W-4 | Cap boundary: rendered `PNAME` widths of 47, 48 and 49 cells. 47 and 48 are aligned, and with the 48-cell name present `W = 48`. 49 is followed by exactly two spaces and `LNAME`, and does not change `W` |
+| B-1 | **Review reproduction**: one entity with a 200,001-character `PName` and 3,999 entities with 5-character names, generated. Real CLI, text: exit `0`. The long row holds the whole name, then exactly two spaces, then `LNAME`. Every other row is aligned at `W = 5`. The stdout size is below 1 MiB (the input is 616,068 bytes). The run finishes inside the 20 s timeout. JSON: `pname` of that row equals inspect's `pname.value` |
+| B-2 | **Escape expansion**: one `PName` of 400,000 ESC characters, plus 3,999 short names, generated. Text: the row holds `"` + 400,000 × `\u{001B}` + `"` (3,200,002 code units), and decoding it gives the value back. JSON: `pname` equals inspect's `pname.value` |
+| B-3 | **Chunk bound**, as a unit test with a spy sink on in-memory envelopes (B-1, B-2, and 200,000 unknown keys): every chunk from `renderTablesText` and from `encodeJson` is under 262,144 code units. No chunk ends with a high surrogate, and no chunk starts with a low surrogate that belongs to a pair |
+| B-4 | **Surrogate boundaries**: names and raw values with astral code points placed at code units 16,383, 16,384 and 65,535 of a string. Text and JSON outputs decode to the original values, with no U+FFFD |
+| B-5 | **JSON equivalence**: `[...encodeJson(d)].join('')` equals `JSON.stringify(d, strictReplacer) + '\n'` for every fixture and every generated document of §8.6 and B-1 to B-4 |
+| B-6 | **Beyond the string limit** (manual measurement, not CI, recorded in the implementation PR): the 1,999,000-unknown-key document of §7.1 through `tables --format json`. Expected: exit `0`, more than 536,870,888 bytes of stdout, and a streaming JSON parse succeeds. It is manual because it needs about 3 GB of RAM and tens of seconds per run. CI covers the same code paths at bounded size (B-3, B-5) |
 
 ### 7.8 Original file immutability and confidentiality
 
-- `tables` uses the existing read-only loader. The `imm-01` style test (`immutability.test.ts`)
-  gains `tables` (text) and `tables --format json` runs over every staged synthetic fixture. Each
-  must leave sha256, size and mtime unchanged.
+- `tables` uses the existing read-only loader. A new test file,
+  `tests/cli-tables-immutability.test.ts`, runs `tables` (text) and `tables --format json` over
+  every staged synthetic fixture. Each run must leave sha256, size and mtime unchanged. The
+  existing `tests/immutability.test.ts` is **not** modified.
 - `tables` writes no file, temp file or cache, and makes no network call. A test runs it with the
   working directory set to an empty temp directory and checks that the directory is still empty.
 - All tests use staged copies (`tests/helpers/stage.ts`) or generated documents in `mkdtemp`
@@ -1090,7 +1441,7 @@ authored with `\n`, and the comparison is byte for byte.
 - Tests do not print the output when they pass. A failure message shows the first differing line
   only for synthetic data.
 - Text output prints names because the listing is the answer. It never prints `Comment`, `Query`,
-  `details`, raw lines or the path, so it echoes strictly less file text than `inspect`.
+  `details`, raw lines or the path. JSON keeps them where the shared members do (§5.7).
 
 ---
 
@@ -1195,28 +1546,64 @@ exactly and the exit code:
 
 ### 8.4 JSON contract tests (`tests/json-tables-contract.test.ts`)
 
-- The key order of the tables envelope is
-  `contractVersion, tool, command, status, source, limits, result, unsupported, diagnostics, completeness`,
-  and there is no `schema` key.
-- For every synthetic and byte fixture: `JSON.parse(tables)` without `command` and `result` deep
-  equals `JSON.parse(inspect)` without `command` and `schema`. The same holds for the bytes of each
-  shared member, compared as `JSON.stringify` of each member (§5.5).
-- `result` equals the hand-authored expectation of §8.1, and §5.4 holds against the inspect golden
-  of the same fixture.
-- `failed` fixtures: `source`, `result` and `completeness` are `null`.
-- `toJsonString` rejects `undefined` inside a tables envelope (the replacer still applies).
-- K-1: a type-level test that `JsonCommand` is exactly `'inspect' | 'validate'`, plus the
-  existing `ENVELOPE_KEYS` checks, unchanged.
-- One line plus `\n` on stdout. `JSON.parse` of the whole stream succeeds.
+- **Exact key sets, real CLI, both arms.** On the JSON stdout of `a5er tables --format json` for an
+  `ok` fixture (txt-01), a `degraded` one (sem-08) and a `failed` one (an empty file and enc-04),
+  `Object.keys` at every level equals the lists of §5.3 in order: envelope, `result`, every row,
+  every row `span`, every `columns`, `omitted` and `omitted.subtypes`. There is no `schema` key at
+  any level. For `failed`, `source`, `result` and `completeness` are `null`. For `ok`/`degraded`
+  they are non-null objects.
+- **Inspect has no `result`.** On `a5er inspect` and `a5er validate` stdout for the same fixtures,
+  `Object.keys` equals `ENVELOPE_KEYS`, with no `result` key (the existing CLI test, plus this
+  explicit absence check).
+- **Type level** (`tsc`, `@ts-expect-error`): `.schema` on a narrowed `JsonTablesEnvelope`,
+  `.result` on a narrowed `JsonSchemaDocument`, a non-null `source` on
+  `JsonTablesEnvelopeFailed`, and a `null` `result` on `JsonTablesEnvelopeRead` do not compile.
+  `JsonCommand` is exactly `'inspect' | 'validate'` (K-1).
+- **Status narrowing**: `toTablesEnvelope` throws on hand-built inspect envelopes that break the
+  status and null correlation (`failed` with a source; `ok` with a `null` schema).
+- **Shared members.** For every synthetic and byte fixture, the tables JSON without `command` and
+  `result` deep-equals the inspect JSON without `command` and `schema`. For each shared member,
+  the `JSON.stringify` bytes are equal too (§5.5).
+- **Result.** `result` equals the hand-authored expectation of §8.1, and §5.4 holds against the
+  inspect golden of the same fixture.
+- **Encoder.** `encodeJson` rejects `undefined`, functions, symbols, `bigint`, non-finite numbers
+  and non-plain objects anywhere in a tables envelope (the strict replacer still applies). B-5
+  equivalence holds.
+- **Framing.** stdout is one line plus `\n`, and `JSON.parse` of the whole stream succeeds (the
+  fixtures are far below the string limit).
 
 ### 8.5 Full regression for `inspect` and `validate`
 
 - All existing test files pass unchanged, except the edits in §9 T-1. That covers the 44 goldens,
-  `cli.test.ts`, `validate-integration`, the immutability tests, the fuzz floor and the guards.
-- A new byte-identity test: for every staged synthetic and byte fixture, for `inspect` and
-  `validate`, stdout, stderr and the exit code of the built CLI equal those of the baseline. The
-  expected stdout comes from the committed golden (path-scrubbed and with the version placeholder
-  expanded, as `json-goldens.test.ts` already does), not from a re-run.
+  `cli.test.ts`, `validate-integration`, the immutability tests, the fuzz floor and the guards. No
+  assertion is weakened, and no skip is added.
+- **New byte-identity test** (`tests/cli-byte-regression.test.ts`). For every staged synthetic and
+  byte fixture (44), for both `inspect` and `validate` (88 runs):
+  - **Expected stdout** is built from the committed golden without the product serializer. The
+    goldens are pretty-printed, while the CLI prints one compact line. So the test parses the
+    golden (`JSON.parse`), sets `tool.version` to the manifest version
+    (`tests/helpers/package-version.ts`, so no version is hard-coded), sets `command` to the
+    command under test (every golden is the `inspect` envelope), and sets `source.path` to the
+    staged path when `source` is not `null` (the only scrubbed member, `<tmp>/<id>.a5er`). It then
+    builds `Buffer.from(JSON.stringify(e) + '\n', 'utf8')`. `JSON.stringify` here is the language
+    built-in on the parsed golden, not `toJsonString`/`serialize`.
+  - **Expected stderr and exit code** come from a new, hand-authored table in
+    `tests/helpers/cli-expectations.ts`. Each fixture has the exact stderr lines and the exit code
+    for `inspect` and for `validate`, derived from the fixture's diagnostics as recorded in the
+    registry and the golden, and from the exit rules of `architecture.md` §12. The `inspect` exit
+    code is also checked against the registry's `exitCode`.
+  - **Capture** with `execFile(…, { encoding: 'buffer' })`, so stdout and stderr are compared as
+    raw UTF-8 bytes (`Buffer.compare`), not as decoded strings.
+  - Goldens are read through the path helpers the golden tests already use, not with a literal
+    `readFileSync('tests/fixtures…')`, so the fixture access guard (`fixtures.test.ts`) still
+    holds. Synthetic fixtures are staged with `stage()`, and byte fixtures are written from their
+    modules into a temp directory.
+  - Implementation output is never copied into an expectation.
+- **Feasibility, measured.** A throwaway script built the expected bytes from the 44 goldens with
+  exactly this procedure and compared them with the baseline CLI: 88 of 88 byte-identical,
+  including the CRLF fixture fmt-01 and the five byte fixtures. The json-goldens test compares
+  `diagnostics` as a multiset, while this test pins their order byte for byte. Today the orders
+  agree. If they ever disagree, that is a finding to investigate, never a golden to edit.
 - The argv variants `--format json` before, between and after the operands, and repeated
   `--format json`, give the same bytes as today.
 
@@ -1252,6 +1639,8 @@ and the fixture registry and `.gitignore` do not change.
   `tests/helpers/tables-text-expectations.ts`, reviewed in the diff. No Vitest snapshots, no `-u`,
   and no expectation produced by running the renderer.
 - The `<package-version>` placeholder rule is unchanged. Text output has no version in it.
+- The byte regression of §8.5 reads the goldens and never writes them. Its compact expected bytes
+  are built in memory for each run and are not stored.
 
 ### 8.8 CI: all 8 jobs
 
@@ -1268,35 +1657,84 @@ approval (§9).
 1. `pnpm install --frozen-lockfile`, then `build`, `typecheck`, `lint`, `format:check` and `test`
    pass locally. Real output is reported, including platform skips (R-4).
 2. All 8 CI jobs are green on the head SHA.
-3. K-1 to K-5 hold (§5.9), and the rule amendment has been agreed.
-4. §8.5 passes: the goldens are untouched, and `git diff` shows no change under
-   `tests/fixtures/`.
-5. No new entry in `package.json` `dependencies` or `devDependencies`, and `pnpm-lock.yaml` is
+3. K-1 to K-5 hold (§5.9), and revisions D-1 to D-7 (§9) have been agreed.
+4. §8.5 passes: 88/88 byte-identical, the goldens are untouched, and `git diff` shows no change
+   under `tests/fixtures/`.
+5. §5.4 invariants 7 and 8 and the key-set tests of §8.4 pass on success and failure.
+6. R-1 to R-11 (with R-4 on Linux) and B-1 to B-5 pass. R-C's observations and B-6's manual
+   measurement are reported as measured, including platform differences.
+7. No new entry in `package.json` `dependencies` or `devDependencies`, and `pnpm-lock.yaml` is
    unchanged.
-6. The README and Skill updates (§9) are either in the PR as shipped behaviour, or explicitly
-   deferred.
-7. Independent review records an explicit PASS. The implementer does not self-certify.
+8. Every file change matches the inventory in §9. A change to a file not listed there needs its
+   own agreement.
+9. Independent review records an explicit PASS. The implementer does not self-certify.
 
 ---
 
 ## 9. Changes the implementation PR would make to existing files
 
-Each needs agreement before it is made, because AGENTS.md protects these documents and tests.
+Each change to an existing file needs agreement before it is made, because AGENTS.md protects
+these documents and tests. New files are listed as well, so that the inventory is complete.
+
+**Existing source files:**
 
 | ID | File | Change |
 |---|---|---|
-| T-1 | `tests/cli.test.ts` | `names only the commands that exist`: the help now names `tables`, so the absent list becomes `['columns', 'relations', 'search', 'export']`, and a positive check for `tables` is added. `rejects a command this build does not implement` changes its example from `tables` to `columns`. The help assertions gain `--format text\|json`. These are the only edits to existing tests, and none removes an assertion |
-| D-1 | `docs/architecture.md` §12 | The rule-6 amendment (§5.9). The first paragraph's "`--format json` is the only format… a `text` renderer remains a later command-level concern" becomes a pointer to this specification |
-| D-2 | `docs/architecture.md` §3 | The pipeline sketch and the Output row: "stdout: one JSON envelope, or `tables` text" |
-| D-3 | `src/json/envelope.ts`, `scripts/lib/version.mjs` | Comment wording aligned with the rule-6 amendment. No value changes |
-| D-4 | `docs/test-strategy.md` | New test files, and the R-4 platform skip in §13 (CI mapping) |
-| D-5 | `README.md` | Usage, exit `74` and text output. "`tables` … exits 2" is removed |
-| D-6 | `skills/a5er-cli/SKILL.md` | Optional. The listing procedure could call `a5er tables --format json` instead of its inline projection. That is a separate decision, and until then the Skill stays as it is |
-| C-1 | `.github/workflows/ci.yml` | Optional. A `tables` step in `pack smoke`. Needs separate approval |
-| C-2 | `.github/workflows/ci.yml` | Optional. A macOS job. Needs separate approval |
+| S-1 | `src/cli.ts` | The argv rules of §3.2, `quoteArg` for every quoted token in misuse messages (§3.5), the help and usage text (§3.4), and `tables` dispatch through `writeOutput`. `run()` for `inspect`/`validate`, `renderDiagnostics()` and their write calls are unchanged |
+| S-2 | `src/json/envelope.ts` | The types of §5.2, added. The module header comment's version rule follows D-1. No existing declaration changes |
+| S-3 | `src/json/serialize.ts` | `strictReplacer` gets `export`. No behaviour change |
+| S-4 | `src/json/index.ts` | Re-exports the new types and `encodeJson` |
+| S-5 | `scripts/lib/version.mjs` | Comment wording only, following D-1. No value or check changes |
 
-No version change: `package.json#version` moves only through `pnpm release:prepare` in its own
-reviewed PR.
+**New source files:** `src/json/stream.ts`, `src/view/tables.ts`, `src/view/index.ts`,
+`src/text/escape.ts`, `src/text/width.ts`, `src/text/chunks.ts`, `src/text/tables.ts`,
+`src/text/index.ts`, `src/io/stdout.ts`. `src/io/index.ts` is unchanged: `cli.ts` imports
+`src/io/stdout.ts` directly.
+
+**Existing tests:**
+
+| ID | File | Change |
+|---|---|---|
+| T-1 | `tests/cli.test.ts` | `names only the commands that exist`: the help now names `tables`, so the absent list becomes `['columns', 'relations', 'search', 'export']`, and a positive check for `tables` is added. `rejects a command this build does not implement` changes its example from `tables` to `columns`. The help assertions gain `--format text\|json`. These are the only edits to existing tests, and none removes or weakens an assertion |
+
+Not modified: `tests/immutability.test.ts`, `tests/json-goldens.test.ts`,
+`tests/json-golden-guards.test.ts`, `tests/json-contract.test.ts`, `tests/fixtures*.test.ts`,
+every file under `tests/helpers/` and `tests/fixtures/`, and the 44 goldens.
+
+**New tests and helpers:** `tests/view-tables.test.ts` (§8.2), `tests/cli-tables-text.test.ts`
+(§8.3), `tests/json-tables-contract.test.ts` (§8.4), `tests/cli-byte-regression.test.ts` (§8.5),
+`tests/cli-tables-cases.test.ts` (§8.6), `tests/cli-argv.test.ts` (§3.2 and §3.5 rules and S-6),
+`tests/text-escape.test.ts` (S-1 to S-3), `tests/text-width.test.ts` (W-1), `tests/text-render.test.ts`
+(W-2 to W-4, B-1 to B-4 unit parts), `tests/json-stream.test.ts` (B-3, B-5),
+`tests/io-stdout.test.ts` (R-3 to R-10), `tests/cli-tables-io.test.ts` (R-1, R-2, R-C, R-4, R-11,
+B-1, B-2, S-4, S-5), `tests/cli-tables-immutability.test.ts` (§7.8),
+`tests/helpers/tables-expectations.ts`, `tests/helpers/tables-text-expectations.ts` and
+`tests/helpers/cli-expectations.ts`. All are new files. Their generated documents live only in temp
+directories.
+
+**Documents:**
+
+| ID | File | Change |
+|---|---|---|
+| D-1 | `docs/architecture.md` §12 rule 6 | The amendment of §5.9: version per command's envelope, selection by `(command, contractVersion)` |
+| D-2 | `docs/architecture.md` §12 rule 1 | "`degraded` (warnings/errors, schema emitted) or `failed` (fatal, `schema: null`)" becomes "the command's payload (`schema` for inspect/validate, `result` for tables) emitted, or `null` when `failed`" |
+| D-3 | `docs/architecture.md` §12 rule 4 | "Raw is always adjacent to interpreted" is scoped to the `schema` payload. `result` is a projection that cites its object by `objectIndex` and `span` instead of carrying `raw`. The raw text stays available from `inspect` |
+| D-4 | `docs/architecture.md` §12 opening paragraph | "`--format json` is the only format and the default; a `text` renderer remains a later command-level concern" becomes per-command formats with a pointer to this specification. "One envelope per invocation, on stdout" is qualified: `tables` in text mode emits no envelope |
+| D-5 | `docs/architecture.md` §12 contract example and its caption | The example stays the `inspect` shape, and the caption says so. A pointer to the tables shape (§5.2 here) is added |
+| D-6 | `docs/architecture.md` §3 | The pipeline sketch and the Output row: "stdout: one JSON envelope, or `tables` text". The §11 diagnostic table is not touched, because `tests/catalog.test.ts` parses it |
+| D-7 | `README.md` | Usage gains `tables`. "No other command exists yet: … `tables` … exits 2" is removed. "`inspect` and `validate` write exactly one JSON envelope …; no other command or option does" gains `tables`. "Every envelope has the keys … `schema` …" becomes per command (`schema` for inspect/validate, `result` for tables) with the `(command, contractVersion)` selection rule. The exit table gains `74`, and the text output is described |
+| D-8 | `docs/test-strategy.md` | The new test files, the R-4 platform skip in §13 (CI mapping), the byte regression, and B-6 as a manual measurement |
+| D-9 | `skills/a5er-cli/SKILL.md` | Optional. The listing procedure could call `a5er tables --format json` instead of its inline projection. That is a separate decision, and until then the Skill stays as it is |
+
+D-1 to D-7 are the conditions K-5 refers to. D-8 is required by AGENTS.md's rule that documents
+describe shipped behaviour. D-9 is optional.
+
+**Workflow (optional, each needs separate approval):** C-1 adds a `tables` step to
+`pack smoke` in `.github/workflows/ci.yml`, and C-2 adds a macOS job.
+
+**Not changed:** `package.json` (version and dependencies), `pnpm-lock.yaml`,
+`.github/workflows/release.yml`, `.gitignore`, `.gitattributes`. `package.json#version` moves only
+through `pnpm release:prepare` in its own reviewed PR.
 
 ---
 
@@ -1323,8 +1761,9 @@ member at position 7 under the same additive rule (§5.9).
 
 | ID | Finding | Proposed handling |
 |---|---|---|
-| F-1 | `inspect`/`validate` crash on a broken pipe or a stdout write error: exit `1` (the code for a failed read) and a stack trace that includes the install path (§7.1, measured) | A separate issue to adopt §7.2 for every command. It changes observable `inspect`/`validate` behaviour in that error case, so it needs explicit approval outside decision 6. R-C's observation is then expected to change |
-| F-2 | `quote()` in misuse messages uses `JSON.stringify`, which leaves C1 controls and bidi controls in argv raw on stderr | A separate issue to reuse `renderName`'s escaping for argv echoes. It is user-supplied text, so the risk is low |
-| F-3 | macOS is not in the CI matrix | C-2 above, if wanted |
+| F-1 | `inspect`/`validate` crash on a broken pipe or a stdout write error: exit `1` (the code for a failed read) and a stack trace that includes the install path (§7.1, measured) | A separate issue to route every command through `writeOutput` (§7.2). It changes observable `inspect`/`validate` behaviour in that error case, so it needs explicit approval outside decision 6. R-C's observation is then expected to change |
+| F-2 | `quote()` in misuse messages leaves C1 and bidi controls raw | **Moved into P0**: `quoteArg` (§3.5, §3.10, S-6) |
+| F-3 | macOS is not in the CI matrix | C-2 in §9, if wanted |
+| F-4 | Large accepted inputs exhaust shared resources in the existing pipeline (§7.1, measured). `inspect`'s `toJsonString` throws `RangeError: Invalid string length` on a 20.9 MB file of 1,999,000 unknown keys, and exits `1` with no envelope. At 64 MiB of `Field` lines, `serialize()` exhausts the default 4,288 MiB heap (exit `134`), and that stage is shared by `tables` | Separate decisions. For `inspect`: route its JSON through `encodeJson` (that changes its failure behaviour, so it needs approval outside decision 6). For both commands: a lower-memory path, for example projecting `tables` without building the whole `schema` object, or revisiting the `maxBytes` default (TBD-O3). P0 bounds every output string, but not this heap use |
 
 No contract question about `tables` is left open (§5.9).
