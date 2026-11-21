@@ -15,6 +15,12 @@ GUI. The input file is never modified.
 > one; keep such envelopes outside the repository and delete them when you are done. `.a5er` files
 > are gitignored; only synthetic fixtures are tracked.
 
+## Disclaimer
+
+a5er-cli is an independent, unofficial project and is not affiliated with or endorsed by the author of A5:SQL Mk-2.
+
+A5:SQL Mk-2 is developed by Masakazu Matsubara. For information about the original software, visit the [official website](https://a5m2.mmatsubara.com/).
+
 ## Installation
 
 The executable is `a5er`, from the npm package `@j1nn0/a5er-cli`. It requires Node.js 24 or later.
