@@ -454,17 +454,24 @@ more, in file order.
 - The only file-derived text in the output is the two name columns, and both are escaped (§4.4).
   Every other token is fixed vocabulary or a number.
 
-### 4.9 Completeness
+### 4.9 Completeness and omissions
 
-The text output is a projection, and it must not look like the whole file. Three rules make the
-omissions visible:
+`tables` deliberately shows a limited view of the file, in text and in JSON alike. It must not
+look like the whole file, so the limits are stated:
 
-1. Every count from `completeness` is printed. They are never summarised as a single "OK".
-2. `unsupported` is always counted, `0` included. Its records are never shown in text: `inspect`
-   or `--format json` gives them in full.
-3. Anything that `tables` deliberately does not list (subtypes, unsupported records, relations,
-   column details) is either counted in a note or present in the JSON envelope. Nothing is dropped
-   without a count.
+1. **Entities and views are listed completely.** Every entity and view in `schema.objects` is a
+   row, in file order (§4.2). None is merged, de-duplicated or left out.
+2. **Subtypes are omitted, with a count and references.** The objects note counts them, and the
+   omitted note gives the section of each one (§4.7). JSON carries the same facts in
+   `result.omitted.subtypes` (`count`, `sectionIndexes`).
+3. **`unsupported` and `completeness` are reported.** Text counts `unsupported` by kind, `0`
+   included, and prints every `completeness` count; they are never summarised as a single "OK".
+   The JSON envelope carries both members in full, verbatim from the inspect envelope (§5.5).
+4. **Relations and column details are not part of `tables`.** Neither the text nor the tables
+   JSON contains relations, pages, domains, common-field definitions, indexes, primary keys,
+   `Comment`, `Query`, or per-column details such as names, data types and NOT NULL. Only the
+   column counts of §4.5 are reported.
+5. **For the full model, use `a5er inspect`.** Its envelope holds everything `tables` leaves out.
 
 ### 4.10 Long names
 
@@ -878,6 +885,20 @@ value: C0 controls appear as `\u001b`, while U+202E and C1 controls appear as ra
 that prints JSON strings to a terminal must sanitise them itself. The text renderer (§4.4) does
 this for humans.
 
+**Confidentiality.** Like the inspect envelope, `tables --format json` can contain file text and
+local paths, in addition to the names in `result.tables`:
+
+- `unsupported[].raw`: the original source line of each unsupported construct, verbatim;
+- `diagnostics[].details`: values taken from the file (for example a subtype name) or from the
+  read (for example the path and `errno` of `E_IO`);
+- `source.path`: the path exactly as given on the command line.
+
+The two formats have different priorities. JSON is for machines and keeps information intact: it
+carries these members unchanged and does not neutralise terminal controls. Text is for humans and
+puts safe display first: it prints none of these members (§4.1, §4.8, §7.8), and it escapes the
+only file-derived text it shows, the names (§4.4). Handle JSON output with the same care as
+`inspect` output (Skill, "Confidentiality").
+
 ### 5.8 Byte compatibility of existing commands
 
 - `serialize.ts` does not change. `envelope.ts` only gains declarations. `cli.ts` keeps the
@@ -1005,7 +1026,7 @@ never a wider catch-all.
 | R-1j | R-1 with `--format json` | same | same |
 | R-2 | Spawn as R-1, but destroy stdout before the child's first write (right after `spawn`) | same | exit `0`, stderr `''` |
 | R-2f | R-2 on a document that fails to read (an empty file) | same | exit `1`, stderr is exactly the `fatal` line |
-| R-C | **Reproduction control**: R-1 run against `inspect` on the same document | same | exit `1` and stderr contains `EPIPE`. This proves the harness really produces a broken pipe on that platform. It pins today's behaviour (§3.10) and flips when F-1 lands |
+| R-C | **Observation of today's `inspect`** (not an acceptance condition): R-1 run against `inspect` on the same document | same | Record what happens: exit code, and whether stderr contains `EPIPE`. On Linux with Node v24.22.3 it exits `1` with an `EPIPE` stack trace (§7.1), but other operating systems may not reproduce it. The test reports the observed result per platform and does not fail on a difference. It does not pin the crash as required behaviour. Whether `tables` is EPIPE-safe is decided by R-1, R-1j, R-2, R-2f, R-3 and R-3e, which stay mandatory |
 | R-3 | `writeOutput` with a fake stdout whose `write` makes it emit `error` with code `EIO`, `ENOSPC` or `EBADF`, and with no code | all | `exitCode` becomes `74`, and stderr is exactly `a5er: error: cannot write to stdout (EIO)\n`, `(ENOSPC)` or `(UNKNOWN)` |
 | R-3e | `writeOutput` with a fake stdout that emits `EPIPE` | all | `exitCode` stays at the read's code, and stderr gets nothing extra |
 | R-3s | Fake stderr that emits `EPIPE` or `EIO` | all | no throw, and `exitCode` does not change |
@@ -1302,7 +1323,7 @@ member at position 7 under the same additive rule (§5.9).
 
 | ID | Finding | Proposed handling |
 |---|---|---|
-| F-1 | `inspect`/`validate` crash on a broken pipe or a stdout write error: exit `1` (the code for a failed read) and a stack trace that includes the install path (§7.1, measured) | A separate issue to adopt §7.2 for every command. It changes observable `inspect`/`validate` behaviour in that error case, so it needs explicit approval outside decision 6. R-C then flips |
+| F-1 | `inspect`/`validate` crash on a broken pipe or a stdout write error: exit `1` (the code for a failed read) and a stack trace that includes the install path (§7.1, measured) | A separate issue to adopt §7.2 for every command. It changes observable `inspect`/`validate` behaviour in that error case, so it needs explicit approval outside decision 6. R-C's observation is then expected to change |
 | F-2 | `quote()` in misuse messages uses `JSON.stringify`, which leaves C1 controls and bidi controls in argv raw on stderr | A separate issue to reuse `renderName`'s escaping for argv echoes. It is user-supplied text, so the risk is low |
 | F-3 | macOS is not in the CI matrix | C-2 above, if wanted |
 
