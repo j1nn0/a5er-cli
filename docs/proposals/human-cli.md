@@ -1310,7 +1310,24 @@ never ends on a high surrogate that is followed by a low surrogate: the cut move
 unit. `JSON.stringify` escapes code unit by code unit, except that a surrogate is written raw when
 it is part of a pair and as `\uXXXX` when it is lone. A cut that never separates a pair cannot
 change whether any surrogate is lone, so the concatenated slices equal `JSON.stringify` of the
-whole string. Keys use the same slicing, so a long key could not build a large string either.
+whole string. Keys use the same slicing for the *output*, so a long key never makes an output
+chunk large.
+
+**Temporary strings are a separate matter.** The 262,144-code-unit guarantee is about output
+chunks only. It does not bound every temporary string the encoder creates. In particular, the
+unchanged `strictReplacer` builds its error context, `` ` at key ${JSON.stringify(key)}` ``, on
+**every** call, before it looks at the value. So each value costs one temporary string whose
+length is proportional to its key. P0 does not change `strictReplacer` to avoid this.
+
+- **Reachable from product input:** `serialize()` and `toTablesEnvelope()` only produce keys that
+  are fixed short names from the code (the longest is a few tens of characters), plus array
+  indexes, which have at most 7 digits under the default `maxLines`. `details` keys are fixed names
+  too, and file text only ever appears in values (whose `details` strings are bounded to 200
+  characters). So in real use these temporary strings are small and do not depend on the file.
+- **Generalized encoder tests only:** the 40,001-code-unit key of §8.4 and the other key cases
+  exist to prove byte equivalence for arbitrary in-scope keys. They do create temporary strings of
+  that size, and that is accepted, because no product input produces such a key. The chunk-bound
+  assertions in those tests apply to the output chunks, not to these temporaries.
 
 **Other values:** numbers, booleans and `null` are written with `JSON.stringify(value)`, so `-0`
 becomes `0` as in `JSON.stringify`.
@@ -1363,7 +1380,7 @@ mode.
 | `src/text/tables.ts` (new) | `renderTablesText(envelope: JsonTablesEnvelope): Iterable<string>`: the two passes of §4.10, the layout of §4.3 and the streamed notes of §4.8 | `src/json/` types, `escape.ts`, `width.ts`, `chunks.ts` |
 | `src/text/diagnostics.ts` (new) | `tablesDiagnosticLines(integration: Integration): Iterable<string>`: one `fatal`/`error` line per `next()`, the same bytes as `renderDiagnostics()` (§3.6) | `src/validate/` types only |
 | `src/text/index.ts` (new) | barrel | — |
-| `src/io/stdout.ts` (new) | `writeOutput(options): Promise<0 \| 1 \| 70 \| 74>`, the state machine of §7.2. It takes the streams as parameters, so tests can pass fakes | `node:events`/`node:stream` types only |
+| `src/io/stdout.ts` (new) | `OutputStream` and `writeOutput(options): Promise<0 \| 1 \| 70 \| 74>`, the state machine of §7.2. It takes the streams as `OutputStream` parameters, so tests can pass fakes | `node:events`/`node:stream` types only |
 | `src/tables-command.ts` (new) | `runTablesCommand({ path, format, stdout, stderr, pipeline })`: Phase A under the guard of §7.2 item 10, and Phase B as lazy generators handed to `writeOutput`. `pipeline` defaults to the real stages and is the seam that R-20 uses | the above, plus the existing stages |
 | `src/cli.ts` | the argv rules of §3.2, `quoteArg` in misuse messages, and dispatch of `tables` to `runTablesCommand`. `run()` and `renderDiagnostics()` for `inspect`/`validate` are unchanged | the above |
 
@@ -1428,14 +1445,34 @@ before start) settled as **accepted** with exit `0` while no byte reached anyone
 ### 7.2 Output writer policy (`tables` only)
 
 ```ts
+/** Every stream member writeOutput uses, and nothing else (src/io/stdout.ts). */
+export interface OutputStream {
+  write(chunk: string, callback: (error?: Error | null) => void): boolean;
+  once(event: 'drain' | 'close', listener: () => void): unknown;
+  once(event: 'error', listener: (error: Error) => void): unknown;
+  on(event: 'close', listener: () => void): unknown;
+  on(event: 'error', listener: (error: Error) => void): unknown;
+  off(event: 'drain' | 'close', listener: () => void): unknown;
+  off(event: 'error', listener: (error: Error) => void): unknown;
+  readonly errored: Error | null;   // Writable.errored
+  readonly destroyed: boolean;      // Writable.destroyed: the "already closed" state
+}
+
 writeOutput(options: {
   stdoutChunks: () => Iterable<string>;   // lazy: Phase B of §2 runs inside next()
   stderrLines: () => Iterable<string>;    // tablesDiagnosticLines(integration), lazy
-  stdout: NodeJS.WritableStream;          // process.stdout in the CLI, a fake in tests
-  stderr: NodeJS.WritableStream;
+  stdout: OutputStream;                   // process.stdout in the CLI, a fake in tests
+  stderr: OutputStream;
   readCode: 0 | 1;                        // integrate(input).exitPolicy.inspect
 }): Promise<0 | 1 | 70 | 74>
 ```
+
+`OutputStream` is a structural type, so `process.stdout`, `process.stderr`, a plain
+`stream.Writable` and the test fake `ControlledWritable` (§7.3) all satisfy it without a cast.
+*Verified:* with the repository's `tsc` 7.0.2 and `@types/node` 24.19.2 (the type definitions that
+both CI Node versions, 24 and 26, compile against), all four assignments compile, and an object
+without `errored` is rejected. The implementation keeps these assignments as compile-time checks
+in `tests/io-stdout.test.ts` (§8.4), which `pnpm typecheck` compiles.
 
 The stdout outcome is a small state machine. It starts in **writing** and moves to exactly one
 terminal state, once. The first event that determines a terminal state wins. Every later event
@@ -1472,8 +1509,10 @@ Rules:
    write, and stay attached until the process exits. A late or repeated event is therefore never
    unhandled and never prints a stack trace.
 3. **Pulling and writing.** While in **writing**: call `next()` (guarded). If it is done, go to the
-   settle step. Otherwise call `stdout.write(chunk, callback)`, guarded by `try`/`catch`. Each
-   chunk is written once, in order, and there is never a write after a terminal state.
+   settle step. Otherwise, if `stdout.destroyed` is already `true`, handle it exactly like a
+   `'close'` (classified by `stdout.errored`, else an early close) and do not write. Otherwise call
+   `stdout.write(chunk, callback)`, guarded by `try`/`catch`. Each chunk is written once, in order,
+   and there is never a write after a terminal state.
 4. **Backpressure.** When `write()` returns `false`, the writer waits for the first of: `'drain'`,
    or any transition to a terminal state. The terminal-state signal is one promise, resolved by
    the transition itself. So a `'close'`, an `'error'` or an error callback releases a pending
@@ -1497,10 +1536,23 @@ Rules:
    No outcome line ever contains an exception message, a stack trace, file text or a path: the
    exception object is caught and discarded.
 8. **stderr writing** uses the same chunk buffer as stdout (append lines, write at 65,536 code
-   units, so every chunk is under 262,144). When `write()` returns `false`, the writer waits for
-   `'drain'`, `'error'` or `'close'`. A stderr `'error'`, a synchronous throw or a `'close'` stops
-   all further stderr writing, silently. As before, stderr errors never change the exit code:
-   there is nowhere left to report them.
+   units, so every chunk is under 262,144). stderr has one flag, **stopped**, and one promise that
+   resolves when the flag is first set. The flag is set, once, by the first of: an `'error'` event,
+   a `'close'` event, a `write()` callback called **with an error**, or a synchronous throw from
+   `write()`. Setting it again does nothing, so a failure reported by a callback, then an
+   `'error'` and then a `'close'` is processed once. For each chunk:
+   - If **stopped** is set, or `stderr.destroyed` is `true`, or `stderr.errored` is not `null`,
+     the chunk is not written. The flag is set, and all remaining stderr output (diagnostic lines,
+     the outcome line and the generation-failure line) is dropped silently.
+   - Otherwise the chunk goes to `stderr.write(chunk, callback)`, guarded by `try`/`catch`.
+   - When `write()` returns `false`, the writer waits for the first of `'drain'` or the
+     **stopped** promise. A callback error therefore releases the wait even when no event follows
+     it. A *successful* callback does not release it: the writer still waits for `'drain'`. The
+     `'drain'` listener is removed after the wait.
+   - After a release, later callbacks and events only hit the idempotent flag. They change
+     nothing.
+   stderr failures never change the exit code, as before: there is nowhere left to report them.
+   The exit code is decided by the stdout outcome and the generation failures alone (rule 9).
 9. **Exit code.** **failed** gives `74`. Otherwise, **generation-failed**, or a throw from
    `stderrLines()`, gives `70`. Otherwise **accepted** and **closed** keep `readCode`. For
    **closed** nothing extra is printed: `a5er tables f | head -n 3` exits `0` for a readable file
@@ -1508,7 +1560,7 @@ Rules:
 10. **Phase A guard.** If load, scan, classification, semantics or `integrate()` throws (an
     internal defect, since a bad file is reported through diagnostics and never thrown), the CLI
     writes nothing to stdout. It writes only the generation-failure line of the table to stderr,
-    with the rule 8 behaviour, and exits `70`. A V8 heap exhaustion is not an exception and cannot
+    with the rule 8 behaviour, and exits `70`, also when that stderr write fails. A V8 heap exhaustion is not an exception and cannot
     be caught (§3.7, F-4).
 11. **Same rules for every chunk and both formats.** Text and JSON go through the same writer. A
     chunk is just the unit of `write()`, and none of the rules depend on how many chunks there are.
@@ -1535,7 +1587,10 @@ fail on that platform. The fix is then a reviewed change to this list, never a w
 `ControlledWritable` (in the test file, extending `EventEmitter`). Each `write(chunk, cb)` call
 records the chunk and returns a value the test chose in advance (`true`, `false`, or "throw an
 error with code X"). Each callback is held until the test calls `complete(i, error?)`. The test
-also decides when to emit `'error'`, `'drain'` and `'close'`, and what `errored` holds. `stdoutChunks`
+also decides when to emit `'error'`, `'drain'` and `'close'`, and what `errored` and `destroyed`
+hold. The same class is used for stdout and stderr, and it implements `OutputStream` (§7.2). A
+test detects a hang without a timer: it records when the `writeOutput` promise resolves, lets the
+reactions run, and then asserts that the promise has resolved. `stdoutChunks`
 and `stderrLines` are explicit arrays wrapped in generators, which can be told to throw at a given
 step. Between steps the test lets pending promise reactions run with
 `await new Promise((resolve) => setImmediate(resolve))`. There is no `setTimeout`, no wall-clock
@@ -1563,8 +1618,13 @@ Unless stated otherwise, the input is two stdout chunks `A` and `B`, the stderr 
 | R-17 | **stderr source throws** after yielding `D`; stdout as R-18 | accepted | `70` | `D` + `internal error while generating diagnostics; the diagnostics are incomplete` | `A`, `B` |
 | R-3s | stdout as R-18. stderr's first `write` emits `'error'` `EPIPE` (and separately `EIO`). Run with `readCode` 1 | accepted | `1` | the first stderr write is attempted, and nothing after it | `A`, `B` |
 | R-7 | **Both fail**: complete(0, `EIO`) on stdout, and stderr's first `write` emits `'error'` `EIO` | failed | `74` | one stderr write attempted, then silence; no throw | `A`, `B` |
-| R-19 | **stderr backpressure**: 100,000 diagnostic lines; the first stderr `write` returns `false`; the test emits `'drain'`, then on the next `false` emits `'close'` | accepted | `0` | every stderr chunk is under 262,144 code units, no write happens after `'close'`, and the writer resolves (no hang) | `A`, `B` |
+| R-19 | **stderr backpressure**: 100,000 diagnostic lines; the first stderr `write` returns `false`. The test completes that callback **successfully**, lets the reactions run and asserts that still only 1 stderr write was made; then it emits `'drain'`, and on the next `false` emits `'close'` | accepted | `0` | every stderr chunk is under 262,144 code units, a successful callback alone does not release the wait, no write happens after `'close'`, and the writer resolves (no hang) | `A`, `B` |
 | R-20 | **Phase A guard**: the CLI's `integrate` step throws (injected through the `pipeline` parameter of `runTablesCommand`, §6) | — | `70` | exactly the internal-error line | none |
+| R-21 | **Case A: stderr callback-only failure.** stdout as R-18. stderr's first `write` returns `false`; the test calls its callback with an error coded `ERR_STREAM_DESTROYED` and emits no `'drain'`, `'error'` or `'close'`. Run with `readCode` 0 and 1. Variant (b): after the writer has resolved, the test emits stderr `'error'` `EPIPE` and `'close'` | accepted | `0` / `1` | exactly 1 stderr write (the first chunk); nothing after it; the promise resolves. (b): no throw, no unhandled `'error'`, the result unchanged | `A`, `B` |
+| R-20b | **Case B: Phase A failure, stderr fails too.** As R-20, with stderr's first `write` returning `false` and its callback failing as in R-21 | — | `70` | 1 stderr write (the internal-error line) attempted; the promise resolves | none |
+| R-7b | **Case C: stdout failure keeps precedence.** stdout: complete(0, `EIO`). stderr: as R-21 | failed | `74` | 1 stderr write attempted; the promise resolves | `A`, `B` |
+| R-22 | **Case D: combined failures.** stdout: complete(0, `EIO`). `stderrLines()` yields `D` and then throws | failed | `74` (not `70`) | `D` + `cannot write to stdout (EIO)` + `internal error while generating diagnostics; the diagnostics are incomplete` | `A`, `B` |
+| R-23 | **Case E: stderr already closed.** Before the first stderr write the fake has `destroyed = true`. Variant (b): `destroyed = false` and `errored` already holds an `EPIPE` error. stdout as R-18, `readCode` 1 | accepted | `1` | **no** stderr write is attempted | `A`, `B` |
 
 **Real-pipe smoke tests (`tests/cli-tables-io.test.ts`).** These spawn `node dist/cli.js` with
 `stdio: ['ignore', 'pipe', 'pipe']` and check only what a real pipe can promise. They never assume
@@ -1583,15 +1643,15 @@ measures that its full text output is over 1 MiB, by running it to a file.
 | R-11 | Read stdout to EOF. Inputs: txt-01 (text and JSON) and `<big>` (text and JSON) | Ubuntu, Windows (CI) | exit `0`, and the received bytes equal the expected bytes exactly. txt-01 text: the hand-authored expectation of §8.3. txt-01 JSON: the §8.4 expected envelope (golden-derived shared members plus the hand-authored `result`), built as `JSON.stringify(expected) + '\n'`. `<big>` JSON: the B-5 reference, `JSON.stringify(toTablesEnvelope(serialize(…)), strictReplacer) + '\n'`, computed in the test process from the same staged file. `<big>` text: equal to the same command's output redirected to a file, and every row's decoded names equal the generated names, in order |
 | R-C | **Observation of today's `inspect`** (not an acceptance condition): R-1 run against `inspect` | same | Records the exit code, and whether stderr contains `EPIPE`. On Linux with Node v24.22.3 it exits `1` with an `EPIPE` stack trace (§7.1), but other platforms may not reproduce it. The test reports what it observed and does not fail on a difference. It does not pin the crash as required behaviour |
 
-The `tables` write paths are proven by R-3 to R-20 (deterministic) and R-1, R-1j, R-2, R-2f, R-4
+The `tables` write paths are proven by R-3 to R-23, R-7b and R-20b (deterministic) and R-1, R-1j, R-2, R-2f, R-4
 and R-11 (real pipes). All of these stay mandatory. Real-pipe tests time out at 20 s, like
 `runCli`, and clean up their temp directories in `finally`. The generated documents are written to
 a `mkdtemp` directory and removed afterwards. They are never committed (§3.1 of
 `test-strategy.md`).
 
 **Feasibility.** A throwaway prototype of this writer and of `ControlledWritable` (outside the
-repository, about 60 lines) ran the event orders of R-3 to R-19 (except R-20, which needs the CLI
-seam) and gave exactly the states, exit codes and stderr lines in the table above. Against real
+repository, about 60 lines) ran the event orders of R-3 to R-19 and of Cases A to E (R-21, R-20b, R-7b, R-22, R-23; for
+R-20b a flag stood in for the CLI seam, which R-20 needs) and gave exactly the states, exit codes and stderr lines in the table above. Against real
 pipes on Linux with Node v24.22.3: `| head -c 100000` gave **closed**, exit `0`, exactly 100,000
 bytes received. `| true` gave **closed**, exit `0`. `> /dev/full` gave **failed**, exit `74`,
 with `ENOSPC` after the diagnostic line. `>&-` gave **accepted**, exit `0`, with no bytes delivered
@@ -1628,7 +1688,7 @@ authored with `\n`, and the comparison is byte for byte.
   `String.fromCodePoint` and plain loops, and no `Intl`, `\p{…}`, `Intl.Segmenter` or ICU data.
   Output therefore does not depend on the ICU or Unicode version, and the same expected strings
   must pass in both matrix versions.
-- The writer's state machine is checked on both versions by the deterministic R-3 to R-20, and the
+- The writer's state machine is checked on both versions by the deterministic R-3 to R-23 (with R-7b and R-20b), and the
   real `process.stdout` behaviour by R-1, R-1j, R-2, R-2f, R-4 and R-11 in CI. Neither is assumed.
   `Writable.errored`, which §7.2 reads on `'close'`, exists in both versions.
 
@@ -1792,7 +1852,8 @@ exactly and the exit code:
   - key order: `{ b, 2, 1, '01', '4294967295', a }` encodes in `Object.keys` order
     (`1, 2, b, 01, 4294967295, a`);
   - key escaping: keys containing `"`, `\`, LF, U+0001, a lone U+D800 and a lone U+DC00; a
-    40,001-code-unit key;
+    40,001-code-unit key (a generalized case no product input reaches; its temporary
+    `strictReplacer` string is expected, and only the output chunks are bound-checked, §5.10);
   - string slicing: a surrogate pair straddling code unit 16,384; a lone high surrogate at code
     unit 16,383 followed by ASCII; a lone high surrogate as the last code unit; a lone low surrogate
     at 16,384; a pair at 65,535 (the chunk boundary);
@@ -1979,7 +2040,7 @@ approval (§9).
    under `tests/fixtures/`.
 5. §5.4 invariants 7 and 8, the key-set tests of §8.4 (success and failure), and the type-level
    file compile as specified.
-6. The deterministic writer tests R-3 to R-20 pass with the exact states, exit codes and stderr of
+6. The deterministic writer tests R-3 to R-23, R-7b and R-20b pass with the exact states, exit codes and stderr of
    §7.3. The real-pipe tests R-1, R-1j, R-2, R-2f, R-11, and R-4 on Linux, pass.
 7. B-1 to B-5 and N-1 to N-3 pass, and so do the encoder cases of §8.4. R-C's observations and
    B-6's manual measurement are reported as measured, including platform differences.
@@ -2033,7 +2094,7 @@ every file under `tests/helpers/` and `tests/fixtures/`, and the 44 goldens.
 `tests/text-escape.test.ts` (S-1 to S-3), `tests/text-width.test.ts` (W-1), `tests/text-render.test.ts`
 (W-2 to W-4, B-1 to B-4 unit parts, N-1 and N-3 unit parts), `tests/json-stream.test.ts` (B-3, B-5,
 the encoder cases of §8.4), `tests/text-diagnostics.test.ts` (the stderr line source of §3.6),
-`tests/io-stdout.test.ts` (R-3 to R-19), `tests/tables-command.test.ts` (R-20),
+`tests/io-stdout.test.ts` (R-3 to R-19, R-7b, R-21 to R-23, and the `OutputStream` assignment checks of §7.2), `tests/tables-command.test.ts` (R-20, R-20b),
 `tests/cli-tables-io.test.ts` (R-1, R-1j, R-2, R-2f, R-C, R-4, R-11, B-1, B-2, N-1 to N-3, S-4,
 S-5), `tests/cli-tables-immutability.test.ts` (§7.8), `tests/types/tables-envelope.types.ts` (the
 type-level checks of §8.4, compiled by `pnpm typecheck` only),
