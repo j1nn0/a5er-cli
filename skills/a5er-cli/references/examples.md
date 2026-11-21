@@ -1,6 +1,6 @@
 # Recorded runs
 
-Every case below ran the run block from SKILL.md, unchanged except for the `file=` line and the subcommand shown with it. It was executed for real with CLI version 0.1.0; the text output is verbatim. Run from the repository root. Fixture paths exist only in a checkout of the a5er-cli repository. The block's own exit status equals the CLI's.
+Every case below ran the run block from SKILL.md, unchanged except for the `file=` line and the subcommand shown with it. It was executed for real with CLI version 0.1.2; the text output is verbatim except that trailing spaces are trimmed. Run from the repository root. Fixture paths exist only in a checkout of the a5er-cli repository. The block's own exit status equals the CLI's.
 
 ## ok, nothing unsupported (inspect)
 
@@ -26,6 +26,10 @@ file=tests/fixtures/synthetic/txt-04-unknown-section-key.a5er
 ```text
 exit=0
 ok unsupported=4 {"sections":{"total":3,"parsed":2,"preservedRaw":1,"unknown":1},"keys":{"total":6,"parsed":3,"preservedRaw":3},"lines":{"total":13,"accounted":13,"dropped":0},"dropped":0}
+unsupported {"index":0,"kind":"unknown-key","key":"MysteryKey"}
+unsupported {"index":1,"kind":"unknown-key","key":"SecondMystery"}
+unsupported {"index":2,"kind":"unknown-section","key":null}
+unsupported {"index":3,"kind":"unknown-key","key":"Note"}
 info S_UNKNOWN_KEY line 5
 info S_UNKNOWN_KEY line 6
 info S_UNKNOWN_SECTION line 9
@@ -42,6 +46,7 @@ file=tests/fixtures/synthetic/sem-05-subtype.a5er
 ```text
 exit=0
 ok unsupported=1 {"sections":{"total":3,"parsed":3,"preservedRaw":0,"unknown":0},"keys":{"total":9,"parsed":9,"preservedRaw":0},"lines":{"total":16,"accounted":16,"dropped":0},"dropped":0}
+unsupported {"index":0,"kind":"subtype-membership","key":null}
 info V_UNSUPPORTED_SUBTYPE_MEMBERSHIP line 12
 (block exit status: 0)
 ```
@@ -104,6 +109,7 @@ file=tests/fixtures/synthetic/val-08-continuation-line.a5er
 ```text
 exit=0
 degraded unsupported=1 {"sections":{"total":2,"parsed":2,"preservedRaw":0,"unknown":0},"keys":{"total":4,"parsed":4,"preservedRaw":0},"lines":{"total":10,"accounted":10,"dropped":0},"dropped":0}
+unsupported {"index":0,"kind":"multiline-value","key":null}
 info V_VIEW_COLUMNS_UNKNOWN line 7
 warning S_MALFORMED_LINE line 9
 (block exit status: 0)
