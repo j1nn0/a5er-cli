@@ -80,7 +80,8 @@ inside the writer's guard, and is reported as an output-generation failure (§7.
 stack trace.
 
 **Memory is not bounded by P0.** Peak heap still grows with the input: Phase A's stage results and
-semantic records are held whole, and that is what a large diagram exhausts. `tables` no longer
+semantic records are held whole, which is the largest retained cost of a large diagram, and Phase B
+additionally holds the rows, evidence, diagnostics and envelope it streams. `tables` no longer
 builds `inspect`'s `schema`, so that document is not part of its peak; what the projection does
 cost, and how much the omission saves, are measured rather than asserted here. Inputs within the
 current read limits can still exhaust the default V8 heap (§7.1): the process then aborts, outside
@@ -1062,14 +1063,17 @@ uses too, over the same input and one `Integration` of it (§5.5). `tool` is the
 `TOOL_VERSION` constant and `command` is the invocation's own; `status` comes from the
 `Integration`. Their key sets are those of the existing contract, and the goldens already pin them.
 
-**Status and nulls (runtime).** Neither envelope type ties `status` to the nulls, so the production
-builder `buildTablesEnvelope()` checks it when it narrows into one of the two arms.
-`toTablesEnvelope()` keeps the same check as the comparison oracle. `failed` requires `source`,
-`result` and `completeness` all `null`. `ok`/`degraded` requires all three non-null. Any other
-combination is a defect and throws. It runs inside the first `next()` of the stdout generator
-(§2, Phase B), before any chunk exists, so the writer reports a generation failure (exit `70`,
-§7.2); the abnormal-path tests pin an empty stdout for this throw path. No fixture or generated
-document may reach the contradiction arm (§8.4).
+**Status and nulls (runtime).** `JsonTablesEnvelope` is a discriminated union: the read arm carries
+`status: 'ok' | 'degraded'` with non-null members, and the failed arm carries `status: 'failed'`
+with `source`, `result` and `completeness` all `null`. The builder still confirms the consistency
+of its input and `Integration` at runtime, and `toTablesEnvelope()` keeps the same check over the
+received `JsonEnvelope` as the comparison oracle; any other combination is a defect and throws. The
+throw runs inside the first `next()` of the stdout generator (§2, Phase B), before any chunk
+exists, so the writer reports a generation failure (exit `70`, §7.2). Directly tested: the oracle
+rejects a contradictory envelope (`tests/view-tables.test.ts`), and a missing semantic record
+turns into a generation failure with empty stdout (`tests/tables-command.test.ts`). A
+`status`/null contradiction inside the builder itself has no direct injection test and is not
+claimed as tested.
 
 **Numbers: counted versus copied.**
 
@@ -1113,11 +1117,13 @@ For every input, with `S = inspect.schema` and `R = tables.result`:
 
 `contractVersion`, `tool`, `status`, `source`, `limits`, `unsupported`, `diagnostics` and
 `completeness` must deep-equal the inspect envelope's members for the same input, and must
-serialise to the same bytes. The view layer builds them through the same function the inspect
-envelope uses (`sharedEnvelopeMembers()` in `src/json/serialize.ts`), over the same input and one
-`Integration` of it, so neither document is projected from the other and neither rebuilds them.
-Their meaning, rules 1–4 and 7 of `architecture.md` §12, and the `limits` semantics apply
-unchanged.
+serialise to the same bytes. Of these, five come from the helper both envelopes share
+(`sharedEnvelopeMembers()` in `src/json/serialize.ts`, over the same input and one `Integration`
+of it): `source`, `limits`, `unsupported`, `diagnostics` and `completeness`. The remaining members
+do not come from the helper: `contractVersion` and `tool` are constants, `command` is the
+invocation's own, and `status` comes from the `Integration` — so neither document is projected from
+the other and neither rebuilds the shared five. Their meaning, rules 1–4 and 7 of
+`architecture.md` §12, and the `limits` semantics apply unchanged.
 
 ### 5.6 `failed`
 
@@ -1217,11 +1223,11 @@ only file-derived text it shows, the names (§4.4). Handle JSON output with the 
 
 ### 5.8 Byte compatibility of existing commands
 
-- `serialize.ts` keeps `inspect` and `validate` behaviour byte-identical; it only additionally exports
-  `sharedEnvelopeMembers()` (§5.5), which both envelopes use. `envelope.ts` only gains declarations.
-  `cli.ts` keeps the `run()` path for `inspect` and `validate` as it is: the same
-  `serialize(input, { command, path })`, the same `toJsonString`, the same `renderDiagnostics`,
-  the same write calls.
+- `serialize.ts` adds `sharedEnvelopeMembers()` (§5.5), and `serialize()` itself calls it for the five
+  shared members; the `inspect`/`validate` bytes are unchanged, which independent review confirmed
+  (88/88 byte compatibility). `envelope.ts` only gains declarations. `cli.ts` keeps the `run()` path
+  for `inspect` and `validate` as it is: the same `serialize(input, { command, path })`, the same
+  `toJsonString`, the same `renderDiagnostics`, the same write calls.
 - The 44 committed goldens and `json-goldens.test.ts` do not change, and they must pass.
 - The CLI tests for `inspect` and `validate` pass without edits, except the two help and
   unknown-command assertions in §9 T-1, which are about the global surface (§3.10).
@@ -1392,7 +1398,7 @@ mode.
 | `src/json/serialize.ts` | Behaviour for `inspect`/`validate` unchanged. Additionally exports `sharedEnvelopeMembers()` (§5.5), used by both envelopes; `strictReplacer` stays exported so that §5.10 reuses it | unchanged |
 | `src/json/stream.ts` (new) | `encodeJson(document: JsonTablesEnvelope): Iterable<string>`: lazy, bounded chunks, the scope and rejections of §5.10 | `serialize.ts` (`strictReplacer`), `envelope.ts` types |
 | `src/json/index.ts` | barrel: also exports the new types and `encodeJson` | — |
-| `src/view/tables.ts` (new) | `buildTablesEnvelope(input: IntegrationInput, integration: Integration, { path })`: the production document, plus the key-list constants of §5.3. `projectTables(schema: JsonSchema): JsonTablesResult` and `toTablesEnvelope(envelope: JsonEnvelope): JsonTablesEnvelope` stay as the comparison oracle. Pure, no I/O, no `node:` imports | `src/json/` types, constants and `sharedEnvelopeMembers()`; `src/validate/` (`Integration`/`IntegrationInput` types and the `isLoadedInput` guard); `src/schema/` and `src/model/` types only |
+| `src/view/tables.ts` (new) | `buildTablesEnvelope(input: IntegrationInput, integration: Integration, { path })`: the production document, plus the key-list constants of §5.3. `projectTables(schema: JsonSchema): JsonTablesResult` and `toTablesEnvelope(envelope: JsonEnvelope): JsonTablesEnvelope` stay as the comparison oracle. Pure, no I/O, no `node:` imports | `src/json/` types, constants and `sharedEnvelopeMembers()`; `src/validate/` (`Integration`/`IntegrationInput` types and the `isLoadedInput` guard); `src/schema/` and `src/model/` types only; `src/io/limits` types only |
 | `src/view/index.ts` (new) | barrel | — |
 | `src/text/escape.ts` (new) | the escape set, the whitespace set, `renderNamePieces(value: string \| null): Iterable<string>` and `renderedNameWidth(value: string \| null): number` (§4.4.1, §4.10), `escapeText(text: string): string` for fixed short text only (§4.8), and `quoteArg(arg: string): string` (§3.5) | none |
 | `src/text/width.ts` (new) | `codePointWidth(cp: number): 0 \| 1 \| 2` and `displayWidth(text: string): number` with the table of §4.11 | none |
@@ -1405,11 +1411,12 @@ mode.
 | `src/cli.ts` | the argv rules of §3.2, `quoteArg` in misuse messages, and dispatch of `tables` to `runTablesCommand`. `run()` and `renderDiagnostics()` for `inspect`/`validate` are unchanged | the above |
 
 Dependencies go one way: `cli → tables-command → text, view, json, io/stdout`, `text → json` and
-`validate` (types only), `view → json` (types, constants and the one shared function
-`sharedEnvelopeMembers()`), `validate` (types and the `isLoadedInput` guard) and `schema`/`model`
-(types only). Neither `view` nor `text` imports stage runtime that parses, decodes or decides
-(`decode`, `syntax`, `schema` and `semantic` builders, `validate`'s `integrate()`), so they cannot
-parse or re-decide anything. `src/json/stream.ts` sits in `src/json/` because it is the JSON contract's encoder.
+`validate` (types only) plus `text → view` for `NOTE_PREFIX`, `view → json` (types, constants and
+the one shared function `sharedEnvelopeMembers()`), `validate` (types and the `isLoadedInput`
+guard), `schema`/`model` (types only) and `io/limits` (types only). Neither `view` nor `text`
+imports stage runtime that parses, decodes or decides (`decode`, `syntax`, `schema` and `semantic`
+builders, `validate`'s `integrate()`), so they cannot parse or re-decide anything.
+`src/json/stream.ts` sits in `src/json/` because it is the JSON contract's encoder.
 `src/io/stdout.ts` sits in `src/io/` because it is a process I/O boundary. `src/tables-command.ts`
 is separate from `cli.ts` so that tests can import it without running `main()`. Decision 8 places
 new modules in `src/view/` and `src/text/` "where needed". These three files sit elsewhere for the
@@ -1448,7 +1455,7 @@ Windows or macOS host was available.
 | 200,000 `Field` lines in one entity (11,377,891 bytes) | `inspect`: exit `0`, 372,293,684-byte envelope (69 % of the maximum string length), 8.0 s, peak RSS 1.78 GB. A tables-like prototype that ran `serialize()`: heap 791 MiB after it, peak RSS 984 MB |
 | 1,155,516 `Field` lines (67,108,851 bytes, just under `maxBytes`) | Pipeline through `integrate()`: heap 2,847 MiB (load 82, scan 594, classify 2,628, semantics 2,847). `serialize()` then exhausted the 4,288 MiB heap: `FATAL ERROR … heap out of memory`, exit `134` (SIGABRT), 28 s. That stage is `inspect`'s, and it was `tables`'s at this baseline. At this baseline the abort happened before any stdout chunk existed. For the current build, see the follow-up below — the 1,155,516-Field input was **not** re-run there |
 
-**Follow-up on the current build (F4-B1b — not the baseline above).** `tables` no longer calls `serialize()` or `jsonSchema()` (§2). On the same machine and Node `v24.22.3`, Field-heavy 100k/300k synthetic inputs peaked at 432.9 → 301.9 MB (−30.3 %) and 1255.2 → 854.8 MB (−31.9 %) heap (median of 3 runs per arm; the ≥25 % bar was confirmed by independent measurement as well), and a live-GC probe shows the builder retains no document data beyond the shared stage results. Normal-scale and unknown-heavy inputs showed no material regression. The 1,155,516-Field input of the baseline row was **not** re-run on the current build, so this document claims no outcome for it: Phase A's classification and semantic records are still held whole, Phase B additionally retains rows, `unsupported`, `diagnostics` and the envelope while it streams output, and an out-of-memory abort (a signal, outside every exit code of §3.7) remains possible for inputs within the current read limits. Issue #27 stays open.
+**Follow-up on the current build (F4-B1b — not the baseline above).** `tables` no longer calls `serialize()` or `jsonSchema()` (§2). On the same machine and Node `v24.22.3`, Field-heavy 100k/300k synthetic inputs peaked at 432.9 → 301.9 MB (−30.3 %) and 1255.2 → 854.8 MB (−31.9 %) heap (median of 3 runs per arm; independent measurement on its own setup likewise met the ≥25 % bar, exact figures differ by setup). Normal-scale and unknown-heavy inputs showed no material regression. Streaming (§5.10) avoids building one huge output string at once; the envelope itself is still retained while it is encoded. The 1,155,516-Field input of the baseline row was **not** re-run on the current build, so this document claims no outcome for it: Phase A's classification and semantic records are still held whole, Phase B additionally retains rows, `unsupported`, `diagnostics` and the envelope while it streams output, and an out-of-memory abort (a signal, outside every exit code of §3.7) remains possible for inputs within the current read limits. Issue #27 stays open.
 
 Findings:
 
@@ -1457,11 +1464,13 @@ Findings:
   change (§3.10, §11 F-1).
 - Whole-output strings fail on accepted inputs. That covers both the text padding defect and
   `JSON.stringify` of a large envelope. P0 bounds every output string (§4.10, §5.10).
-- After that, Phase A — load, scan, classify, semantics — still grows with the input and is shared
-  by `inspect`, `validate` and `tables`. It hits the heap limit, not the string limit, at the
-  maximum input size, and P0 does not change that stage (§11 F-4). Phase B grows with the input too:
-  `tables` retains its rows, `unsupported` evidence, `diagnostics` and the envelope while it streams
-  the output, so a large input can exhaust the heap there as well. What plan B removed is only the
+- After that, both Phase A and Phase B allocate memory that grows with the input. Phase A — load,
+  scan, classify, semantics — is shared by `inspect`, `validate` and `tables`, and P0 does not
+  change that stage (§11 F-4). Phase B additionally retains the rows, `unsupported` evidence,
+  `diagnostics` and the envelope while it streams the output. The old measurement completed Phase A
+  and exhausted the heap in `serialize()`; the current build omits that complete schema projection
+  but still holds both phases' data, so it can still exhaust the V8 heap for inputs within the read
+  limits — the precise failure boundary has not been established. What plan B removed is only the
   extra `inspect` schema projection on top (§2 and the follow-up above).
 
 A throwaway prototype of the §7.2 state machine, run against real pipes and against a controlled
