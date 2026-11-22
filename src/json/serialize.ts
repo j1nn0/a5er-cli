@@ -81,6 +81,7 @@ import type {
 } from '../semantic/relations.js';
 import type { InferredPrimaryKey, IndeterminateKey } from '../semantic/primary-key.js';
 import type { SubtypeDeclaration } from '../semantic/subtypes.js';
+import type { ViewDeclaration } from '../semantic/views.js';
 import type { SectionKind } from '../syntax/sections.js';
 import type {
   CompletedIntegration,
@@ -376,9 +377,50 @@ function reportSpanOf(section: ClassifiedSection): Span {
   return pnameSpans(section).at(-1) ?? headerSpanOf(section);
 }
 
+/**
+ * First-wins lookups over the sections and semantic records a projection names, built once.
+ *
+ * Every projection below used to locate its record with `.find()`, rescanning the whole collection
+ * for each object and relation the file declares — O(sections × records) on a large diagram. Each
+ * map holds exactly the record `.find()` returned (the first with that key), so interpretation is
+ * unchanged; and a map is only ever `.get()`, never iterated, so the output keeps following
+ * `classification.sections` and `semantics.relations` in file order.
+ */
+interface SectionLookups {
+  readonly sections: ReadonlyMap<number, ClassifiedSection>;
+  readonly primaryKeys: ReadonlyMap<number, InferredPrimaryKey>;
+  readonly indeterminateKeys: ReadonlyMap<number, IndeterminateKey>;
+  readonly entityColumns: ReadonlyMap<number, EntityColumns>;
+  readonly views: ReadonlyMap<number, ViewDeclaration>;
+  readonly subtypes: ReadonlyMap<number, SubtypeDeclaration>;
+}
+
+/** Index `records` by `keyOf`, keeping the first record per key — the one `.find()` returns. */
+function firstWins<T>(records: readonly T[], keyOf: (record: T) => number): ReadonlyMap<number, T> {
+  const index = new Map<number, T>();
+  for (const record of records) {
+    const key = keyOf(record);
+    if (!index.has(key)) index.set(key, record);
+  }
+  return index;
+}
+
+/** The lookups one document needs, built once per `serialize()` call. */
+function sectionLookups(input: LoadedIntegrationInput): SectionLookups {
+  const { classification, semantics } = input;
+  return {
+    sections: firstWins(classification.sections, (section) => section.index),
+    primaryKeys: firstWins(semantics.primaryKeys, (key) => key.sectionIndex),
+    indeterminateKeys: firstWins(semantics.indeterminateKeys, (key) => key.sectionIndex),
+    entityColumns: firstWins(semantics.entityColumns, (columns) => columns.sectionIndex),
+    views: firstWins(semantics.views, (view) => view.sectionIndex),
+    subtypes: firstWins(semantics.subtypes, (subtype) => subtype.sectionIndex),
+  };
+}
+
 /** A section named by a semantic record must exist; its absence would be a defect, not input data. */
-function requireSection(classification: Classification, sectionIndex: number): ClassifiedSection {
-  const section = classification.sections.find((candidate) => candidate.index === sectionIndex);
+function requireSection(lookups: SectionLookups, sectionIndex: number): ClassifiedSection {
+  const section = lookups.sections.get(sectionIndex);
   if (section === undefined) {
     throw new Error(`json envelope: section ${String(sectionIndex)} is missing from the scan`);
   }
@@ -663,15 +705,11 @@ function jsonEntityColumns(columns: EntityColumns): JsonEntityColumns {
   };
 }
 
-function entityObject(input: LoadedIntegrationInput, section: ClassifiedSection): JsonEntityObject {
-  const key = input.semantics.primaryKeys.find(
-    (candidate) => candidate.sectionIndex === section.index,
-  );
-  const indeterminate = input.semantics.indeterminateKeys.find(
-    (candidate) => candidate.sectionIndex === section.index,
-  );
+function entityObject(lookups: SectionLookups, section: ClassifiedSection): JsonEntityObject {
+  const key = lookups.primaryKeys.get(section.index);
+  const indeterminate = lookups.indeterminateKeys.get(section.index);
   const columns = requireRecord(
-    input.semantics.entityColumns.find((candidate) => candidate.sectionIndex === section.index),
+    lookups.entityColumns.get(section.index),
     'effective columns',
     section.index,
   );
@@ -694,12 +732,8 @@ function entityObject(input: LoadedIntegrationInput, section: ClassifiedSection)
   };
 }
 
-function viewObject(input: LoadedIntegrationInput, section: ClassifiedSection): JsonViewObject {
-  const view = requireRecord(
-    input.semantics.views.find((candidate) => candidate.sectionIndex === section.index),
-    'view',
-    section.index,
-  );
+function viewObject(lookups: SectionLookups, section: ClassifiedSection): JsonViewObject {
+  const view = requireRecord(lookups.views.get(section.index), 'view', section.index);
 
   return {
     kind: 'view',
@@ -729,12 +763,9 @@ function viewObject(input: LoadedIntegrationInput, section: ClassifiedSection): 
   };
 }
 
-function subtypeObject(
-  input: LoadedIntegrationInput,
-  section: ClassifiedSection,
-): JsonSubtypeObject {
+function subtypeObject(lookups: SectionLookups, section: ClassifiedSection): JsonSubtypeObject {
   const subtype: SubtypeDeclaration = requireRecord(
-    input.semantics.subtypes.find((candidate) => candidate.sectionIndex === section.index),
+    lookups.subtypes.get(section.index),
     'subtype',
     section.index,
   );
@@ -777,18 +808,18 @@ function subtypeObject(
 }
 
 /** Every resolved object, in file order; a section with no `PName` is still an object. */
-function jsonObjects(input: LoadedIntegrationInput): JsonObject[] {
+function jsonObjects(input: LoadedIntegrationInput, lookups: SectionLookups): JsonObject[] {
   const objects: JsonObject[] = [];
   for (const section of input.classification.sections) {
     switch (section.kind) {
       case 'Entity':
-        objects.push(entityObject(input, section));
+        objects.push(entityObject(lookups, section));
         break;
       case 'View':
-        objects.push(viewObject(input, section));
+        objects.push(viewObject(lookups, section));
         break;
       case 'Subtype':
-        objects.push(subtypeObject(input, section));
+        objects.push(subtypeObject(lookups, section));
         break;
       default:
         // `[Manager]`, relations and the unmodelled section kinds are projected elsewhere or not
@@ -883,8 +914,8 @@ function jsonRelationScalars(section: ClassifiedSection): JsonRelationScalar[] {
  * it came from. Both derive from the same occurrence under the same last-wins rule
  * (`semantic/access.ts`), so the pair cannot disagree; `tests/json-contract.test.ts` pins that.
  */
-function jsonRelation(relation: ResolvedRelation, classification: Classification): JsonRelation {
-  const section = requireSection(classification, relation.sectionIndex);
+function jsonRelation(relation: ResolvedRelation, lookups: SectionLookups): JsonRelation {
+  const section = requireSection(lookups, relation.sectionIndex);
   return {
     sectionIndex: relation.sectionIndex,
     sectionHeader: relation.sectionHeader,
@@ -1047,7 +1078,11 @@ function jsonManagerAttributes(classification: Classification): JsonAttribute[] 
   const attributes: JsonAttribute[] = [];
   for (const section of classification.sections) {
     if (section.kind !== 'Manager') continue;
-    attributes.push(...jsonAttributes(section, MANAGER_PROJECTED));
+    // One by one, not `push(...)`: a repeated Manager section can declare tens of thousands of
+    // keys, and spreading that many arguments overflows the stack instead of emitting them.
+    for (const attribute of jsonAttributes(section, MANAGER_PROJECTED)) {
+      attributes.push(attribute);
+    }
   }
   return attributes;
 }
@@ -1055,9 +1090,10 @@ function jsonManagerAttributes(classification: Classification): JsonAttribute[] 
 /** The resolved model of §4.5, built from the classification and the semantic projections. */
 function jsonSchema(input: LoadedIntegrationInput): JsonSchema {
   const { classification, semantics } = input;
+  const lookups = sectionLookups(input);
   return {
-    objects: jsonObjects(input),
-    relations: semantics.relations.map((relation) => jsonRelation(relation, classification)),
+    objects: jsonObjects(input, lookups),
+    relations: semantics.relations.map((relation) => jsonRelation(relation, lookups)),
     pages: semantics.pages.map(jsonPage),
     pageReferences: semantics.pageReferences.map(jsonPageReference),
     domains: semantics.domains.map(jsonDomain),

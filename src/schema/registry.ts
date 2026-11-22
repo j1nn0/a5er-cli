@@ -528,7 +528,7 @@ function decodeSection(
       case 'Field': {
         const decoded = decodeField(parts, span, occurrence.raw);
         fields.push(decoded.field);
-        diagnostics.push(...decoded.diagnostics);
+        for (const diagnostic of decoded.diagnostics) diagnostics.push(diagnostic);
         break;
       }
       case 'IndexInfo':
@@ -655,7 +655,7 @@ export function classify(scan: SyntaxScan): Classification {
         decoded: decodeValue(spec.type, entry.value, entry.span),
       };
       entries.push({ kind: 'parsed', occurrence });
-      diagnostics.push(...occurrence.decoded.diagnostics);
+      for (const diagnostic of occurrence.decoded.diagnostics) diagnostics.push(diagnostic);
       if (!occurrence.decoded.ok) {
         problems.push({
           key: entry.key,
@@ -708,7 +708,10 @@ export function classify(scan: SyntaxScan): Classification {
     }
 
     const typed = decodeSection(section.kind, entries, profile, section.span);
-    diagnostics.push(...typed.diagnostics);
+    // Appended one by one: `push(...typed.diagnostics)` passes each element as an argument, so a
+    // section with tens of thousands of undecodable keys overflows the stack instead of reporting
+    // them. Order is unchanged — the array is appended in the same sequence the spread used.
+    for (const diagnostic of typed.diagnostics) diagnostics.push(diagnostic);
 
     sections.push({
       index: section.index,
