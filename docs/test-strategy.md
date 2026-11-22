@@ -480,17 +480,25 @@ The `tables` tests run in the same `verify` job, in-process or by spawning the b
 | JSON contract, key sets and encoder (§5.10, §8.4) | `json-stream.test.ts`, `json-tables-contract.test.ts`, `types/tables-envelope.types.ts` | The type file is compiled by `typecheck` only |
 | Writer state machine (§7.2, R-3–R-23, R-7b, R-20b) | `io-stdout.test.ts` | Deterministic `ControlledWritable`; no timers, no real pipes |
 | Stderr line source (§3.6) | `text-diagnostics.test.ts` | In-process |
-| Real pipes (§7.3 R-1, R-1j, R-2, R-2f, R-11) | `cli-tables-io.test.ts` | Never assumes `EPIPE` is observed: exit `0`, empty stderr and a received-byte count within `[0, full length]` |
+| Real pipes (§7.3 R-1, R-1j, R-2, R-2f, R-11) | `cli-tables-io.test.ts` | Never assumes `EPIPE` is observed. R-1 and R-1j share one contract: no signal, exit `0`, empty stderr, and `1 ≤ received ≤ full length` with the reader provably destroyed *after* the first chunk; R-2 destroys it before any data and asserts `received === 0`; R-2f keeps the read's code and the fatal line. Every spawned child carries its **own 20 s limit** and is killed when it fires, so a hang fails that case instead of the suite |
+| R-11 receipt | `cli-tables-io.test.ts` | txt-01: text byte-compared with the hand-authored block, JSON **composed** from the committed golden's shared members plus the hand-derived `result`, never from `serialize()`/`toTablesEnvelope()`. `<big>`: the file-redirect bytes equal the fully received pipe bytes, and every row's physical and logical name is decoded in order with no gap or duplicate |
 | `/dev/full` (R-4) | `cli-tables-io.test.ts` | **Linux only**, `it.runIf(process.platform === 'linux')`; reported as a platform skip elsewhere. The file is absent on Windows and macOS, so there is nothing to redirect to |
 | Byte fence for `inspect`/`validate` (G-10) | `cli-byte-regression.test.ts` | 88 spawned runs, `encoding: 'buffer'` |
 
 **Not in CI.** The `tables` measurement beyond the string limit (B-6: a 1,999,000-unknown-key
 document through `--format json`, more than 536,870,888 bytes of stdout) is a manual run: it needs
-about 3 GB of RAM and tens of seconds per run. It is recorded in the implementation PR as a
-measurement, and CI covers the same code paths at bounded size (B-3, B-5). The in-memory stage
-shared with `inspect` can exhaust the V8 heap on inputs within the read limits; that risk is
-tracked in [issue #27](https://github.com/j1nn0/a5er-cli/issues/27) and is not an acceptance
-condition of the `tables` implementation.
+about 3 GB of RAM and minutes per run. It is recorded in the implementation PR as a measurement, and
+CI covers the same code paths at bounded size (B-3, B-5). The in-memory stage shared with `inspect`
+can exhaust the V8 heap on inputs within the read limits; that risk is tracked in
+[issue #27](https://github.com/j1nn0/a5er-cli/issues/27) and is not an acceptance condition of the
+`tables` implementation.
+
+**How B-6 is validated.** The output is larger than V8's maximum string length, so `JSON.parse`
+cannot be the check: the measurement is validated with a true streaming parser (`jq --stream`, whose
+own peak memory is recorded with each pass), which proves that exactly one document is present, that
+it ends normally with no trailing bytes, and that the record counts and the `command`/
+`contractVersion` members are the expected ones. A parser that loads the document into memory is
+never accepted as B-6 evidence.
 
 ---
 

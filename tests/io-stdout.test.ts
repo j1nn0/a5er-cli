@@ -670,3 +670,132 @@ describe('writer — the order of the stderr write (§3.6, §7.2 item 7)', () =>
     expect(closed.stderr.chunks.join('')).toBe(D);
   });
 });
+
+describe('writer — the three stderr-source throw points (§7.2 item 7, MAJOR-1 1-A)', () => {
+  /** An iterable whose `[Symbol.iterator]()` throws, for throw point 2. */
+  function uniterable(message: string): Iterable<string> {
+    return {
+      [Symbol.iterator](): Iterator<string> {
+        throw new Error(message);
+      },
+    };
+  }
+
+  it('reports a throw from the lines factory as 70 and leaks nothing', async () => {
+    const harness = start({
+      stderrLines: () => {
+        throw new Error('factory: /secret/path');
+      },
+    });
+
+    harness.stdout.complete(0);
+    harness.stdout.complete(1);
+
+    await expect(harness.done).resolves.toBe(70);
+    expect(harness.stdout.chunks).toEqual(['A', 'B']);
+    expect(harness.stderr.chunks.join('')).toBe(DIAGNOSTICS_FAILED);
+    expect(harness.stderr.chunks.join('')).not.toContain('/secret/path');
+    expect(harness.stderr.chunks.join('')).not.toContain('factory');
+  });
+
+  it('reports a throw from [Symbol.iterator]() as 70 without rejecting', async () => {
+    const harness = start({ stderrLines: () => uniterable('iterator: /secret/path') });
+
+    harness.stdout.complete(0);
+    harness.stdout.complete(1);
+
+    // The promise resolves: the acquisition is guarded, so the throw never escapes as a rejection.
+    await expect(harness.done).resolves.toBe(70);
+    expect(harness.stdout.chunks).toEqual(['A', 'B']);
+    expect(harness.stderr.chunks.join('')).toBe(DIAGNOSTICS_FAILED);
+    expect(harness.stderr.chunks.join('')).not.toContain('/secret/path');
+  });
+
+  it('reports a throw from next() as 70, after the lines already yielded', async () => {
+    const harness = start({ stderrLines: () => throwingLines() });
+
+    harness.stdout.complete(0);
+    harness.stdout.complete(1);
+
+    await expect(harness.done).resolves.toBe(70);
+    expect(harness.stderr.chunks.join('')).toBe(`${D}${DIAGNOSTICS_FAILED}`);
+  });
+
+  it('keeps 74 over 70 when stdout failed and the stderr iterator cannot be acquired', async () => {
+    const harness = start({ stderrLines: () => uniterable('iterator: /secret/path') });
+
+    harness.stdout.complete(0, codedError('EIO'));
+    harness.stdout.complete(1);
+
+    await expect(harness.done).resolves.toBe(74);
+    expect(harness.stderr.chunks.join('')).toBe(`${CANNOT_WRITE('EIO')}${DIAGNOSTICS_FAILED}`);
+    expect(harness.stderr.chunks.join('')).not.toContain('/secret/path');
+  });
+});
+
+describe('writer — the first terminal event wins (§7.2 item 6, MAJOR-1 1-B)', () => {
+  it('ignores a synchronous write() throw once an earlier error event settled the state', async () => {
+    // The error event arrives inside `write()`, settles `write-failed` with EIO, and only then does
+    // `write()` throw ENOSPC. The throw must not overwrite the code or the line.
+    const stdout = new ControlledWritable();
+    stdout.behave({ emitsError: codedError('EIO'), throws: codedError('ENOSPC') });
+    const harness = start({ stdout });
+
+    await expect(harness.done).resolves.toBe(74);
+    expect(harness.stdout.chunks).toEqual(['A']);
+    expect(harness.stderr.chunks.join('')).toBe(`${D}${CANNOT_WRITE('EIO')}`);
+    expect(harness.stderr.chunks.join('')).not.toContain('ENOSPC');
+    expect(harness.stderr.chunks.join('').match(/cannot write to stdout/g)).toHaveLength(1);
+  });
+
+  it('ignores a different error event after a callback error settled the state', async () => {
+    const harness = start();
+
+    harness.stdout.complete(0, codedError('EIO'));
+    harness.stdout.emit('error', codedError('ENOSPC'));
+    harness.stdout.complete(1);
+
+    await expect(harness.done).resolves.toBe(74);
+    expect(harness.stderr.chunks.join('')).toBe(`${D}${CANNOT_WRITE('EIO')}`);
+    expect(harness.stderr.chunks.join('').match(/cannot write to stdout/g)).toHaveLength(1);
+  });
+
+  it('keeps the read code after an EPIPE settled the state, whatever arrives later', async () => {
+    const harness = start({ readCode: 1 });
+
+    harness.stdout.complete(0, codedError('EPIPE'));
+    harness.stdout.emit('error', codedError('EIO'));
+    harness.stdout.emit('close');
+    harness.stdout.complete(1);
+
+    // `closed` keeps the read's code and prints no outcome line; the late EIO changes nothing.
+    await expect(harness.done).resolves.toBe(1);
+    expect(harness.stderr.chunks.join('')).toBe(D);
+    expect(harness.stderr.chunks.join('')).not.toContain('cannot write to stdout');
+  });
+
+  it('keeps the early-close line when a callback error arrives afterwards', async () => {
+    const harness = start();
+
+    harness.stdout.emit('close');
+    await flush();
+    harness.stdout.complete(0, codedError('EIO'));
+    harness.stdout.complete(1);
+
+    await expect(harness.done).resolves.toBe(74);
+    expect(harness.stderr.chunks.join('')).toBe(`${D}${EARLY_CLOSE}`);
+    expect(harness.stderr.chunks.join('')).not.toContain('cannot write to stdout');
+  });
+
+  it('ignores an error event after the accepted state', async () => {
+    const harness = start();
+
+    harness.stdout.complete(0);
+    harness.stdout.complete(1);
+    await expect(harness.done).resolves.toBe(0);
+
+    harness.stdout.emit('error', codedError('EIO'));
+
+    expect(harness.stderr.chunks.join('')).toBe(D);
+  });
+});

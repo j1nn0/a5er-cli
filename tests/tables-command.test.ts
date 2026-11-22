@@ -14,11 +14,15 @@
  * Phase A guard and what R-20b adds to it (a stderr write that fails by callback alone).
  */
 
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { OutputStream } from '../src/io/stdout.js';
 import { OUTPUT_GENERATION_FAILED_LINE } from '../src/io/stdout.js';
 import { runTablesCommand } from '../src/tables-command.js';
 import type { IntegrationInput } from '../src/validate/index.js';
+import { stage } from './helpers/stage.js';
 
 /** The line the guard must write, byte for byte (§7.2's table). */
 const INTERNAL_ERROR =
@@ -49,6 +53,11 @@ class FakeStream {
     this.chunks.push(chunk);
     this.#callbacks.push(callback);
     return this.#returns;
+  }
+
+  /** Call every held callback successfully; a duplicate call is ignored by the writer. */
+  completeAll(): void {
+    for (const callback of this.#callbacks) callback();
   }
 
   /** Call the `index`-th write's callback. */
@@ -178,5 +187,129 @@ describe('runTablesCommand — R-20b, the guard when stderr fails too', () => {
     await expect(done).resolves.toBe(70);
     expect(stdout.chunks).toEqual([]);
     expect(stderr.chunks).toHaveLength(1);
+  });
+});
+
+describe('runTablesCommand — the Phase A code reaches the CLI before the first write (§7.2 item 1)', () => {
+  it('reports the read code before any stdout byte, and only once', async () => {
+    const stdout = new FakeStream();
+    const stderr = new FakeStream();
+    const seen: { code: number; writesSoFar: number }[] = [];
+    const staged = stage('fmt-01');
+
+    try {
+      const pending = runTablesCommand({
+        path: staged.path,
+        format: 'text',
+        stdout: asOutputStream(stdout),
+        stderr: asOutputStream(stderr),
+        onPhaseACode: (phaseA) => {
+          // The whole point of §7.2 item 1: at this moment nothing has been written yet.
+          seen.push({ code: phaseA, writesSoFar: stdout.chunks.length });
+        },
+      });
+      await flush();
+      stdout.completeAll();
+      await flush();
+      stderr.completeAll();
+      const code = await pending;
+
+      expect(code).toBe(0);
+      expect(seen).toEqual([{ code: 0, writesSoFar: 0 }]);
+      expect(stdout.chunks.length).toBeGreaterThan(0);
+    } finally {
+      staged.cleanup();
+    }
+  }, 60_000);
+
+  it('reports 1 for a fatal read, still before the first write', async () => {
+    const stdout = new FakeStream();
+    const stderr = new FakeStream();
+    const seen: { code: number; writesSoFar: number }[] = [];
+    const directory = mkdtempSync(join(tmpdir(), 'a5er-phase-a-'));
+    try {
+      const path = join(directory, 'empty.a5er');
+      writeFileSync(path, '');
+
+      const pending = runTablesCommand({
+        path,
+        format: 'text',
+        stdout: asOutputStream(stdout),
+        stderr: asOutputStream(stderr),
+        onPhaseACode: (phaseA) => {
+          seen.push({ code: phaseA, writesSoFar: stdout.chunks.length });
+        },
+      });
+      await flush();
+      stdout.completeAll();
+      await flush();
+      stderr.completeAll();
+      const code = await pending;
+
+      expect(code).toBe(1);
+      expect(seen).toEqual([{ code: 1, writesSoFar: 0 }]);
+      // The failed shape is still written, and the fatal line reaches stderr.
+      expect(stdout.chunks.join('')).toContain('# status: failed');
+      expect(stderr.chunks.join('')).toBe('a5er: fatal: E_EMPTY_INPUT: The input is empty\n');
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('reports 70 when the Phase A guard fires, and writes nothing to stdout', async () => {
+    const stdout = new FakeStream();
+    const stderr = new FakeStream();
+    const seen: number[] = [];
+
+    const pending = runTablesCommand({
+      path: '/tmp/never-read.a5er',
+      format: 'text',
+      stdout: asOutputStream(stdout),
+      stderr: asOutputStream(stderr),
+      pipeline: throwingPipeline,
+      onPhaseACode: (phaseA) => {
+        seen.push(phaseA);
+      },
+    });
+    await flush();
+    stderr.completeAll();
+    const code = await pending;
+
+    expect(code).toBe(70);
+    expect(seen).toEqual([70]);
+    expect(stdout.chunks).toEqual([]);
+    expect(stderr.chunks.join('')).toBe(OUTPUT_GENERATION_FAILED_LINE);
+  });
+});
+
+describe('runTablesCommand — a throw from integrate() inside Phase A (R-20 boundary)', () => {
+  it('treats an integrate() throw as a generation failure: 70, empty stdout, one line', async () => {
+    const stdout = new FakeStream();
+    const stderr = new FakeStream();
+    const seen: number[] = [];
+
+    // R-20 names the `integrate` step explicitly. `pipeline` returns a value whose shape makes
+    // `integrate()` throw inside Phase A's guard: `{}` has no `load`, so it fails the moment the
+    // integration reads it. This is the boundary the pipeline seam exists for.
+    const pending = runTablesCommand({
+      path: '/tmp/never-read.a5er',
+      format: 'text',
+      stdout: asOutputStream(stdout),
+      stderr: asOutputStream(stderr),
+      pipeline: () => ({}) as IntegrationInput,
+      onPhaseACode: (phaseA) => {
+        seen.push(phaseA);
+      },
+    });
+    await flush();
+    stderr.completeAll();
+    const code = await pending;
+
+    expect(code).toBe(70);
+    expect(seen).toEqual([70]);
+    expect(stdout.chunks).toEqual([]);
+    expect(stderr.chunks.join('')).toBe(OUTPUT_GENERATION_FAILED_LINE);
+    // The TypeError's message is a runtime detail and never reaches the stream.
+    expect(stderr.chunks.join('')).not.toContain('Cannot read properties');
   });
 });

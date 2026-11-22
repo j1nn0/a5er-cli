@@ -56,6 +56,14 @@ export interface TablesCommandOptions {
   readonly stderr: OutputStream;
   /** Defaults to the real stages; the seam R-20 injects a throw through. */
   readonly pipeline?: TablesPipeline;
+  /**
+   * Called once, the moment Phase A settles and before any byte is written (§7.2 item 1).
+   *
+   * The CLI assigns `process.exitCode` from it, so the code the process carries is the read's —
+   * `1` for a fatal read, `0` otherwise, or `70` when the Phase A guard fired — even if the process
+   * dies while the output is still being written. It never changes the value this function returns.
+   */
+  readonly onPhaseACode?: (code: 0 | 1 | 70) => void;
 }
 
 /**
@@ -91,6 +99,8 @@ export async function runTablesCommand(options: TablesCommandOptions): Promise<W
     // One integration, reused by the exit policy and by the stderr line source.
     integration = integrate(input);
   } catch {
+    // A Phase A defect is exit 70 from the very first moment, before anything is written.
+    options.onPhaseACode?.(70);
     // Nothing on stdout. The line goes through the writer so stderr keeps its §7.2 item 8 rules,
     // and the exit stays 70 even when that write fails: there is nowhere left to report it.
     await writeOutput({
@@ -102,6 +112,10 @@ export async function runTablesCommand(options: TablesCommandOptions): Promise<W
     });
     return 70;
   }
+
+  // The read's code is set before the first write, so a process that dies mid-output still
+  // reports what the read found rather than the platform's default (§7.2 item 1).
+  options.onPhaseACode?.(integration.exitPolicy.inspect);
 
   // ── Phase B: lazy, pulled chunk by chunk by the writer (§2) ────────────────────────────────
   const stdoutChunks = (): Iterable<string> => {

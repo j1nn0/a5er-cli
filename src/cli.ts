@@ -357,6 +357,11 @@ if (invocation.kind === 'tables') {
     format: invocation.format,
     stdout: process.stdout,
     stderr: process.stderr,
+    // The read's code is assigned before the first write (§7.2 item 1), so a process that dies
+    // mid-output still reports what the read found; the writer's result replaces it below.
+    onPhaseACode: (code): void => {
+      process.exitCode = code;
+    },
   });
 } else {
   const result = invocation.result;

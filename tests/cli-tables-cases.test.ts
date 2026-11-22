@@ -172,25 +172,98 @@ describe('a5er tables — §8.6 cases that need a generated document', () => {
     });
   });
 
-  it('escapes terminal controls in a name and prints no raw control byte', async () => {
-    const hostile = 'evil\u001b[2J\u202etxt.exe';
+  /**
+   * S-4 / S-5 (§7.4): every control and invisible code point the current scanner keeps inside a
+   * value — CSI, OSC 8, BEL, TAB, DEL, one NUL, C1, the line/paragraph separators, the bidi
+   * controls, ZWJ, BOM and a tag sequence — in one `PName` and one `LName`.
+   */
+  const HOSTILE =
+    'evil\u001b[2J\u001b]8;;x\u001b\\\u0007\u0009\u007f\u0000\u0085\u009b\u2028\u2029\u202e\u2066\u2069\u200d\ufeff\u{e0001}\u{e0041}txt.exe';
+
+  it('neutralises every control in a name and keeps the line shape (S-4, S-5)', async () => {
     const document = documentOf(
       '',
       '[Entity]',
-      `PName="${hostile}"`,
+      `PName="${HOSTILE}"`,
+      `LName="${HOSTILE}"`,
       'UsingCommonColumns=0',
       'Position="Main",10,10',
     );
 
     await withDocument(document, async (path) => {
       const text = await runCli(['tables', path]);
+      const json = await runCli(['tables', '--format', 'json', path]);
+      const inspect = await runCli(['inspect', path]);
 
-      expect(text.stdout).toContain('"evil\\u{001B}[2J\\u{202E}txt.exe"');
-      // Not one ESC, RLO or NUL byte reaches the stream.
+      // Not one C0 byte reaches the stream.
       for (const forbidden of [0x00, 0x07, 0x09, 0x1b]) {
-        expect(text.stdoutBytes.includes(forbidden)).toBe(false);
+        expect(text.stdoutBytes.includes(forbidden), `byte ${String(forbidden)}`).toBe(false);
       }
-      expect(text.stdout).not.toContain('\u202e');
+      // None of the invisible code points is written raw, as a character or as its UTF-8 bytes.
+      for (const character of [
+        '\u007f',
+        '\u0085',
+        '\u009b',
+        '\u2028',
+        '\u2029',
+        '\u202e',
+        '\u2066',
+        '\u2069',
+        '\u200d',
+        '\ufeff',
+        '\u{e0001}',
+        '\u{e0041}',
+      ]) {
+        expect(text.stdout, JSON.stringify(character)).not.toContain(character);
+      }
+
+      // The escaped forms are what the renderer wrote instead (§4.4.1).
+      for (const escaped of [
+        '\\u{001B}[2J',
+        '\\u{0007}',
+        '\\u{0009}',
+        '\\u{007F}',
+        '\\u{0000}',
+        '\\u{0085}',
+        '\\u{009B}',
+        '\\u{2028}',
+        '\\u{2029}',
+        '\\u{202E}',
+        '\\u{2066}',
+        '\\u{2069}',
+        '\\u{200D}',
+        '\\u{FEFF}',
+        '\\u{E0001}',
+        '\\u{E0041}',
+      ]) {
+        expect(text.stdout, escaped).toContain(escaped);
+      }
+
+      // S-5: every line is one of the three classes, none ends in whitespace, none holds CR or TAB.
+      expect(text.stdout.endsWith('\n')).toBe(true);
+      expect(text.stdout).not.toContain('\r');
+      expect(text.stdout).not.toContain('\t');
+      for (const line of text.stdout.slice(0, -1).split('\n')) {
+        expect(line).not.toBe('');
+        expect(line).not.toMatch(/\s$/);
+        expect(line).toMatch(/^(# .*|SECTION .*|[ 0-9].*)$/);
+      }
+
+      // S-4: the JSON keeps the interpreted value `inspect` reports, not the text the generator
+      // wrote — the CLI never re-reads its own rendering.
+      const tablesDocument = JSON.parse(json.stdout) as {
+        result: { tables: { pname: string | null; lname: string | null }[] };
+      };
+      const inspectDocument = JSON.parse(inspect.stdout) as {
+        schema: { objects: { pname: { value: string } | null; lname: { value: string } | null }[] };
+      };
+      expect(tablesDocument.result.tables[0]?.pname).toBe(
+        inspectDocument.schema.objects[0]?.pname?.value,
+      );
+      expect(tablesDocument.result.tables[0]?.lname).toBe(
+        inspectDocument.schema.objects[0]?.lname?.value,
+      );
+      expect(tablesDocument.result.tables[0]?.pname).toBe(HOSTILE);
     });
   });
 

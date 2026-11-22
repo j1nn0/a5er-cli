@@ -719,3 +719,92 @@ describe('tables JSON — the result equals the §8.1 table derived from the fix
     expect(failures).toEqual([]);
   }, 120_000);
 });
+
+/* ── K-4 on all 44 fixtures, through the real CLI (§5.5, §8.4) ─────────────────────────────── */
+
+describe('tables JSON — K-4 on every fixture through the real CLI (§5.5)', () => {
+  /** The eight members both shapes share, in §5.3 order. */
+  const SHARED = [
+    'contractVersion',
+    'tool',
+    'status',
+    'source',
+    'limits',
+    'unsupported',
+    'diagnostics',
+    'completeness',
+  ] as const;
+
+  /**
+   * Compare one fixture's two runs.
+   *
+   * Both documents are the CLI's own stdout, so this is the runtime proof that `tables` reports the
+   * same shared members as `inspect` for the same bytes — deeply, and byte for byte per member.
+   */
+  async function compareShared(id: string, path: string, failures: string[]): Promise<void> {
+    const inspect = await runCliRaw(['inspect', path]);
+    const tables = await runCliRaw(['tables', '--format', 'json', path]);
+
+    if (inspect.code !== tables.code && !(inspect.code === 0 && tables.code === 0)) {
+      failures.push(`${id}: exit ${String(inspect.code)} vs ${String(tables.code)}`);
+      return;
+    }
+
+    const inspectDocument = JSON.parse(inspect.stdout) as Record<string, unknown>;
+    const tablesDocument = JSON.parse(tables.stdout) as Record<string, unknown>;
+
+    if (tablesDocument['command'] !== 'tables') failures.push(`${id}: command`);
+    if (inspectDocument['command'] !== 'inspect') failures.push(`${id}: inspect command`);
+    if ('schema' in tablesDocument) failures.push(`${id}: schema key present`);
+    if ('result' in inspectDocument) failures.push(`${id}: result key present`);
+
+    for (const key of SHARED) {
+      if (JSON.stringify(tablesDocument[key]) !== JSON.stringify(inspectDocument[key])) {
+        failures.push(`${id}: ${key} differs`);
+      }
+    }
+
+    // §5.6's null rules, from the CLI's own bytes.
+    const failed = tablesDocument['status'] === 'failed';
+    const nulls = [
+      tablesDocument['source'] === null,
+      tablesDocument['result'] === null,
+      tablesDocument['completeness'] === null,
+    ];
+    if (failed && !nulls.every(Boolean)) failures.push(`${id}: failed arm has a non-null member`);
+    if (!failed && nulls.some(Boolean)) failures.push(`${id}: read arm has a null member`);
+  }
+
+  it('matches for all 39 synthetic fixtures', async () => {
+    const failures: string[] = [];
+
+    for (const spec of FIXTURES) {
+      if (spec.fixtureClass !== 'synthetic') continue;
+      const staged = stage(spec.id);
+      try {
+        await compareShared(spec.id, staged.path, failures);
+      } finally {
+        staged.cleanup();
+      }
+    }
+
+    expect(failures).toEqual([]);
+  }, 300_000);
+
+  it('matches for all 5 byte fixtures, the two rejected reads included', async () => {
+    const failures: string[] = [];
+    const directory = mkdtempSync(join(tmpdir(), 'a5er-k4-'));
+
+    try {
+      for (const fixture of BYTE_FIXTURES) {
+        const path = join(directory, `${fixture.ID}.a5er`);
+        writeFileSync(path, fixture.BYTES);
+        await compareShared(fixture.ID, path, failures);
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+
+    expect(failures).toEqual([]);
+  }, 300_000);
+});

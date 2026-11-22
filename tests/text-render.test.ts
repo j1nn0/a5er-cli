@@ -608,6 +608,50 @@ describe('text/tables — §4.3 alignment and the 48-cell cap', () => {
     expectChunksBounded(chunksOf(envelope));
   });
 
+  it("keeps B-1's 200,001-character name inside the chunk bound (B-3)", () => {
+    // §7.7 B-1's document shape: one very long name and 3,999 short ones. Only the chunk bounds and
+    // the relaxed-alignment row are asserted here; the real CLI case owns exit codes and bytes.
+    const long = 'p'.repeat(200_001);
+    const rows = [
+      row({
+        objectIndex: 0,
+        sectionIndex: 2,
+        startLine: 7,
+        kind: 'entity',
+        pname: long,
+        lname: null,
+        declared: 1,
+        common: 0,
+        effective: 1,
+      }),
+      ...Array.from({ length: 3_999 }, (_, index) =>
+        row({
+          objectIndex: index + 1,
+          sectionIndex: 2,
+          startLine: 7,
+          kind: 'entity',
+          pname: `t${String(index)}`,
+          lname: null,
+          declared: 1,
+          common: 0,
+          effective: 1,
+        }),
+      ),
+    ];
+    const envelope = envelopeWithRows(rows);
+
+    const chunks = chunksOf(envelope);
+    expectChunksBounded(chunks);
+
+    const texts = chunks.join('');
+    const rowLines = texts.split('\n').filter((line) => /^[ 0-9]/.test(line));
+    expect(rowLines).toHaveLength(4_000);
+    // The 48-cell cap keeps the long row from widening the others: they all start `LNAME` at the
+    // same column, and the long row is followed by exactly two spaces.
+    expect(rowLines[0]?.endsWith(`${long}  -`)).toBe(true);
+    expect(texts.length).toBeLessThan(1_048_576);
+  });
+
   it('expands 400,000 escapes without ever building one name string (B-2)', () => {
     const pname = '\u001b'.repeat(400_000);
     const envelope = envelopeWithRows([

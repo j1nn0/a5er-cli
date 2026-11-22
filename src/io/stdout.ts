@@ -128,15 +128,16 @@ function errorCode(error: unknown): string {
 /**
  * Buffer stderr lines into chunks of at least `STDERR_FLUSH_UNITS` and always under the limit.
  *
- * The source is pulled one line at a time, and a throw from it ends the stream *after* the lines
- * already buffered are yielded, which is what makes R-17's order (`D`, then the failure line) hold.
- * A cut never separates a surrogate pair.
+ * The iterator is passed in already acquired, so all three throw points of a source — the factory
+ * call, `[Symbol.iterator]()`, and `next()` — are guarded by the caller and land in the same
+ * `diagnosticsThrew` flag. A throw ends the stream *after* the lines already buffered are yielded,
+ * which is what makes R-17's order (`D`, then the failure line) hold. A cut never separates a
+ * surrogate pair.
  */
 function* bufferedLines(
-  lines: Iterable<string>,
+  iterator: Iterator<string>,
   onThrow: () => void,
 ): Generator<string, void, undefined> {
-  const iterator = lines[Symbol.iterator]();
   let buffer = '';
 
   for (;;) {
@@ -210,8 +211,15 @@ export async function writeOutput(options: WriteOutputOptions): Promise<WriteOut
     if (exhausted && outstanding === 0) transition('accepted');
   };
 
-  /** A callback, `'error'` or synchronous throw: `EPIPE` is a closed reader, anything else fails. */
+  /**
+   * A callback, `'error'` or synchronous throw: `EPIPE` is a closed reader, anything else fails.
+   *
+   * The guard comes first, so a failure that arrives *after* the terminal state cannot overwrite
+   * `writeFailure`: the first terminal event decides the exit code and the stderr line, and every
+   * duplicate (the same failure usually arrives two or three times) is a no-op (§7.2 item 6).
+   */
   const classify = (error: unknown): void => {
+    if (state !== 'writing') return;
     if (isBrokenPipe(error)) {
       transition('closed');
       return;
@@ -363,9 +371,13 @@ export async function writeOutput(options: WriteOutputOptions): Promise<WriteOut
       if (!wrote) await waitForDrain(stderr, stopped);
     };
 
-    let lines: Iterable<string> | null = null;
+    // The source has three throw points and all of them mean the same thing: the diagnostics are
+    // incomplete. (1) the factory call, (2) acquiring the iterator, (3) its `next()`, which
+    // `bufferedLines` guards. A throw at (1) or (2) is caught here rather than escaping as a
+    // rejected promise, and the diagnostics line is still appended (§7.2 item 7).
+    let lines: Iterator<string> | null = null;
     try {
-      lines = stderrLines();
+      lines = stderrLines()[Symbol.iterator]();
     } catch {
       diagnosticsThrew = true;
     }

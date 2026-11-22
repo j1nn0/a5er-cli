@@ -21,10 +21,19 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { loadSource } from '../src/decode/load.js';
 import type { JsonTablesEnvelope } from '../src/json/index.js';
+import { serialize } from '../src/json/index.js';
+import { classify } from '../src/schema/index.js';
+import { derivePartialSemantics } from '../src/semantic/index.js';
+import { scanSource } from '../src/syntax/index.js';
+import { toTablesEnvelope } from '../src/view/tables.js';
 import { encodeJson } from '../src/json/index.js';
 import { strictReplacer } from '../src/json/serialize.js';
 import { CHUNK_LIMIT_UNITS } from '../src/json/stream.js';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 /** The chunk bound of §5.10, written out rather than taken from the module under test. */
 const SPEC_CHUNK_LIMIT = 262_144;
@@ -295,4 +304,203 @@ describe('json/stream — chunks are lazy and bounded (§5.10)', () => {
     expect(text.slice(0, -1)).not.toContain('\n');
     expect(JSON.parse(text)).toEqual({ a: [1, { b: 'c' }] });
   });
+});
+
+/* ── B-3 / B-5 over §7.7's heavy input set ──────────────────────────────────────────────────── */
+
+/** The tables document of one synthetic `.a5er` text, written to a temp file and run for real. */
+function tablesDocumentOf(text: string): JsonTablesEnvelope {
+  const directory = mkdtempSync(join(tmpdir(), 'a5er-stream-heavy-'));
+  try {
+    const path = join(directory, 'heavy.a5er');
+    writeFileSync(path, text, 'utf8');
+    const load = loadSource(path);
+    if (!load.ok) throw new Error('the generated document did not load');
+    const scan = scanSource(load.source);
+    const classification = classify(scan);
+    const envelope = serialize(
+      { load, scan, classification, semantics: derivePartialSemantics(classification) },
+      { command: 'inspect', path },
+    );
+    return toTablesEnvelope(envelope);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+/** §7.7's B-1: one 200,001-character name and 3,999 short ones. */
+function b1Text(): string {
+  const lines = [
+    '# A5:ER FORMAT:21',
+    '',
+    '[Manager]',
+    'PageInfo="Main",3,"A4Landscape","$FFFFFF"',
+    '',
+  ];
+  lines.push(
+    '[Entity]',
+    `PName="${'p'.repeat(200_001)}"`,
+    'UsingCommonColumns=0',
+    'Position="Main",10,10',
+    '',
+  );
+  for (let index = 0; index < 3_999; index += 1) {
+    lines.push(
+      '[Entity]',
+      `PName="t${String(index)}"`,
+      'UsingCommonColumns=0',
+      'Position="Main",20,20',
+      '',
+    );
+  }
+  return lines.join('\n');
+}
+
+/** §7.7's B-2: 400,000 escape characters in one name. */
+function b2Text(): string {
+  const lines = [
+    '# A5:ER FORMAT:21',
+    '',
+    '[Manager]',
+    'PageInfo="Main",3,"A4Landscape","$FFFFFF"',
+    '',
+  ];
+  lines.push(
+    '[Entity]',
+    `PName="${'\u001b'.repeat(400_000)}"`,
+    'UsingCommonColumns=0',
+    'Position="Main",10,10',
+    '',
+  );
+  for (let index = 0; index < 3_999; index += 1) {
+    lines.push(
+      '[Entity]',
+      `PName="t${String(index)}"`,
+      'UsingCommonColumns=0',
+      'Position="Main",20,20',
+      '',
+    );
+  }
+  return lines.join('\n');
+}
+
+/** §7.7's B-4: an astral code point at each of the three slicing boundaries. */
+function b4Text(): string {
+  const lines = [
+    '# A5:ER FORMAT:21',
+    '',
+    '[Manager]',
+    'PageInfo="Main",3,"A4Landscape","$FFFFFF"',
+    '',
+  ];
+  for (const at of [16_383, 16_384, 65_535]) {
+    lines.push(
+      '[Entity]',
+      `PName="${'a'.repeat(at)}\u{1f600}${'b'.repeat(10)}"`,
+      'UsingCommonColumns=0',
+      'Position="Main",10,10',
+      '',
+    );
+  }
+  return lines.join('\n');
+}
+
+/** §7.7's N-1: one entity with 30,000 unknown keys. */
+function n1Text(): string {
+  const lines = [
+    '# A5:ER FORMAT:21',
+    '',
+    '[Manager]',
+    'PageInfo="Main",3,"A4Landscape","$FFFFFF"',
+    '',
+    '[Entity]',
+    'PName="wide"',
+    'UsingCommonColumns=0',
+    'Position="Main",10,10',
+  ];
+  const keys = Array.from({ length: 30_000 }, (_, index) => `Unknown${String(index)}=1`);
+  return [...lines, ...keys].join('\n');
+}
+
+/** §7.7's N-2: 30,000 entities with no `PName`. */
+function n2Text(): string {
+  const lines = [
+    '# A5:ER FORMAT:21',
+    '',
+    '[Manager]',
+    'PageInfo="Main",3,"A4Landscape","$FFFFFF"',
+    '',
+  ];
+  for (let index = 0; index < 30_000; index += 1) {
+    lines.push('[Entity]', 'LName="名前なし"', 'UsingCommonColumns=0', 'Position="Main",10,10', '');
+  }
+  return lines.join('\n');
+}
+
+/** §7.7's N-3: 30,000 views. */
+function n3Text(): string {
+  const lines = [
+    '# A5:ER FORMAT:21',
+    '',
+    '[Manager]',
+    'PageInfo="Main",3,"A4Landscape","$FFFFFF"',
+    '',
+  ];
+  for (let index = 0; index < 30_000; index += 1) {
+    lines.push('[View]', `PName="v${String(index)}"`, 'Position="Main",10,10', '');
+  }
+  return lines.join('\n');
+}
+
+/** §7.7's 200,000-unknown-key document, the small sibling of B-6. */
+function unknownKeyText(count: number): string {
+  const lines = [
+    '# A5:ER FORMAT:21',
+    '',
+    '[Manager]',
+    'PageInfo="Main",3,"A4Landscape","$FFFFFF"',
+    '',
+    '[Entity]',
+    'PName="wide"',
+    'UsingCommonColumns=0',
+    'Position="Main",10,10',
+  ];
+  const keys = Array.from({ length: count }, (_, index) => `Unknown${String(index)}=1`);
+  return [...lines, ...keys].join('\n');
+}
+
+describe('json/stream — B-3 and B-5 over the heavy documents of §7.7', () => {
+  const documents: readonly (readonly [string, () => string])[] = [
+    ['B-1', b1Text],
+    ['B-2', b2Text],
+    ['B-4', b4Text],
+    ['N-1', n1Text],
+    ['N-2', n2Text],
+    ['N-3', n3Text],
+    ['200,000 unknown keys', () => unknownKeyText(200_000)],
+  ];
+
+  for (const [label, build] of documents) {
+    it(`encodes ${label} byte-equivalently and within the chunk bound`, () => {
+      const document = tablesDocumentOf(build());
+
+      const chunks = [...encodeJson(document)];
+      // B-5: the encoder is `JSON.stringify` with the same replacer, plus the newline.
+      expect(chunks.join('')).toBe(`${JSON.stringify(document, strictReplacer)}\n`);
+
+      // B-3: every chunk under 262,144 code units, and no boundary inside a surrogate pair.
+      expect(chunks.length).toBeGreaterThan(0);
+      for (const [index, chunk] of chunks.entries()) {
+        expect(chunk.length, `${label} chunk ${String(index)}`).toBeGreaterThan(0);
+        expect(chunk.length, `${label} chunk ${String(index)}`).toBeLessThan(SPEC_CHUNK_LIMIT);
+        const first = chunk.charCodeAt(0);
+        const last = chunk.charCodeAt(chunk.length - 1);
+        expect(first >= 0xdc00 && first <= 0xdfff, `${label} chunk ${String(index)} start`).toBe(
+          false,
+        );
+        expect(last >= 0xd800 && last <= 0xdbff, `${label} chunk ${String(index)} end`).toBe(false);
+      }
+      expect(chunks.at(-1)?.endsWith('\n')).toBe(true);
+    }, 120_000);
+  }
 });
