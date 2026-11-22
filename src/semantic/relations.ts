@@ -203,14 +203,48 @@ function columnsOf(
   return list;
 }
 
-/** The column names an entity declares, or `null` when no `[Entity]` section carries that name. */
-function entityColumns(classification: Classification, pname: string): Set<string> | null {
+/**
+ * The `[Entity]` sections of one document, by `PName`, the first declaration winning.
+ *
+ * One walk for the whole document. The scan this replaces started at the top of the file for every
+ * referencing side, so a relation naming an entity declared far below it paid for every section in
+ * between: the cost depended on document *order*, not only on document size. Which section wins
+ * is the old rule — the first declaration in file order — even though only a uniquely named
+ * entity is ever looked up here.
+ *
+ * Presence is not the ambiguity judge. That stays `pnameCounts()`: a bare `has()` would resolve a
+ * name two sections declare, and R25 requires it to stay `ambiguous`.
+ */
+function entityIndex(classification: Classification): Map<string, ClassifiedSection> {
+  const index = new Map<string, ClassifiedSection>();
   for (const section of classification.sections) {
     if (section.kind !== 'Entity') continue;
-    if (pnameOf(section) !== pname) continue;
-    return new Set(section.decoded.fields.map((field) => field.physicalName.value));
+    const name = pnameOf(section);
+    // A nameless section is not an endpoint (it is a required-key finding of its own), and an empty
+    // `PName` is a name like any other: the test is `null`, never falsiness.
+    if (name === null || index.has(name)) continue;
+    index.set(name, section);
   }
-  return null;
+  return index;
+}
+
+/**
+ * The column names an entity declares, built on first use and shared afterwards.
+ *
+ * Building every entity's set up front would cost `O(ΣF)` objects for entities no relation
+ * names, so a set exists only for a section a *resolved* endpoint reached. The cache lives for one
+ * `relationsOf()` call and is never attached to the classification. It is keyed by section rather
+ * than by name so that two sections sharing a name cannot be given one set of columns.
+ */
+function columnNamesOf(
+  cache: Map<ClassifiedSection, Set<string>>,
+  section: ClassifiedSection,
+): Set<string> {
+  const cached = cache.get(section);
+  if (cached !== undefined) return cached;
+  const names = new Set(section.decoded.fields.map((field) => field.physicalName.value));
+  cache.set(section, names);
+  return names;
 }
 
 /** One endpoint, resolved against the `[Entity]` names. */
@@ -243,6 +277,14 @@ function endpointOf(
  */
 export function relationsOf(classification: Classification): RelationResult {
   const names = pnameCounts(classification, 'Entity');
+  // Built at the first resolvable endpoint: a document with no relations, or none whose endpoints
+  // resolve, pays nothing for the index.
+  let entities: Map<string, ClassifiedSection> | null = null;
+  const entitySectionOf = (name: string): ClassifiedSection | null => {
+    entities ??= entityIndex(classification);
+    return entities.get(name) ?? null;
+  };
+  const columnSets = new Map<ClassifiedSection, Set<string>>();
   const relations: ResolvedRelation[] = [];
   const danglingEntities: EndpointReference[] = [];
   const ambiguousEntities: EndpointReference[] = [];
@@ -305,10 +347,9 @@ export function relationsOf(classification: Classification): RelationResult {
       [RelationEndpoint | null, RelationColumnList | null],
     ]) {
       if (endpoint === null || list === null) continue;
-      const declared =
-        endpoint.resolvedEntity === null
-          ? null
-          : entityColumns(classification, endpoint.resolvedEntity);
+      const resolvedSection =
+        endpoint.resolvedEntity === null ? null : entitySectionOf(endpoint.resolvedEntity);
+      const declared = resolvedSection === null ? null : columnNamesOf(columnSets, resolvedSection);
       for (const column of list.columns) {
         // R28: an empty slot names no column, so it is neither resolved nor dangling.
         if (column.empty) continue;

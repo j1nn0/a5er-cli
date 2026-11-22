@@ -18,6 +18,12 @@ import { describe, expect, it } from 'vitest';
 import { classify } from '../src/schema/registry.js';
 import { relationsOf } from '../src/semantic/relations.js';
 import { scanSource } from '../src/syntax/scanner.js';
+import type {
+  RelationColumnList,
+  RelationEndpoint,
+  RelationResult,
+} from '../src/semantic/relations.js';
+import { derivePartialSemantics } from '../src/semantic/partial.js';
 import { assertCodes } from './helpers/assert-codes.js';
 import { semanticsOf } from './helpers/classified.js';
 
@@ -444,5 +450,313 @@ describe('R28 — every slot is kept, so an empty one cannot make a false match'
 
     expect(relation?.fromColumns?.columns.map((slot) => slot.empty)).toEqual([false, false]);
     expect(relation?.fromColumns?.columns.map((slot) => slot.pname)).toEqual(['a', 'b']);
+  });
+});
+
+// ── F4-B2-A: resolution does not depend on where a section is written ─────
+
+/** An `[Entity]` section declaring `columns` in order. */
+function entity(name: string, columns: readonly string[], position: number): string {
+  return (
+    `[Entity]\nPName="${name}"\n` +
+    columns
+      .map((column) => `Field="I","${column}","Serial","NOT NULL",0,"","",$FFFFFFFF,""\n`)
+      .join('') +
+    `Position="M",${position},1\n`
+  );
+}
+
+/** A relation section; the header is a parameter so the `[Relationship]` alias is exercised too. */
+function relation(
+  header: '[Relation]' | '[Relationship]',
+  from: string,
+  to: string,
+  fields: readonly [string, string],
+  position: number,
+): string {
+  return (
+    `${header}\nEntity1="${from}"\nEntity2="${to}"\n` +
+    `Fields1="${fields[0]}"\nFields2="${fields[1]}"\n` +
+    `RelationType1=1\nRelationType2=3\nPosition="M",0,${position},1,1,R,R,""\n`
+  );
+}
+
+/**
+ * A `RelationResult` with every position dropped.
+ *
+ * Two documents that declare the same sections in a different order must resolve identically; only
+ * `sectionIndex` and the span line numbers may differ, so those are the only fields dropped.
+ */
+function withoutPositions(result: RelationResult) {
+  const endpoint = (side: RelationEndpoint | null) =>
+    side === null
+      ? null
+      : {
+          key: side.key,
+          declared: side.declared,
+          raw: side.raw,
+          status: side.status,
+          resolvedEntity: side.resolvedEntity,
+          candidates: side.candidates,
+        };
+  const columns = (list: RelationColumnList | null) =>
+    list === null
+      ? null
+      : {
+          key: list.key,
+          raw: list.raw,
+          columns: list.columns.map((column) => ({
+            pname: column.pname,
+            raw: column.raw,
+            index: column.index,
+            empty: column.empty,
+          })),
+        };
+
+  return {
+    relations: result.relations.map((entry) => ({
+      sectionHeader: entry.sectionHeader,
+      pname: entry.pname,
+      from: endpoint(entry.from),
+      to: endpoint(entry.to),
+      fromColumns: columns(entry.fromColumns),
+      toColumns: columns(entry.toColumns),
+      relationType1: entry.relationType1,
+      relationType2: entry.relationType2,
+      cardinarity1: entry.cardinarity1,
+      cardinarity2: entry.cardinarity2,
+      columnsAligned: entry.columnsAligned,
+    })),
+    danglingEntities: result.danglingEntities.map((entry) => [entry.endpoint, entry.declared]),
+    ambiguousEntities: result.ambiguousEntities.map((entry) => [entry.endpoint, entry.declared]),
+    danglingColumns: result.danglingColumns.map((entry) => [
+      entry.endpoint,
+      entry.column,
+      entry.entity,
+    ]),
+    unverifiedColumns: result.unverifiedColumns.map((entry) => [
+      entry.endpoint,
+      entry.column,
+      entry.candidates,
+    ]),
+    countMismatches: result.countMismatches.map((entry) => [entry.fromCount, entry.toCount]),
+  };
+}
+
+describe('F4-B2-A — a name resolves the same wherever its section is written', () => {
+  it('returns the same result for entity sections declared first and declared last', () => {
+    const relations =
+      relation('[Relation]', 'alpha', 'beta', ['id', 'a_ref'], 1) +
+      relation('[Relationship]', 'beta', 'alpha', ['a_ref', 'id'], 2);
+    const entities = entity('alpha', ['id', 'a_ref'], 1) + entity('beta', ['a_ref', 'id'], 2);
+    const first = relationsOfText(MANAGER + entities + relations);
+    const last = relationsOfText(MANAGER + relations + entities);
+
+    expect(withoutPositions(last)).toEqual(withoutPositions(first));
+    // The equality is of two successful resolutions, not of two failures.
+    for (const result of [first, last]) {
+      expect(result.relations.map((entry) => entry.from?.status)).toEqual(['resolved', 'resolved']);
+      expect(result.relations.map((entry) => entry.to?.status)).toEqual(['resolved', 'resolved']);
+      expect(result.danglingEntities).toEqual([]);
+      expect(result.danglingColumns).toEqual([]);
+      expect(result.countMismatches).toEqual([]);
+    }
+  });
+
+  it('resolves every one of many references to the same entity', () => {
+    const references = Array.from({ length: 6 }, (_, index) =>
+      relation('[Relation]', 'hub', 'hub', ['id', 'id'], index + 1),
+    ).join('');
+    const result = relationsOfText(MANAGER + entity('hub', ['id'], 1) + references);
+
+    expect(result.relations).toHaveLength(6);
+    expect(
+      result.relations.every(
+        (entry) => entry.from?.resolvedEntity === 'hub' && entry.to?.resolvedEntity === 'hub',
+      ),
+    ).toBe(true);
+    expect(result.danglingEntities).toEqual([]);
+    expect(result.danglingColumns).toEqual([]);
+  });
+
+  it('checks each side against its own entity, not the previous side', () => {
+    // `left` and `right` share no column name, so reusing one side's set for the other would hide
+    // both findings below.
+    const result = relationsOfText(
+      MANAGER +
+        entity('left', ['left_id'], 1) +
+        entity('right', ['right_id'], 2) +
+        relation('[Relation]', 'left', 'right', ['left_id', 'left_id'], 1) +
+        relation('[Relation]', 'right', 'left', ['right_id', 'right_id'], 2),
+    );
+
+    expect(result.danglingEntities).toEqual([]);
+    expect(
+      result.danglingColumns.map((entry) => [entry.endpoint, entry.column, entry.entity]),
+    ).toEqual([
+      ['Entity2', 'left_id', 'right'],
+      ['Entity2', 'right_id', 'left'],
+    ]);
+  });
+
+  it('checks a wide entity against every declared column on each reference', () => {
+    const columns = Array.from({ length: 12 }, (_, index) => `c${index}`);
+    const accepted = Array.from({ length: 3 }, (_, index) =>
+      relation('[Relation]', 'wide', 'wide', ['c0,c6,c11', 'c0,c6,c11'], index + 1),
+    ).join('');
+    const complete = relationsOfText(MANAGER + entity('wide', columns, 1) + accepted);
+
+    // c0, the middle c6 and the last c11 all resolve, so the set is complete on every side.
+    expect(complete.relations).toHaveLength(3);
+    expect(complete.danglingColumns).toEqual([]);
+    expect(complete.unverifiedColumns).toEqual([]);
+
+    const missing = relationsOfText(
+      MANAGER +
+        entity('wide', columns, 1) +
+        Array.from({ length: 3 }, (_, index) =>
+          relation('[Relation]', 'wide', 'wide', ['c0', 'gone'], index + 1),
+        ).join(''),
+    );
+    // One finding per referencing side: reusing the set must not swallow repeats.
+    expect(missing.danglingColumns.map((entry) => [entry.column, entry.entity])).toEqual([
+      ['gone', 'wide'],
+      ['gone', 'wide'],
+      ['gone', 'wide'],
+    ]);
+  });
+});
+
+describe('F4-B2-A — the index follows the flat PName rules (§9.1)', () => {
+  it('keeps an empty PName as a name like any other', () => {
+    const result = relationsOfText(
+      MANAGER + entity('', ['id'], 1) + relation('[Relation]', '', '', ['id', 'id'], 1),
+    );
+
+    // `''` is a declared name, so the endpoint resolves; a presence test written as a truthiness
+    // check would turn it into a dangling name.
+    expect(result.relations[0]?.from).toMatchObject({
+      declared: '',
+      status: 'resolved',
+      resolvedEntity: '',
+      candidates: 1,
+    });
+    expect(result.danglingEntities).toEqual([]);
+    expect(result.danglingColumns).toEqual([]);
+  });
+
+  it('matches the name byte for byte: no case folding and no trimming', () => {
+    const result = relationsOfText(
+      MANAGER +
+        entity('orders', ['id'], 1) +
+        relation('[Relation]', 'Orders', 'orders', ['', 'ID'], 1) +
+        relation('[Relation]', ' orders', 'orders', ['', 'id'], 2),
+    );
+
+    expect(result.relations[0]?.from).toMatchObject({ declared: 'Orders', status: 'dangling' });
+    expect(result.relations[0]?.to?.status).toBe('resolved');
+    // `ID` is a different column name than `id`; nothing folds case, here or in the endpoint.
+    expect(
+      result.danglingColumns.map((entry) => [entry.endpoint, entry.column, entry.entity]),
+    ).toEqual([['Entity2', 'ID', 'orders']]);
+    expect(result.relations[1]?.from).toMatchObject({ declared: ' orders', status: 'dangling' });
+  });
+
+  it('indexes a section by its last PName, not its first', () => {
+    const result = relationsOfText(
+      MANAGER +
+        '[Entity]\nPName="first"\nPName="second"\n' +
+        'Field="I","id","Serial","NOT NULL",0,"","",$FFFFFFFF,""\nPosition="M",1,1\n' +
+        relation('[Relation]', 'second', 'second', ['id', 'id'], 1) +
+        relation('[Relation]', 'first', 'second', ['', ''], 2),
+    );
+
+    expect(result.relations[0]?.from).toMatchObject({
+      declared: 'second',
+      status: 'resolved',
+      candidates: 1,
+    });
+    // The overwritten name is not a name: §4.2 last-wins, `PName` included.
+    expect(result.relations[1]?.from).toMatchObject({ declared: 'first', status: 'dangling' });
+    expect(result.danglingColumns).toEqual([]);
+  });
+
+  it('stays ambiguous when both sections declare the column', () => {
+    const result = relationsOfText(
+      MANAGER +
+        entity('twin', ['id'], 1) +
+        entity('twin', ['id'], 2) +
+        relation('[Relation]', 'twin', 'twin', ['id', 'id'], 1),
+    );
+
+    // A presence-based lookup would bind one `twin` and silently accept `id` (R25). Ambiguity is
+    // a count, and the count wins over what either section happens to declare.
+    expect(result.relations[0]?.from).toMatchObject({
+      status: 'ambiguous',
+      resolvedEntity: null,
+      candidates: 2,
+    });
+    expect(result.danglingColumns).toEqual([]);
+    expect(result.unverifiedColumns.map((entry) => [entry.column, entry.candidates])).toEqual([
+      ['id', 2],
+      ['id', 2],
+    ]);
+  });
+
+  it('leaves a section without a PName unreachable by any name', () => {
+    const text =
+      MANAGER +
+      '[Entity]\nPosition="M",1,1\n' +
+      entity('named', ['id'], 2) +
+      relation('[Relation]', 'named', 'named', ['id', 'id'], 1) +
+      relation('[Relation]', '', 'named', ['', ''], 2);
+    const semantics = derivePartialSemantics(classify(scanSource({ text, format: 21 })));
+
+    // A nameless section is an object the file cannot identify; it is not the owner of `''`.
+    expect(semantics.danglingEntities.map((entry) => entry.declared)).toEqual(['']);
+    expect(semantics.relations[1]?.from).toMatchObject({ declared: '', status: 'dangling' });
+    expect(semantics.relations[1]?.to?.status).toBe('resolved');
+    const missing = semantics.diagnostics.filter(
+      (diagnostic) => diagnostic.code === 'V_MISSING_REQUIRED_KEY',
+    );
+    expect(missing).toHaveLength(1);
+    expect(missing[0]?.severity).toBe('error');
+    expect(missing[0]?.span?.keyLine).toBe(3);
+  });
+});
+
+describe('F4-B2-A — compound relation findings keep their order and their spans', () => {
+  it('orders one dangling endpoint, two dangling columns and the mismatch by line', () => {
+    const text =
+      MANAGER +
+      // 3–6: an entity a relation can use
+      entity('a', ['id'], 1) +
+      // 7–8: a nameless entity, so its missing PName is a finding of its own
+      '[Entity]\nPosition="M",2,2\n' +
+      // 9–16: one relation carrying both defects
+      '[Relation]\nEntity1="a"\nEntity2="ghost"\nFields1="id"\nFields2="x,y"\n' +
+      'RelationType1=1\nRelationType2=3\nPosition="M",0,1,1,1,R,R,""\n';
+    const semantics = derivePartialSemantics(classify(scanSource({ text, format: 21 })));
+
+    expect(semantics.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+      'V_MISSING_REQUIRED_KEY',
+      'V_DANGLING_ENTITY',
+      'V_DANGLING_COLUMN',
+      'V_DANGLING_COLUMN',
+      'V_FIELD_COUNT_MISMATCH',
+    ]);
+    expect(semantics.diagnostics.map((diagnostic) => diagnostic.span?.keyLine)).toEqual([
+      7, 11, 13, 13, 13,
+    ]);
+    // Both columns come from the same `Fields2` line, so list order survives the stable sort.
+    expect(
+      semantics.diagnostics
+        .filter((diagnostic) => diagnostic.code === 'V_DANGLING_COLUMN')
+        .map((diagnostic) => diagnostic.details),
+    ).toEqual([
+      { endpoint: 'Entity2', column: 'x', entity: null },
+      { endpoint: 'Entity2', column: 'y', entity: null },
+    ]);
+    expect(semantics.diagnostics[4]?.details).toEqual({ from: 1, to: 2 });
   });
 });

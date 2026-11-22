@@ -789,9 +789,26 @@ line it does not have.
 
 ### 10.3 Streaming
 
-Not in v1. The AST is materialised in memory regardless, so a streaming reader would only move
-the peak, not remove it; the byte cap bounds it deterministically. Revisit if Phase 2 fixtures
-show legitimate files above the cap (TBD-O2).
+Not in v1, and not a fix by itself. The AST is materialised in memory regardless, and so is every
+stage result — classification, semantic records, diagnostics and the JSON envelope — so a
+streaming reader would only move where the peak occurs, not remove it.
+
+The retained cost is therefore **not a deterministic function of the input's byte count**. It is
+driven by the document's shape as well: every physical line becomes intermediate objects, a record
+and possibly several diagnostics, and the envelope then repeats those values with JSON escaping on
+top (§12). The spread is measured in `docs/proposals/human-cli.md` §7.1: a 616,068-byte input
+produced a 17,032,749-byte envelope at a 232 MB peak RSS, an 816,067-byte input produced 25,832,745
+bytes at 259 MB, and a 20,878,001-byte input hit the engine's string limit
+(`RangeError: Invalid string length`) at a 3.0 GB peak RSS and produced no envelope at all. A
+document inside `maxBytes`, `maxLines` and `maxLineLength` can therefore still exhaust the heap:
+on that recorded baseline, 67,108,851 bytes (just under `maxBytes`) reached a 2,847 MiB heap in
+`integrate()` and then aborted with `FATAL ERROR … heap out of memory`, exit `134`.
+
+The cap **bounds input size, not memory**. Where the failure boundary lies depends on the Node
+build, the operating system and the configured heap limit, not on `maxBytes`, so input bytes alone
+guarantee no safe heap bound. Measuring and bounding that risk is F-4 in
+[issue #27](https://github.com/j1nn0/a5er-cli/issues/27), which stays open. Revisit if Phase 2
+fixtures show legitimate files above the cap (TBD-O2).
 
 ### 10.4 Unrecognised documents
 
@@ -1010,7 +1027,8 @@ Contract rules:
   `context.limits.maxBytes`, and an omitted context is a claim that the documented defaults were
   used. The precondition is therefore on the caller — pass the same limits object that loaded the
   input — and it is pinned by a test rather than enforced at runtime (§17 TBD-O3). The other two
-  limits are not projected: only the byte cap bounds what a consumer can re-allocate.
+  limits are not projected: only the byte cap bounds what a consumer can re-allocate — the *input*
+  those bytes came from, not the memory this process retained while reading it (§10.3).
 - `truncated` is `true` for exactly one condition: a **physical short read**, i.e. an
   `E_TRUNCATED_INPUT` in `diagnostics`. A limit refusal (`E_LIMIT_BYTES`, `E_LIMIT_LINES`,
   `E_LIMIT_LINE_LENGTH`) rejects the whole file and is `false`; so is every other fatal
