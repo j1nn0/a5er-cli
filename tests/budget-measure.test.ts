@@ -642,6 +642,9 @@ describe('src/budget — module surface and purity', () => {
     expect(files).toEqual(['index.ts', 'measure.ts']);
   });
 
+  // Forbidden later-stage imports, relative to `src/budget/`. `../syntax/` and `./` stay allowed.
+  const FORBIDDEN_STAGE_IMPORT = /from\s+['"]\.\.\/(?!syntax\/)(?:schema|decode|semantic|json)\//;
+
   it('reads no clock, environment, filesystem or heap figure', () => {
     for (const file of ['index.ts', 'measure.ts']) {
       const text = stripComments(readFileSync(join(BUDGET_DIR, file), 'utf8'));
@@ -655,7 +658,30 @@ describe('src/budget — module surface and purity', () => {
       expect(text, file).not.toMatch(/\brequire\(/);
       expect(text, file).not.toMatch(/\bimport\(/);
       // No re-implementation of a later stage: the scan's types are the only import allowed.
-      expect(text, file).not.toMatch(/from\s+['"]\.\/(?:\.\.\/)?(?:schema|decode|semantic|json)\//);
+      // `../syntax/` is the allowed exception; `./` is the module itself.
+      expect(text, file).not.toMatch(FORBIDDEN_STAGE_IMPORT);
+    }
+  });
+
+  // The guard above scans text with this pattern; prove the pattern itself fires without adding
+  // a real forbidden import to product code.
+  const FORBIDDEN_FIXTURES: Array<[string, boolean]> = [
+    ["import { x } from '../schema/registry.js'", true],
+    ["import { x } from '../decode/load.js'", true],
+    ["import { x } from '../semantic/relations.js'", true],
+    ["import { x } from '../json/envelope.js'", true],
+    ["import type { SyntaxScan } from '../syntax/scanner.js'", false],
+    ["import type { SectionKind } from '../syntax/sections.js'", false],
+    ["import { measure } from './measure.js'", false],
+  ];
+
+  it('detects a forbidden relative import when one is fed to the guard', () => {
+    for (const [line, forbidden] of FORBIDDEN_FIXTURES) {
+      if (forbidden) {
+        expect(line).toMatch(FORBIDDEN_STAGE_IMPORT);
+      } else {
+        expect(line).not.toMatch(FORBIDDEN_STAGE_IMPORT);
+      }
     }
   });
 });

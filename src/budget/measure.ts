@@ -27,8 +27,10 @@
  *
  * Purity: the scan is read, never modified; the result is new and flat. No filesystem, process,
  * clock, environment or V8 heap figure is consulted, no parser or decoder is re-implemented, and
- * the same scan yields the same result. One pass over the sections and their key entries, `O(S+K)`,
- * with a fixed-size group of counters and no input-proportional intermediate array.
+ * clock, environment or V8 heap figure is consulted, no parser or decoder is re-implemented, and
+ * the same scan yields the same result. One pass over the sections and every section entry,
+ * `O(S+E)` with `S` sections and `E` key plus raw-line entries, with a fixed-size group of
+ * counters and no input-proportional intermediate array.
  *
  * Not to be confused with `src/text/tables.ts`, which has a private `measure(rows)` that measures
  * **column widths** for the `tables` renderer. Same word, unrelated job; this module never widens a
@@ -41,9 +43,15 @@ import type { SectionKind } from '../syntax/sections.js';
 /**
  * §13's totals plus the structural occurrences a line scan settles exactly.
  *
- * Every numeric member is a non-negative integer produced by a length or a count, so each is a safe
- * integer by construction whenever the scan came from input accepted under `Limits` (§10.2). An
- * *occurrence* here is a line as written; nothing in this record claims a value decoded.
+ * Every numeric member is a non-negative integer produced by a length or a count.
+ *
+ * Safe-integer scope (precondition, documented — not checked at runtime): a consistent
+ * `SyntaxScan` produced from input accepted under the default read limits (`maxLines` 2,000,000,
+ * `maxLineLength` 4 MiB, §10.2), measured while neither the scan nor its `accounting` is mutated.
+ * Inside that scope the counters and the two bounds stay inside `Number.MAX_SAFE_INTEGER` (see
+ * the bound docs for the figures). Outside it — larger custom limits, a scan built by hand or
+ * without the read limits, an inconsistent `accounting`, or a scan mutated during or after
+ * measuring — safe integers are NOT guaranteed, and `measure()` still does not refuse the input.
  */
 export interface ResourceCounters {
   /** §13 `lines.total`: every physical line. Taken from `scan.accounting`, never recomputed. */
@@ -108,22 +116,28 @@ export interface ResourceCounters {
  * second factor is replaced by the number of `CommonField=` lines, which is at least as large:
  * an occurrence that fails to decode only shrinks the real count.
  *
- * **Precondition (documented, not enforced): the scan came from input accepted under `Limits`.**
- * `maxLines` is `2,000,000` (§10.2), so both factors are at most `2·10⁶` and the product is at
- * most `4·10¹²` — three orders below `Number.MAX_SAFE_INTEGER`. Because this is an *upper* bound,
- * the product is deliberately **not** clamped: `Math.min(MAX_SAFE_INTEGER, …)` would silently turn
- * an over-estimate into an under-estimate.
+ * **Precondition (documented, not enforced): a consistent scan from input accepted under the
+ * default read limits** (`maxLines` 2,000,000, `maxLineLength` 4 MiB, §10.2). Both factors are then
+ * at most `2·10⁶` and the product is at most `4·10¹²` — three orders below
+ * `Number.MAX_SAFE_INTEGER`. Tighter custom limits may also qualify, but arbitrary `Limits`
+ * overrides, hand-built scans and mutated scans carry no guarantee (see `ResourceCounters`).
+ * Because this is an *upper* bound, the product is deliberately **not** clamped:
+ * `Math.min(MAX_SAFE_INTEGER, …)` would silently turn an over-estimate into an under-estimate —
+ * and past the safe-integer range a product can lose precision and round *down*, so the lack of
+ * clamping preserves the bound only inside the range above. `measure()` does not verify the
+ * precondition at runtime; a future admission check must establish the integer range and the
+ * scan's provenance before comparing (U3 design).
  */
 export interface ComposedColumnsUpperBound {
   /** `[Entity]` sections the scan holds: each one composes a list, with or without a `PName`. */
   readonly entitySections: number;
   /** `CommonField=` lines in `[Manager]` sections: at least the declarations that can decode. */
   readonly managerCommonFieldOccurrences: number;
-  /** The product of the two factors above, unclamped. */
+  /** The product of the two factors above, unclamped (safe only inside the precondition above). */
   readonly upperBound: number;
 }
 
-/** Conservative bounds derived from the counters; each is an over-estimate by construction. */
+/** Conservative bounds derived from the counters; each is an over-estimate by construction inside the documented safe-integer scope. */
 export interface ResourceBounds {
   /** Upper bound on the common columns all entities together can adopt. */
   readonly composedColumnsUpperBound: ComposedColumnsUpperBound;
@@ -142,7 +156,9 @@ export interface ResourceBounds {
 export interface ResourceMeasure {
   readonly counters: ResourceCounters;
   readonly bounds: ResourceBounds;
-  /** The scan's §13 object, the same reference: the `total*` counters above are its fields. */
+  /** The scan's §13 object, the same reference: the `total*` counters above are its fields.
+   * TypeScript `readonly` is not a runtime freeze — a caller that mutates the scan during or after
+   * measuring leaves the documented scope. No copy or deep freeze is added. */
   readonly accounting: SyntaxAccounting;
 }
 
