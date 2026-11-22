@@ -1,19 +1,22 @@
 # a5er-cli
 
 A read-only command-line tool for A5:SQL Mk-2 ER diagram (`.a5er`) files. It parses one file and
-writes one JSON envelope to stdout, so a person, a script or an agent can read a diagram without the
-GUI. The input file is never modified.
+writes either one JSON envelope or a short table listing, so a person, a script or an agent can read
+a diagram without the GUI. The input file is never modified.
 
 - **Complete accounting:** the envelope holds entities, views, relations, diagnostics, unsupported
   constructs and completeness counts. A construct the parser does not model is kept verbatim in
   `unsupported` with its span, never reported as interpreted.
-- **Traceable and machine-readable:** values carry their origin and raw text; JSON is the only
-  output format, and prose goes to stderr, never stdout.
+- **Traceable and machine-readable:** values carry their origin and raw text; `inspect` and
+  `validate` write JSON, `tables` writes text by default or JSON with `--format json`, and prose
+  goes to stderr, never stdout.
 
-> **Confidentiality:** ER diagrams are confidential, and an envelope echoes names, comments and raw
-> text from the file. Do not commit, paste or quote a real `.a5er` file or an envelope produced from
-> one; keep such envelopes outside the repository and delete them when you are done. `.a5er` files
-> are gitignored; only synthetic fixtures are tracked.
+> **Confidentiality:** ER diagrams are confidential, and an envelope echoes names, comments, raw
+> text and the file's path. `tables --format json` carries the same evidence; the `tables` text
+> listing prints only the physical and logical names, the counts and the diagnostic lines. Do not
+> commit, paste or quote a real `.a5er` file, an envelope or a listing produced from one; keep such
+> output outside the repository and delete it when you are done. `.a5er` files are gitignored; only
+> synthetic fixtures are tracked.
 
 ## Disclaimer
 
@@ -58,12 +61,15 @@ mise does not yet resolve a just-published release as the latest, pin the exact 
 ```bash
 a5er inspect diagram.a5er     # emit the JSON envelope
 a5er validate diagram.a5er    # same envelope; also exits 3 on an error diagnostic
+a5er tables diagram.a5er      # list the entities and views: one table plus notes
+a5er tables --format json diagram.a5er   # the same listing as one JSON envelope
 a5er --help                   # also -h, or run a5er with no arguments
 a5er --version                # also -v
 ```
 
-`--format json` is accepted but is the default and only format. No other command exists yet: any
-other word, such as `tables` or `export`, exits 2 with the usage text on stderr.
+`--format` is per command. `inspect` and `validate` accept only `json`, which is also their default;
+`tables` accepts `text` (the default) or `json`. The commands the roadmap still holds back — such as
+`columns` and `export` — do not exist yet: any other word exits 2 with the usage text on stderr.
 
 To read one field without keeping the envelope, pipe stdout only:
 
@@ -71,21 +77,26 @@ To read one field without keeping the envelope, pipe stdout only:
 a5er inspect diagram.a5er | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).status"
 ```
 
-Nothing is written to disk, so an envelope from a confidential diagram cannot end up in a checkout or
-a commit. Do not merge stderr into stdout (`2>&1`): the diagnostic prose would break JSON parsing.
+Nothing is written to disk, so output from a confidential diagram cannot end up in a checkout or a
+commit. Do not merge stderr into stdout (`2>&1`): the diagnostic prose would break JSON parsing.
 
 ## Output
 
-`inspect` and `validate` write exactly one JSON envelope and a final newline to `stdout`; no other
-command or option does. `--help` and `--version` print plain text to `stdout`, while a misused command
-exits 2 with the usage text on `stderr` and nothing on `stdout`. `stderr` carries one line per `fatal`
-or `error` diagnostic; `warning` and `info` findings appear only in the envelope.
+`inspect` and `validate` write exactly one JSON envelope and a final newline to `stdout`. `tables`
+writes one table followed by notes — every note starts with `#` — or, with `--format json`, one
+envelope of its own shape. `--help` and `--version` print plain text to `stdout`, while a misused
+command exits 2 with the usage text on `stderr` and nothing on `stdout`. `stderr` carries one line
+per `fatal` or `error` diagnostic; `warning` and `info` findings appear only in the envelope (and, in
+the `tables` text listing, in its notes).
 
 Every envelope has the keys `contractVersion`, `tool`, `command`, `status`, `source`, `limits`,
-`schema`, `unsupported`, `diagnostics` and `completeness`. `status` is `ok`, `degraded` (readable,
-with findings) or `failed`. A `failed` envelope is still valid JSON, with `source`, `schema` and
-`completeness` set to `null`. `contractVersion` is versioned independently of the package. The full
-contract is in [docs/architecture.md](docs/architecture.md#12-json-contract-initial).
+`unsupported`, `diagnostics` and `completeness`, plus one payload key at the seventh position:
+`schema` for `inspect` and `validate`, `result` for `tables`. `status` is `ok`, `degraded` (readable,
+with findings) or `failed`. A `failed` envelope is still valid JSON, with `source`, the payload and
+`completeness` set to `null`. A consumer selects its decoder from `(command, contractVersion)`;
+`contractVersion` is versioned per command and independently of the package. The full contract is in
+[docs/architecture.md](docs/architecture.md#12-json-contract-initial), and the `tables` shape in
+[docs/proposals/human-cli.md](docs/proposals/human-cli.md).
 
 | Exit | Meaning                                                                                      |
 | ---- | -------------------------------------------------------------------------------------------- |
@@ -93,9 +104,17 @@ contract is in [docs/architecture.md](docs/architecture.md#12-json-contract-init
 | `1`  | Any `fatal` diagnostic; the envelope is `failed`                                             |
 | `2`  | Incorrect usage; nothing on stdout, usage text on stderr, decided before any input is read   |
 | `3`  | `validate` only: an `error`-severity diagnostic; the envelope is `degraded`                  |
+| `70` | `tables` only: the output could not be generated; stdout is incomplete and must be discarded   |
+| `74` | `tables` only: the stdout write failed, or stdout closed before the output was complete        |
 
 `inspect` never exits 3: it reports what is in the file, while `validate` decides whether it is
 acceptable. An `error` finding under `inspect` still exits 0 and appears on stderr.
+
+`70` and `74` are `tables`-specific. After either one — and after a pipe that was closed early —
+`stdout` may hold any prefix of the output, or nothing, so discard it rather than parsing it. A
+closed pipe is not an error: `a5er tables big.a5er | head -n 3` exits `0` (or `1` for a file that
+could not be read), and a writer that leaves mid-listing does not crash the process. Even exit `0`
+means "written to the stream", not "delivered to a reader".
 
 ## Agent Skill
 

@@ -87,10 +87,11 @@ Structured Representation  (AST: lossless, spanned, raw-preserving)
 Semantic Validation
    │  §9      resolve → validate → diagnostics
    ▼
-CLI Commands / JSON Output
-   │  §11,§12
+CLI Commands / Output
+   │  §11,§12 (and `docs/proposals/human-cli.md` §3.7 for `tables`)
    ▼
-stdout: JSON envelope   stderr: human-readable diagnostics
+stdout: one JSON envelope (inspect, validate) or the tables listing (text, or one JSON envelope)
+stderr: human-readable diagnostics, as one line per fatal/error finding
 ```
 
 Stage contracts — what each stage may and may not do:
@@ -103,7 +104,7 @@ Stage contracts — what each stage may and may not do:
 | Structured representation | Expose spans, raw text, ordered entries | Enforce uniqueness, resolve references, drop anything |
 | Resolve | Compute PK, effective columns, page/domain lookup, index interpretation | Modify the AST, invent facts for unconfirmed items |
 | Validate | Emit diagnostics with severities and spans | Re-parse, repair, or rewrite the file |
-| Output | Serialize one envelope, exit with a defined code | Print JSON and prose on the same stream |
+| Output | Serialize one envelope (or, for `tables`, stream the listing), exit with a defined code | Print JSON and prose on the same stream |
 
 The syntax/semantics boundary is deliberate and hard: **`parse` cannot fail for semantic
 reasons, and `validate` never re-parses.** A file with a dangling relation still parses
@@ -876,12 +877,29 @@ key is a `warning` (U6 defines no semantics).
 
 ## 12. JSON contract (initial)
 
-One envelope per invocation, on **stdout**, and nothing else there: the stream is exactly one
-JSON document plus the newline that ends it, so a consumer can parse it whole. Human-readable
+`inspect` and `validate` write one envelope per invocation, on **stdout**, and nothing else there:
+the stream is exactly one JSON document plus the newline that ends it, so a consumer can parse it
+whole. `tables` writes a human-readable listing by default and one envelope of its own shape with
+`--format json`; both are specified in `docs/proposals/human-cli.md` §4 and §5. Human-readable
 diagnostics go to **stderr**; JSON is never mixed with prose. stderr carries one line per `fatal`
 or `error` diagnostic — the two severities that can decide a non-zero exit — and nothing for
-`warning`/`info`, whose complete record is the envelope. `--format json` is the only format and
-the default; a `text` renderer remains a later command-level concern.
+`warning`/`info`, whose complete record is the envelope. The format is a per-command concern:
+`json` is the only format of `inspect` and `validate` and the default of both, while `tables` takes
+`text` (the default) or `json`.
+
+**Two shapes, one selection key.** A document is discriminated on `command`: `inspect` and
+`validate` carry `schema` at position 7, `tables` carries `result` there. `command` sits at
+position 3 and `contractVersion` at position 1 in every shape, so a consumer selects its decoder
+from `(command, contractVersion)` and must reject a pair it does not support instead of guessing
+the shape from which keys happen to be present. The tables shape is specified in
+`docs/proposals/human-cli.md` §5.2; its shared members are the ones below, verbatim.
+
+**The tables framing is qualified.** `tables` text emits no envelope, and for `tables` the
+"exactly one JSON document" framing holds only when the write succeeds: after exit `70` (output
+generation failed) or `74` (stdout write failed or closed early), stdout may hold any prefix of
+the output, and "accepted" means accepted by Node, not delivered. An invocation that exits `0`
+through the bounded writer is not proof that a reader received every byte. The `inspect` and
+`validate` sentences are unchanged: their write path does not change.
 
 ```json
 {
@@ -933,7 +951,9 @@ the default; a `text` renderer remains a later command-level concern.
   }
 }
 ```
-Illustrative, not derived from any fixture: one `inspect` of a five-section file that declares no
+This example is the **`inspect` shape**; the `tables` shape replaces `schema` with `result` and is
+specified in `docs/proposals/human-cli.md` §5.2. Illustrative, not derived from any fixture: one
+`inspect` of a five-section file that declares no
 `FORMAT` and carries an unmodelled `[Memo]` section, so each diagnostic, count and evidence record
 is a plausible value of the documented shape rather than a file in the repository. **Field order is
 the contract** — it is the construction order above, and a golden asserts it. What is elided here is
@@ -946,8 +966,9 @@ span — here the header line, while the diagnostic for the same section spans i
 
 Contract rules:
 
-1. **`status`** is `ok` (nothing above `info`), `degraded` (warnings/errors, schema emitted) or
-   `failed` (fatal, `schema: null`). A `failed` envelope is still valid JSON — automation
+1. **`status`** is `ok` (nothing above `info`), `degraded` (warnings/errors, the command's payload
+   emitted) or `failed` (fatal, payload `null`). The payload is `schema` for `inspect` and
+   `validate` and `result` for `tables`. A `failed` envelope is still valid JSON — automation
    should never have to distinguish "no output" from "crashed".
 2. **`dropped` must be `0` by reconciliation, not by assertion.** The envelope carries three
    partitions, each a two-term identity over that fixture's concrete counts: every section header
@@ -964,10 +985,19 @@ Contract rules:
    `span: null`, `origin` other than `declared`, and cites its inputs in `derivedFrom` instead
    (the `primaryKey` in the example); `origin` and `span` therefore always travel together
    (§4.2).
-4. **Raw is always adjacent to interpreted.** A column's `defaultValue.value` never appears
-   without `defaultValue.raw`.
-5. **`contractVersion`** is versioned independently of the package version (TBD-O5).
-6. Unknown envelope fields are additive; removing or renaming one is a `contractVersion` bump.
+4. **Raw is always adjacent to interpreted — inside the `schema` payload.** A column's
+   `defaultValue.value` never appears without `defaultValue.raw`. `tables`' `result` is a
+   projection that cites its object by `objectIndex` and `span` instead of carrying `raw`, so the
+   rule is scoped to `schema`: the raw text stays available from `inspect`.
+5. **`contractVersion`** is versioned independently of the package version (TBD-O5), and per
+   command's envelope, as rule 6 states.
+6. **`contractVersion` versions the envelope of each command.** It moves when a field of an
+   existing command's envelope is added, removed, renamed or reordered, or when the meaning of a
+   value changes. A new command that has its own envelope shape, is selected by
+   `(command, contractVersion)`, keeps the shared members verbatim and leaves every existing
+   envelope byte-identical is additive and does not move it. Consumers select decoders by
+   `(command, contractVersion)` and reject pairs they do not support. `tables` was added this way,
+   which is why `contractVersion` stays `0.1.0`.
 7. **One `diagnostics` list, not separate `warnings` and `errors` arrays.** Severity is a
    field, so ordering follows the file and a consumer never has to merge two streams to
    reconstruct causality. `unsupported` stays separate because it is evidence, not a
@@ -990,9 +1020,10 @@ Contract rules:
 
 **Exit codes are not an envelope member.** The envelope has the ten fields above and no
 `exitPolicy`; adding one would be a contract change for information the command layer already owns.
-`ExitPolicy` stays Integration data (`inspect` ∈ {0, 1}, `validate` ∈ {0, 1, 3}), and the one code
-that is not a policy answer — `2` for command-line misuse — is decided by the command layer before
-any input is read (§11, §17 TBD-O7).
+`ExitPolicy` stays Integration data (`inspect` ∈ {0, 1}, `validate` ∈ {0, 1, 3}), and the codes
+that are not policy answers — `2` for command-line misuse, and `70`/`74` for the two `tables`
+output failures — are decided by the command layer (§11, §17 TBD-O7, and
+`docs/proposals/human-cli.md` §3.7 for the two `tables` codes).
 
 **The exit table (TBD-O7, decided).** One code per invocation. A file decides every non-misuse
 code, because `integrate()` answers the first two columns from the severities alone; `src/cli.ts`
@@ -1004,6 +1035,8 @@ maps the command to its column and adds nothing.
 | `1` | any `fatal` diagnostic | any `fatal` diagnostic | the envelope is still emitted, with `source`, `schema` and `completeness` `null`; stderr carries the fatal line |
 | `3` | never | any `error`-severity diagnostic | one envelope whose `status` is `degraded`; stderr carries the error line |
 | `2` | — | — | nothing on stdout; the usage block on stderr. Decided before any input is read, so no file can cause it |
+| `70` | — | — | `tables` only: the output could not be generated, so stdout is incomplete and must be discarded |
+| `74` | — | — | `tables` only: the stdout write failed (anything but a closed pipe) or closed early, so stdout is incomplete |
 
 The split is what makes `V_DUPLICATE_OBJECT_NAME` (sem-08) and `V_MISSING_REQUIRED_KEY` (sem-09)
 exit `0` under `inspect` and `3` under `validate` (`test-strategy.md` §14 stage 5).
@@ -1216,7 +1249,7 @@ not as spec behaviour. None of U1–U15 is presented as settled by these decisio
 | TBD-O2 | Streaming threshold for very large files | None; `maxBytes` only. The cap is judged from `fstat` before any allocation, so the peak cost of a refused file is one `stat` — but a file *at* the cap is still materialised whole. Not exercised above 4 KiB in any test | Phase 2, stage 2 |
 | TBD-O3 | Final limit defaults (`maxBytes`, `maxLines`, `maxLineLength`) | The values in §10.2. Two gaps are recorded here rather than papered over: the envelope's `limits.maxBytes` is the **caller-supplied** cap, not one carried by the read (§12), and the 64 MiB default breach is never executed — the `E_LIMIT_BYTES` path is proven with a 4 KiB cap and a fake `fstat` | Phase 2, stage 2 |
 | TBD-O4 | Whether a JSON Schema file ships with the CLI | Not in v0.1.0 | Phase 2, stage 7 |
-| TBD-O5 | `contractVersion` bump policy and its relation to package semver | Independent versioning | Phase 2, stage 7 |
+| TBD-O5 | `contractVersion` bump policy and its relation to package semver | **Closed in §12 rule 6**: the version versions each command's envelope and moves when a field of an existing command's envelope changes or a value's meaning changes. A new command with its own shape, selected by `(command, contractVersion)`, that keeps the shared members verbatim and leaves every existing envelope byte-identical is additive — which is how `tables` arrives without moving `0.1.0`. Independent of the package version | Closed — Phase 2 stage 7 |
 | TBD-O6 | Whether the AST is exposed behind a flag (`--ast`) | Not exposed | Phase 2, stage 7 |
 | TBD-O7 | Exit code for non-`validate` commands when `error`-severity diagnostics exist | **Decided in §12's exit table**: `0` for `inspect` even when an `error`-severity finding is present, `3` only for `validate`, `1` for a fatal read in both, `2` for misuse. The mapping is `ExitPolicy` in `validate/`; command-line misuse is decided by `src/cli.ts` and is not part of it; neither appears in the envelope (§11, §12) | Closed — Phase 2 stage 7 |
 | TBD-O8 | Whether `export` exists as a command or `inspect --format` covers it | Not decided | Phase 3 |

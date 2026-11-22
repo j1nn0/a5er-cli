@@ -58,10 +58,13 @@ import type {
 } from '../validate/index.js';
 
 /**
- * The envelope's own version (`architecture.md` §12 rule 5, TBD-O5).
+ * The envelope's own version (`architecture.md` §12 rules 5 and 6, TBD-O5).
  *
- * Frozen at the documented `0.1.0` and **not** derived from the package version: the contract
- * version moves only when a field is added, removed or renamed.
+ * Frozen at the documented `0.1.0` and **not** derived from the package version. It versions each
+ * command's envelope: it moves when a field of an existing command's envelope is added, removed,
+ * renamed or reordered, or when a value's meaning changes. `tables` is a new command with its own
+ * shape, selected by `(command, contractVersion)`, that keeps these shared members verbatim and
+ * leaves every `inspect`/`validate` byte identical — which is additive, so `0.1.0` stays.
  */
 export const CONTRACT_VERSION = '0.1.0';
 
@@ -904,6 +907,147 @@ export interface JsonEnvelope {
   readonly unsupported: readonly JsonUnsupported[];
   readonly diagnostics: readonly JsonDiagnostic[];
   readonly completeness: JsonCompleteness | null;
+}
+
+/**
+ * The one command whose document carries a projection instead of the schema
+ * (`docs/proposals/human-cli.md` §5.1). It is deliberately not a member of `JsonCommand`: `inspect`
+ * and `validate` keep their envelope, field for field, and are not affected by this addition.
+ */
+export type JsonTablesCommand = 'tables';
+
+/**
+ * An inspect/validate document as a tables-aware consumer sees it.
+ *
+ * `JsonEnvelope` itself is not changed; `result?: never` is a type-level statement that the key is
+ * absent, so a document that carries a `result` can never be mistaken for a schema document.
+ */
+export type JsonSchemaDocument = JsonEnvelope & { readonly result?: never };
+
+/** Every document the CLI can emit, discriminated on `command` (§5.1). */
+export type JsonDocument = JsonSchemaDocument | JsonTablesEnvelope;
+
+/**
+ * `a5er tables --format json` for a read that is not fatal (§5.2).
+ *
+ * Field order is emission order, and `result` sits where a schema document has `schema`. `schema`
+ * is declared `?: never`: the type forbids assigning a document that has the key, and the
+ * construction rule of §5.3 (explicit object literals, never a spread of the inspect envelope)
+ * keeps it out of the bytes.
+ */
+export interface JsonTablesEnvelopeRead {
+  readonly contractVersion: typeof CONTRACT_VERSION;
+  readonly tool: {
+    readonly name: typeof TOOL_NAME;
+    readonly version: typeof TOOL_VERSION;
+  };
+  readonly command: JsonTablesCommand;
+  readonly status: 'ok' | 'degraded';
+  readonly source: JsonSource;
+  readonly limits: JsonLimits;
+  readonly result: JsonTablesResult;
+  readonly unsupported: readonly JsonUnsupported[];
+  readonly diagnostics: readonly JsonDiagnostic[];
+  readonly completeness: JsonCompleteness;
+  /** Type-level only: a tables envelope never has a `schema` key (§5.3). Not emitted. */
+  readonly schema?: never;
+}
+
+/** `a5er tables --format json` for a fatal read: no source, no result and no counts (§5.6). */
+export interface JsonTablesEnvelopeFailed {
+  readonly contractVersion: typeof CONTRACT_VERSION;
+  readonly tool: {
+    readonly name: typeof TOOL_NAME;
+    readonly version: typeof TOOL_VERSION;
+  };
+  readonly command: JsonTablesCommand;
+  readonly status: 'failed';
+  readonly source: null;
+  readonly limits: JsonLimits;
+  readonly result: null;
+  readonly unsupported: readonly JsonUnsupported[];
+  readonly diagnostics: readonly JsonDiagnostic[];
+  readonly completeness: null;
+  readonly schema?: never;
+}
+
+/** The two arms of a tables document: a read that produced a projection, and a rejected read. */
+export type JsonTablesEnvelope = JsonTablesEnvelopeRead | JsonTablesEnvelopeFailed;
+
+/**
+ * The projection of an inspect envelope's `schema` (§5.3).
+ *
+ * `objects` counts every kind, subtypes included, so `tables.length + omitted.subtypes.count`
+ * always accounts for all of them: the omissions are stated, never silent.
+ */
+export interface JsonTablesResult {
+  /** `schema.objects.length` of the inspect envelope: every kind, subtypes included. */
+  readonly objects: number;
+  /** Entities and views, in `schema.objects` order. */
+  readonly tables: readonly JsonTableRow[];
+  readonly omitted: JsonTablesOmitted;
+}
+
+/**
+ * One listed table (§5.2).
+ *
+ * `objectIndex` is a position into the inspect envelope's `schema.objects`, not a counter of rows:
+ * it is the join key back to the full model, so gaps are exactly the subtypes and are never
+ * renumbered. `span` is the object's own span, copied member by member.
+ */
+export interface JsonTableRow {
+  /** Index into the inspect envelope's `schema.objects`: gaps are subtypes, never renumbered. */
+  readonly objectIndex: number;
+  readonly sectionIndex: number;
+  /** The object's `span`, its four members copied: its last `PName` line, else its header line. */
+  readonly span: JsonSpan;
+  readonly kind: 'entity' | 'view';
+  /** `pname.value`, or `null` when the object declares no `PName`; `''` stays `''`. */
+  readonly pname: string | null;
+  readonly lname: string | null;
+  readonly columns: JsonTableColumns;
+}
+
+/**
+ * Column counts; `null` is "not known", never zero (§4.5).
+ *
+ * `partial` is an entity whose declared columns are complete but whose common-field contribution
+ * cannot be decided; `unknown` is a view, which stores no columns at all. Neither arm may report
+ * `0` for what the file does not say, and the `reason` is where the note text comes from.
+ */
+export type JsonTableColumns =
+  | {
+      readonly status: 'complete';
+      readonly reason: null;
+      readonly declared: number;
+      readonly common: number;
+      readonly effective: number;
+      readonly collisions: number;
+    }
+  | {
+      readonly status: 'partial';
+      readonly reason: 'using-common-columns-unrecognised';
+      readonly declared: number;
+      readonly common: null;
+      readonly effective: null;
+      readonly collisions: null;
+    }
+  | {
+      readonly status: 'unknown';
+      readonly reason: ViewColumnReason;
+      readonly declared: null;
+      readonly common: null;
+      readonly effective: null;
+      readonly collisions: null;
+    };
+
+/** What the projection leaves out, so its limits are stated rather than inferred (§4.9). */
+export interface JsonTablesOmitted {
+  readonly subtypes: {
+    readonly count: number;
+    /** `sectionIndex` of every subtype, in file order; `count === sectionIndexes.length`. */
+    readonly sectionIndexes: readonly number[];
+  };
 }
 
 /** Re-exported for `serialize.ts`'s narrowing; keeps the JSON layer's imports in one place. */

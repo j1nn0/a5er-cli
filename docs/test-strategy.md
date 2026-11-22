@@ -45,6 +45,7 @@ without reaching into another, that is a design defect to report, not a test to 
 | **L4 contract** | Envelope shape invariants: `dropped` reconciliation, status derivation, exit codes, stdout/stderr separation, span presence rules | Spawned CLI | Vitest + `execa`-free `node:child_process` |
 | **L5 end-to-end** | `a5er inspect` / `validate` on a staged fixture, including failure modes | Spawned CLI, temp cwd | Vitest |
 | **L6 hostile/fuzz floor** | Fixed-seed byte mutation of a baseline fixture | In-process | Vitest |
+| **L7 writer state machine** | The `tables` output writer: one terminal stdout state, backpressure, `EPIPE` versus an early close, stderr stop and continuation, exit `70`/`74` | In-process, deterministic fake streams (no timers, no real pipes) | Vitest |
 
 L1 exists so that the highest-risk component (F3, the Complex splitter) can be tested
 exhaustively without building a file for every escape combination.
@@ -410,6 +411,7 @@ v1 — it is reported, because a percentage would let an untested branch hide be
 | G-7 | Immutability holds for every command | `imm-01` |
 | G-8 | Fixture integrity: every catalog ID exists, is tracked, and is not ignored | `catalog.test.ts` runs `git ls-files` and `git check-ignore --no-index` |
 | G-9 | Policy: the tracked `.a5er` set equals the catalog's synthetic fixtures (exactly 39 today); any other tracked `.a5er` fails | `catalog.test.ts` compares `git ls-files '*.a5er'` with the registry and checks the `.gitignore` allowlist with `git check-ignore --no-index`; CI may run the same `ls-files` comparison |
+| G-10 | **`inspect` and `validate` stay byte-identical** to the baseline: 44 fixtures × 2 commands, stdout and stderr compared as raw UTF-8 bytes against expectations built from the committed goldens and the fixture's diagnostics — never from `serialize()` | `cli-byte-regression.test.ts` (88 runs); the goldens themselves are unchanged, and `git diff` shows nothing under `tests/fixtures/` |
 
 G-4 and G-5 are guard tests, not lint rules, because no linter is decided in
 `architecture.md` §15. They are a stopgap: once a linter is chosen, both move to lint rules and
@@ -465,6 +467,30 @@ Jobs already exist in `.github/workflows/ci.yml`; this table names the suites th
 Node 24 is the floor (`architecture.md` §15 and `engines` in `package.json`); node 26 is included
 to catch runtime drift early. pnpm is pinned to 11.28.12 through `packageManager`, which
 `pnpm/action-setup` reads. macOS is not a CI target in v1 (`TBD-T3`).
+
+### 13.1 The `a5er tables` suite (`docs/proposals/human-cli.md` §8)
+
+The `tables` tests run in the same `verify` job, in-process or by spawning the built CLI:
+
+| Area | File | Notes |
+|---|---|---|
+| Projection (§5.4 invariants) | `view-tables.test.ts` | In-process, staged fixtures |
+| Text renderer (§4) | `text-width.test.ts`, `text-escape.test.ts`, `text-render.test.ts`, `helpers/tables-text-expectations.ts` | In-process; the whole-output expectations are hand-authored from the fixture text |
+| Text and syntax CLI cases (§8.3) | `cli-tables-text.test.ts` | Spawned CLI, byte-for-byte stdout |
+| JSON contract, key sets and encoder (§5.10, §8.4) | `json-stream.test.ts`, `json-tables-contract.test.ts`, `types/tables-envelope.types.ts` | The type file is compiled by `typecheck` only |
+| Writer state machine (§7.2, R-3–R-23, R-7b, R-20b) | `io-stdout.test.ts` | Deterministic `ControlledWritable`; no timers, no real pipes |
+| Stderr line source (§3.6) | `text-diagnostics.test.ts` | In-process |
+| Real pipes (§7.3 R-1, R-1j, R-2, R-2f, R-11) | `cli-tables-io.test.ts` | Never assumes `EPIPE` is observed: exit `0`, empty stderr and a received-byte count within `[0, full length]` |
+| `/dev/full` (R-4) | `cli-tables-io.test.ts` | **Linux only**, `it.runIf(process.platform === 'linux')`; reported as a platform skip elsewhere. The file is absent on Windows and macOS, so there is nothing to redirect to |
+| Byte fence for `inspect`/`validate` (G-10) | `cli-byte-regression.test.ts` | 88 spawned runs, `encoding: 'buffer'` |
+
+**Not in CI.** The `tables` measurement beyond the string limit (B-6: a 1,999,000-unknown-key
+document through `--format json`, more than 536,870,888 bytes of stdout) is a manual run: it needs
+about 3 GB of RAM and tens of seconds per run. It is recorded in the implementation PR as a
+measurement, and CI covers the same code paths at bounded size (B-3, B-5). The in-memory stage
+shared with `inspect` can exhaust the V8 heap on inputs within the read limits; that risk is
+tracked in [issue #27](https://github.com/j1nn0/a5er-cli/issues/27) and is not an acceptance
+condition of the `tables` implementation.
 
 ---
 

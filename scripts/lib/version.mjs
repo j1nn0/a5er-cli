@@ -5,7 +5,10 @@
  * `src/index.ts` exposes `VERSION` to library consumers, and `src/json/envelope.ts` mirrors it as
  * `TOOL_VERSION` because `src/json/` must not read the manifest or import the library surface.
  * `CONTRACT_VERSION` lives in the same file but is a different, independent number: it moves only
- * when an envelope field is added, removed or renamed, never when the package is released.
+ * when a field of an existing command's envelope changes meaning, is added, removed, renamed or
+ * reordered — never when the package is released. A new command with its own envelope shape,
+ * selected by `(command, contractVersion)`, is additive and does not move it (architecture.md §12
+ * rule 6).
  *
  * **The goldens carry a placeholder, not a number.** Every `tests/fixtures/json-goldens/*.expected.json`
  * stores `tool.version` as `VERSION_PLACEHOLDER`; the golden test expands that one field to the

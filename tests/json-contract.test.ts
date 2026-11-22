@@ -276,7 +276,8 @@ describe('json envelope — frozen constants', () => {
       .filter((name) => name.endsWith('.ts'))
       .sort();
 
-    expect(files).toEqual(['envelope.ts', 'index.ts', 'serialize.ts']);
+    // The encoder is part of this layer too, so it is checked by the same purity rules below.
+    expect(files).toEqual(['envelope.ts', 'index.ts', 'serialize.ts', 'stream.ts']);
     for (const file of files) {
       const text = stripComments(readFileSync(join(JSON_DIR, file), 'utf8'));
       // The version is a literal, not a manifest read and not the library surface's constant.

@@ -1350,7 +1350,7 @@ export function serialize(input: IntegrationInput, context: SerializeContext): J
  * fact into a different, plausible-looking one, so this replacer throws a `TypeError` instead. The
  * key is named; the value is not echoed, because it can be file text.
  */
-function strictReplacer(key: string, value: unknown): unknown {
+export function strictReplacer(key: string, value: unknown): unknown {
   const where = ` at key ${JSON.stringify(key)}`;
   switch (typeof value) {
     case 'undefined':

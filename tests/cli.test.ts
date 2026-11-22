@@ -156,7 +156,11 @@ describe('a5er cli — help, version and usage', () => {
   it('names only the commands that exist', async () => {
     const result = await runCli(['--help']);
 
-    for (const absent of ['tables', 'relations', 'search', 'export']) {
+    // `tables` now exists (docs/proposals/human-cli.md §3.4); the words that do not are listed
+    // without it, and the help must name the command this build added.
+    expect(result.stdout).toContain('tables');
+    expect(result.stdout).toContain('--format text|json');
+    for (const absent of ['columns', 'relations', 'search', 'export']) {
       expect(result.stdout).not.toContain(absent);
     }
   });
@@ -234,7 +238,9 @@ describe('a5er cli — command-line misuse leaves stdout empty', () => {
   }
 
   it('rejects a command this build does not implement', async () => {
-    await expectMisuse(['tables', '/tmp/never-read.a5er'], 'unknown command "tables"');
+    // `tables` parses as a command now, so the example of a word that is not one moved to
+    // `columns`, which the roadmap still holds back (docs/proposals/human-cli.md §9, T-1).
+    await expectMisuse(['columns', '/tmp/never-read.a5er'], 'unknown command "columns"');
   });
 
   it('rejects a missing file operand', async () => {

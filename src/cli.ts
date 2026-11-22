@@ -2,13 +2,20 @@
 /**
  * `a5er` command-line entry point.
  *
- * Two commands read a `.a5er` file: `inspect` and `validate`. Both run the one pipeline the
- * library already has — `loadSource` → `scanSource` → `classify` → `derivePartialSemantics` —
- * and hand the stage results to `integrate()` for the exit policy and to `serialize()` for the
- * envelope. Nothing about the file is decided here: the exit code is
+ * Three commands read a `.a5er` file: `inspect`, `validate` and `tables`. All three run the one
+ * pipeline the library already has — `loadSource` → `scanSource` → `classify` →
+ * `derivePartialSemantics` — and hand the stage results to `integrate()` for the exit policy and to
+ * `serialize()` for the envelope. Nothing about the file is decided here: the exit code is
  * `integrate().exitPolicy[command]` (`architecture.md` §11, §12, §17 TBD-O7), and the bytes on
  * stdout are `toJsonString()` plus the one trailing newline that §12's
  * one-envelope-per-invocation rule implies.
+ *
+ * `inspect` and `validate` differ only in the exit policy and the `command` member. `tables` reads
+ * the same bytes and prints a projection of the same envelope — text by default, one JSON document
+ * with `--format json` (`docs/proposals/human-cli.md` §3–§5). It is the one command whose output is
+ * written through the bounded writer of `src/io/stdout.ts` (`src/tables-command.ts`), because it
+ * may stream output far larger than one string; `inspect` and `validate` keep their single
+ * synchronous write and their one-string stderr unchanged (§3.10, F-1).
  *
  * **Streams** (§3, §12). stdout carries exactly one JSON envelope and never prose, so the whole
  * stream parses as one document. stderr carries prose and nothing else: one line per `fatal` or
@@ -23,7 +30,7 @@
  *
  * **Scope.** `--format json` is accepted and is the only format. The commands the roadmap still
  * holds back are not part of this build: they do not parse as commands, so they exit `2` with the
- * usage block, and the help text names only the two that exist.
+ * usage block, and the help text names only the three that exist.
  *
  * The executable bit is not stored in this repository. `package.json#bin` points npm/pnpm at
  * `dist/cli.js`, and the package manager sets the mode when the package is linked or installed;
@@ -32,19 +39,31 @@
 
 import { loadSource } from './decode/load.js';
 import { VERSION } from './index.js';
-import type { JsonCommand } from './json/index.js';
+import type { JsonCommand, JsonTablesCommand } from './json/index.js';
 import { serialize, toJsonString } from './json/index.js';
 import { classify } from './schema/index.js';
 import { derivePartialSemantics } from './semantic/index.js';
 import { scanSource } from './syntax/index.js';
+import { runTablesCommand } from './tables-command.js';
 import type { Integration, IntegrationInput } from './validate/index.js';
 import { integrate } from './validate/index.js';
+
+// `quoteArg` moved to `src/text/escape.ts` with the rest of the escape set (§6); the import
+// re-exports it here so the misuse messages keep their bytes.
+import { quoteArg } from './text/index.js';
+
+/** The formats a command can be asked for; `text` is a known value, accepted only by `tables`. */
+type OutputFormat = 'text' | 'json';
+
+/** Every command this CLI parses: `JsonCommand` plus the one whose document is a projection. */
+type CliCommand = JsonCommand | JsonTablesCommand;
 
 const HELP = `a5er — read-only CLI for A5:SQL Mk-2 ER diagram (.a5er) files
 
 Usage:
   a5er inspect [--format json] <file>
   a5er validate [--format json] <file>
+  a5er tables [--format text|json] <file>
   a5er --help
   a5er --version
 
@@ -52,38 +71,59 @@ Commands:
   inspect          Read the file and emit one JSON envelope
   validate         Read the file, emit one JSON envelope, and exit 3 when an
                    error-severity finding is reported
+  tables           List the entities and views the file declares; text by
+                   default, one JSON envelope with --format json
 
 Options:
-  --format json    Output format; json is the only format and the default
+  --format FORMAT  Output format. inspect and validate: json (the default and
+                   only format). tables: text (the default) or json
   -h, --help       Show this help and exit
   -v, --version    Print the version and exit
 
 Exit codes:
-  0   The read was not fatal (inspect, degraded included) and validate found
-      no error-severity finding
+  0   The read was not fatal (inspect and tables, degraded included) and
+      validate found no error-severity finding
   1   The file could not be read into a schema (fatal diagnostic)
   2   Command-line misuse; nothing is read, and stdout stays empty
   3   validate found an error-severity finding
+  70  tables failed internally while generating its output; stdout is
+      incomplete
+  74  tables could not write its output (a write error other than a closed
+      pipe, or stdout closed early); stdout is incomplete
 
-stdout carries exactly one JSON envelope and nothing else. Human-readable lines
-for the fatal and error diagnostics that decide exit 1 or 3 go to stderr.
+With --format json, stdout carries exactly one JSON envelope and nothing else.
+tables text is one table plus note lines that start with '#'. Human-readable
+lines for fatal and error diagnostics go to stderr.
 `;
 
 const USAGE = `Usage:
   a5er inspect [--format json] <file>
   a5er validate [--format json] <file>
+  a5er tables [--format text|json] <file>
   a5er --help | --version`;
 
 /** Long and short spellings accepted by this build. */
 const HELP_FLAGS: readonly string[] = ['--help', '-h'];
 const VERSION_FLAGS: readonly string[] = ['--version', '-v'];
 
-/** The two commands this build implements, and the only ones the help text may name. */
-const COMMANDS: readonly JsonCommand[] = ['inspect', 'validate'];
+/**
+ * The three commands this build implements, and the only ones the help text may name.
+ *
+ * Wider than `JsonCommand`, which stays `inspect | validate`: `tables` emits a different document
+ * (`docs/proposals/human-cli.md` §5.1), so adding it there would change the schema envelope's
+ * contract instead of adding to it.
+ */
+const COMMANDS: readonly CliCommand[] = ['inspect', 'validate', 'tables'];
 
-/** The output-format flag and the one value it accepts (§12: `json` is the default). */
+/**
+ * The output-format flag and the values it accepts (§3.2).
+ *
+ * Both spellings are known before the command is, so `--format text` is a value mismatch for
+ * `inspect`/`validate` rather than an unknown value for every command, and `--format text --help`
+ * prints the help (§3.5).
+ */
 const FORMAT_FLAG = '--format';
-const FORMATS: readonly string[] = ['json'];
+const FORMATS: readonly OutputFormat[] = ['text', 'json'];
 
 /** What one invocation returns: the exit code and the two streams, as data. */
 interface CliResult {
@@ -93,23 +133,16 @@ interface CliResult {
 }
 
 /**
- * How argv parsed. `command` is the only arm that reads a file; the other four are decided from
- * the tokens alone, which is what keeps misuse off the filesystem and stdout empty.
+ * How argv parsed. The `command` and `tables` arms are the only ones that read a file; the other
+ * three are decided from the tokens alone, which is what keeps misuse off the filesystem and
+ * stdout empty.
  */
 type Parsed =
   | { readonly kind: 'misuse'; readonly message: string }
   | { readonly kind: 'help' }
   | { readonly kind: 'version' }
-  | { readonly kind: 'command'; readonly command: JsonCommand; readonly path: string };
-
-/**
- * Quote a user-supplied argument so that control characters cannot reach the
- * terminal raw. `JSON.stringify` is used instead of string interpolation on
- * purpose: the argument is untrusted input.
- */
-function quote(value: string): string {
-  return JSON.stringify(value);
-}
+  | { readonly kind: 'command'; readonly command: JsonCommand; readonly path: string }
+  | { readonly kind: 'tables'; readonly path: string; readonly format: OutputFormat };
 
 /** A token by position, or `null` past the end (`noUncheckedIndexedAccess` made explicit). */
 function tokenAt(tokens: readonly string[], index: number): string | null {
@@ -117,8 +150,13 @@ function tokenAt(tokens: readonly string[], index: number): string | null {
   return token === undefined ? null : token;
 }
 
-function isCommand(token: string): token is JsonCommand {
+function isCommand(token: string): token is CliCommand {
   return COMMANDS.some((command) => command === token);
+}
+
+/** True for a value `--format` accepts (§3.2); both are known before the command is. */
+function isFormat(value: string): value is OutputFormat {
+  return FORMATS.some((format) => format === value);
 }
 
 /** Misuse: the message, the usage block, and nothing on stdout. */
@@ -127,21 +165,23 @@ function renderMisuse(message: string): string {
 }
 
 /**
- * Classify argv (without `node` and the script path).
+ * Classify argv (without `node` and the script path) — the rules of §3.2, in order.
  *
- * Rules, in order, so a typo can never be silently ignored:
- *   1. an unrecognised `-…` token, or `--format` without a supported value -> misuse
- *   2. `--help`/`-h` present (and nothing in 1)                          -> help
- *   3. `--version`/`-v` present (and nothing in 1)                       -> version
- *   4. the first operand names the command, the second the file          -> run it
+ * **Scan, left to right.** `--help`/`-h` and `--version`/`-v` set a flag; `--format` always
+ * consumes the next token as its value, so `--format --help` is a bad value rather than help and
+ * a missing token is the only "no value"; any other `-…` token is misuse. Everything else is an
+ * operand, in order. The leftmost violation wins and ends the scan.
  *
- * `--format json` may appear before, between or after the operands; it carries no information
- * today, so accepting only the documented spelling keeps the refusal list short.
+ * **Then, in order:** help, version, a command, a non-empty file operand, no third operand, a
+ * format the command accepts. Steps 1–7 are the pre-`tables` rules unchanged; the command list,
+ * `tables`, and the per-command format check are what this build adds, and every quoted token goes
+ * through `quoteArg` (§3.5).
  */
 function parse(argv: readonly string[]): Parsed {
   const operands: string[] = [];
   let help = false;
   let version = false;
+  let format: OutputFormat | null = null;
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = tokenAt(argv, index);
@@ -156,21 +196,30 @@ function parse(argv: readonly string[]): Parsed {
       continue;
     }
     if (token === FORMAT_FLAG) {
+      // The flag always consumes the next token, whatever it looks like: `--format --help` is a
+      // bad value, not help. Only a token that is not there at all is "no value".
       const value = tokenAt(argv, index + 1);
       if (value === null) {
-        return { kind: 'misuse', message: `${FORMAT_FLAG} requires a value (json)` };
-      }
-      if (!FORMATS.includes(value)) {
-        return {
-          kind: 'misuse',
-          message: `unsupported ${FORMAT_FLAG} value ${quote(value)}; only json is supported`,
-        };
+        return { kind: 'misuse', message: `${FORMAT_FLAG} requires a value (text or json)` };
       }
       index += 1;
+      if (!isFormat(value)) {
+        return {
+          kind: 'misuse',
+          message: `unsupported ${FORMAT_FLAG} value ${quoteArg(value)}; supported values are text and json`,
+        };
+      }
+      if (format !== null && format !== value) {
+        return {
+          kind: 'misuse',
+          message: `conflicting ${FORMAT_FLAG} values ${quoteArg(format)} and ${quoteArg(value)}`,
+        };
+      }
+      format = value;
       continue;
     }
     if (token.startsWith('-')) {
-      return { kind: 'misuse', message: `unknown option ${quote(token)}` };
+      return { kind: 'misuse', message: `unknown option ${quoteArg(token)}` };
     }
     operands.push(token);
   }
@@ -180,8 +229,9 @@ function parse(argv: readonly string[]): Parsed {
 
   const command = tokenAt(operands, 0);
   if (command === null)
-    return { kind: 'misuse', message: 'missing a command (inspect or validate)' };
-  if (!isCommand(command)) return { kind: 'misuse', message: `unknown command ${quote(command)}` };
+    return { kind: 'misuse', message: 'missing a command (inspect, validate or tables)' };
+  if (!isCommand(command))
+    return { kind: 'misuse', message: `unknown command ${quoteArg(command)}` };
 
   const path = tokenAt(operands, 1);
   if (path === null) {
@@ -191,7 +241,19 @@ function parse(argv: readonly string[]): Parsed {
 
   const extra = tokenAt(operands, 2);
   if (extra !== null) {
-    return { kind: 'misuse', message: `extra operand ${quote(extra)}; exactly one file is read` };
+    return {
+      kind: 'misuse',
+      message: `extra operand ${quoteArg(extra)}; exactly one file is read`,
+    };
+  }
+
+  if (command === 'tables') return { kind: 'tables', path, format: format ?? 'text' };
+
+  if (format === 'text') {
+    return {
+      kind: 'misuse',
+      message: `unsupported ${FORMAT_FLAG} value ${quoteArg(format)} for ${command}; only json is supported`,
+    };
   }
 
   return { kind: 'command', command, path };
@@ -245,33 +307,64 @@ function run(command: JsonCommand, path: string): CliResult {
 }
 
 /**
+ * What one invocation is: two streams to write, or a command that owns its own writer.
+ *
+ * `inspect` and `validate` return the finished bytes, exactly as they always have. `tables` cannot:
+ * its output is streamed through `src/io/stdout.ts`, which resolves with the exit code, so the
+ * entry point awaits it instead of writing here.
+ */
+type Invocation =
+  | { readonly kind: 'result'; readonly result: CliResult }
+  | { readonly kind: 'tables'; readonly path: string; readonly format: OutputFormat };
+
+/**
  * Map argv (without `node` and the script path) to an exit code and the text
  * written to stdout/stderr.
  *
  * No arguments prints the help and exits 0, which is how a bare `a5er` stays harmless; every
  * other token combination is decided by `parse()`, and misuse never reaches the filesystem.
  */
-function main(argv: readonly string[]): CliResult {
-  if (argv.length === 0) return { code: 0, stdout: HELP, stderr: '' };
+function main(argv: readonly string[]): Invocation {
+  if (argv.length === 0) return { kind: 'result', result: { code: 0, stdout: HELP, stderr: '' } };
 
   const parsed = parse(argv);
   switch (parsed.kind) {
     case 'misuse':
-      return { code: 2, stdout: '', stderr: renderMisuse(parsed.message) };
+      return {
+        kind: 'result',
+        result: { code: 2, stdout: '', stderr: renderMisuse(parsed.message) },
+      };
     case 'help':
-      return { code: 0, stdout: HELP, stderr: '' };
+      return { kind: 'result', result: { code: 0, stdout: HELP, stderr: '' } };
     case 'version':
-      return { code: 0, stdout: `${VERSION}\n`, stderr: '' };
+      return { kind: 'result', result: { code: 0, stdout: `${VERSION}\n`, stderr: '' } };
     case 'command':
-      return run(parsed.command, parsed.path);
+      return { kind: 'result', result: run(parsed.command, parsed.path) };
+    case 'tables':
+      return { kind: 'tables', path: parsed.path, format: parsed.format };
   }
 }
 
-const result = main(process.argv.slice(2));
-if (result.stdout !== '') {
-  process.stdout.write(result.stdout);
+/*
+ * `tables` writes through the bounded writer and resolves with its exit code; `inspect` and
+ * `validate` keep the synchronous write below. `process.exit()` is never called: a pipe write is
+ * asynchronous on POSIX, so exiting early could cut off output that is still queued (§7.2 rule 1).
+ */
+const invocation = main(process.argv.slice(2));
+if (invocation.kind === 'tables') {
+  process.exitCode = await runTablesCommand({
+    path: invocation.path,
+    format: invocation.format,
+    stdout: process.stdout,
+    stderr: process.stderr,
+  });
+} else {
+  const result = invocation.result;
+  if (result.stdout !== '') {
+    process.stdout.write(result.stdout);
+  }
+  if (result.stderr !== '') {
+    process.stderr.write(result.stderr);
+  }
+  process.exitCode = result.code;
 }
-if (result.stderr !== '') {
-  process.stderr.write(result.stderr);
-}
-process.exitCode = result.code;

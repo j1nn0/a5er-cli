@@ -16,6 +16,7 @@ export type {
   JsonComplexPart,
   JsonComplexValue,
   JsonDiagnostic,
+  JsonDocument,
   JsonDomain,
   JsonDomainCandidate,
   JsonDomainReference,
@@ -54,11 +55,20 @@ export type {
   JsonRelationScalar,
   JsonRelationScalarKey,
   JsonSchema,
+  JsonSchemaDocument,
   JsonSource,
   JsonSpan,
   JsonSubtypeMembership,
   JsonSubtypeObject,
   JsonSubtypeScalar,
+  JsonTableColumns,
+  JsonTableRow,
+  JsonTablesCommand,
+  JsonTablesEnvelope,
+  JsonTablesEnvelopeFailed,
+  JsonTablesEnvelopeRead,
+  JsonTablesOmitted,
+  JsonTablesResult,
   JsonTypeResolution,
   JsonUnsupported,
   JsonUnsupportedPosition,
@@ -68,5 +78,6 @@ export type {
   JsonViewObject,
 } from './envelope.js';
 export type { SerializeContext } from './serialize.js';
+export { encodeJson } from './stream.js';
 export { CONTRACT_VERSION, TOOL_NAME, TOOL_VERSION } from './envelope.js';
 export { serialize, toJsonString } from './serialize.js';
