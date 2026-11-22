@@ -797,6 +797,215 @@ describe('text/tables — long notes stay streamed (N-1, N-3)', () => {
   });
 });
 
+/**
+ * §7.7's heavy documents, built from `.a5er` text and rendered for real (§7.7 B-3, text path).
+ *
+ * The cases above build envelopes by hand, which is what makes one §4 rule readable in isolation.
+ * These six do the opposite: the text goes through the four real stages, so the evidence is that a
+ * document of §7.7's size reaches `renderTablesText` intact — every chunk under 262,144 code units,
+ * no boundary inside a surrogate pair, and every row, name and location still there. The JSON half
+ * of B-3 is `tests/json-stream.test.ts` and the stderr half is `tests/io-stdout.test.ts`; the three
+ * files assert different paths over the same six inputs and none repeats another's assertion.
+ */
+describe('text/tables — the six heavy documents of §7.7 (B-3)', () => {
+  /** §7.7's preamble: the format line and the one `[Manager]` section. */
+  function preamble(): string[] {
+    return ['# A5:ER FORMAT:21', '', '[Manager]', 'PageInfo="Main",3,"A4Landscape","$FFFFFF"', ''];
+  }
+
+  /** One `[Entity]` section. */
+  function entity(pname: string, position: string): string[] {
+    return ['[Entity]', `PName="${pname}"`, 'UsingCommonColumns=0', position, ''];
+  }
+
+  /** B-1: one 200,001-character `PName` and 3,999 short ones. */
+  function longNameDocument(): string {
+    const lines = preamble();
+    lines.push(...entity('p'.repeat(200_001), 'Position="Main",10,10'));
+    for (let index = 0; index < 3_999; index += 1) {
+      lines.push(...entity(`t${String(index)}`, 'Position="Main",20,20'));
+    }
+    return lines.join('\n');
+  }
+
+  /** B-2: 400,000 escape characters in one `PName` and 3,999 short ones. */
+  function escapeDocument(): string {
+    const lines = preamble();
+    lines.push(...entity('\u001b'.repeat(400_000), 'Position="Main",10,10'));
+    for (let index = 0; index < 3_999; index += 1) {
+      lines.push(...entity(`t${String(index)}`, 'Position="Main",20,20'));
+    }
+    return lines.join('\n');
+  }
+
+  /** N-1 and its 200,000-key sibling: one entity carrying `count` unknown keys. */
+  function unknownKeysDocument(count: number): string {
+    const lines = preamble();
+    lines.push('[Entity]', 'PName="wide"', 'UsingCommonColumns=0', 'Position="Main",10,10');
+    for (let index = 0; index < count; index += 1) lines.push(`Unknown${String(index)}=1`);
+    return lines.join('\n');
+  }
+
+  /** N-2: 30,000 entities with no `PName`. */
+  function missingNameDocument(): string {
+    const lines = preamble();
+    for (let index = 0; index < 30_000; index += 1) {
+      lines.push(
+        '[Entity]',
+        'LName="名前なし"',
+        'UsingCommonColumns=0',
+        'Position="Main",10,10',
+        '',
+      );
+    }
+    return lines.join('\n');
+  }
+
+  /** N-3: 30,000 views, one section each. */
+  function viewsDocument(): string {
+    const lines = preamble();
+    for (let index = 0; index < 30_000; index += 1) {
+      lines.push('[View]', `PName="v${String(index)}"`, 'Position="Main",10,10', '');
+    }
+    return lines.join('\n');
+  }
+
+  /** The row lines of a rendering, in file order. */
+  function rowLinesOf(text: string): string[] {
+    return text.split('\n').filter((line) => /^[ 0-9]/.test(line));
+  }
+
+  /**
+   * The fields of one row line: §4.4 separates columns with two or more spaces, and a name is
+   * either a single token or a quoted string, so the physical name is field 6 and the logical one 7.
+   */
+  function fieldsOf(line: string): string[] {
+    return line.trim().split(/ {2,}/);
+  }
+
+  /** The locations list §4.8 prints for every `Unknown<n>=1` key, derived from the input itself. */
+  function unknownKeyLocations(document: string, count: number): string {
+    const keyLines = document
+      .split('\n')
+      .flatMap((line, index) => (line.startsWith('Unknown') ? [index + 1] : []));
+
+    expect(keyLines).toHaveLength(count);
+    return keyLines.map((line) => `line ${String(line)}`).join(', ');
+  }
+
+  /** `t0` … `t3998`, the short names every B-1 and B-2 document carries after the long one. */
+  function shortNames(): string[] {
+    return Array.from({ length: 3_999 }, (_, index) => `t${String(index)}`);
+  }
+
+  interface HeavyCase {
+    readonly label: string;
+    readonly document: () => string;
+    /** The rows the input declares: one per entity or view. */
+    readonly rows: number;
+    readonly check: (text: string, rowLines: readonly string[], document: string) => void;
+  }
+
+  const cases: readonly HeavyCase[] = [
+    {
+      label: 'B-1',
+      document: longNameDocument,
+      rows: 4_000,
+      check: (text, rowLines) => {
+        // The long name in full on its own row, then t0 … t3998 once each, in file order.
+        expect(rowLines.map((line) => fieldsOf(line)[6])).toEqual([
+          'p'.repeat(200_001),
+          ...shortNames(),
+        ]);
+        // No entity declares an `LName`, so every row shows the `-` of §4.4.1.
+        expect(rowLines.every((line) => fieldsOf(line)[7] === '-')).toBe(true);
+        expect(text).toContain('# status: ok');
+      },
+    },
+    {
+      label: 'B-2',
+      document: escapeDocument,
+      rows: 4_000,
+      check: (text, rowLines) => {
+        const pnames = rowLines.map((line) => fieldsOf(line)[6]);
+        // 400,000 escapes of eight code units each: none dropped and none doubled.
+        expect(pnames[0]).toBe(`"${'\\u{001B}'.repeat(400_000)}"`);
+        expect(pnames.slice(1)).toEqual(shortNames());
+        expect(text.match(/\\u\{001B\}/g) ?? []).toHaveLength(400_000);
+      },
+    },
+    {
+      label: 'N-1',
+      document: () => unknownKeysDocument(30_000),
+      rows: 1,
+      check: (text, _rowLines, document) => {
+        // One entry per unknown key, numbered in file order, with no gap and no repeat.
+        expect(text).toContain(`(${unknownKeyLocations(document, 30_000)})`);
+        expect(text).toContain('# diagnostics: 30001 (fatal 0, error 0, warning 0, info 30001)');
+      },
+    },
+    {
+      label: 'N-2',
+      document: missingNameDocument,
+      rows: 30_000,
+      check: (text, rowLines) => {
+        // Every row shows the absent `PName` as `-` and keeps its logical name in full.
+        expect(rowLines.every((line) => fieldsOf(line)[6] === '-')).toBe(true);
+        expect(rowLines.every((line) => fieldsOf(line)[7] === '名前なし')).toBe(true);
+        expect(text.match(/名前なし/g) ?? []).toHaveLength(30_000);
+        expect(text).toContain('# diagnostics: 30001 (fatal 0, error 30000, warning 0, info 1)');
+      },
+    },
+    {
+      label: 'N-3',
+      document: viewsDocument,
+      rows: 30_000,
+      check: (text) => {
+        const start = text.indexOf('(sections ');
+        expect(start).toBeGreaterThan(-1);
+        const sections = text
+          .slice(start + '(sections '.length, text.indexOf(')', start))
+          .split(', ')
+          .map((value) => Number(value));
+
+        // One section per view, ascending and consecutive: nothing merged, dropped or reordered.
+        expect(sections).toHaveLength(30_000);
+        expect(
+          sections.every((value, index) => index === 0 || value === (sections[index - 1] ?? 0) + 1),
+        ).toBe(true);
+      },
+    },
+    {
+      label: '200,000 unknown keys',
+      document: () => unknownKeysDocument(200_000),
+      rows: 1,
+      check: (text, _rowLines, document) => {
+        expect(text).toContain(`(${unknownKeyLocations(document, 200_000)})`);
+        expect(text).toContain('# diagnostics: 200001 (fatal 0, error 0, warning 0, info 200001)');
+      },
+    },
+  ];
+
+  for (const heavy of cases) {
+    it(`renders ${heavy.label} inside the bound and keeps every item`, () => {
+      const document = heavy.document();
+      withDocument(document, (path) => {
+        const chunks = chunksOf(tablesOf(path));
+        // B-3: every chunk under 262,144 code units, no boundary inside a surrogate pair.
+        expectChunksBounded(chunks);
+
+        const text = chunks.join('');
+        // LF only, no blank line, no unescaped control character: a truncated tail cannot pass.
+        expectWellFormed(text);
+
+        const rowLines = rowLinesOf(text);
+        expect(rowLines).toHaveLength(heavy.rows);
+        heavy.check(text, rowLines, document);
+      });
+    }, 120_000);
+  }
+});
+
 describe('text/tables — the notes that depend on a reason (§4.8)', () => {
   it('orders the unknown notes by reason, not by row order', () => {
     const envelope = envelopeWithRows([

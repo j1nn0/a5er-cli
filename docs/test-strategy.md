@@ -478,7 +478,8 @@ The `tables` tests run in the same `verify` job, in-process or by spawning the b
 | Text renderer (§4) | `text-width.test.ts`, `text-escape.test.ts`, `text-render.test.ts`, `helpers/tables-text-expectations.ts` | In-process; the whole-output expectations are hand-authored from the fixture text |
 | Text and syntax CLI cases (§8.3) | `cli-tables-text.test.ts` | Spawned CLI, byte-for-byte stdout |
 | JSON contract, key sets and encoder (§5.10, §8.4) | `json-stream.test.ts`, `json-tables-contract.test.ts`, `types/tables-envelope.types.ts` | The type file is compiled by `typecheck` only |
-| Writer state machine (§7.2, R-3–R-23, R-7b, R-20b) | `io-stdout.test.ts` | Deterministic `ControlledWritable`; no timers, no real pipes |
+| Writer state machine (§7.2, R-3 to R-19, R-7b, R-21 to R-23) | `io-stdout.test.ts` | Deterministic `ControlledWritable`; no timers, no real pipes |
+| Phase A guard (§7.2 item 10, R-20, R-20b) | `tables-command.test.ts` | The `pipeline` seam injects the throw; the real `runTablesCommand` runs against a deterministic stderr fake, and the promise must settle |
 | Stderr line source (§3.6) | `text-diagnostics.test.ts` | In-process |
 | Real pipes (§7.3 R-1, R-1j, R-2, R-2f, R-11) | `cli-tables-io.test.ts` | Never assumes `EPIPE` is observed. R-1 and R-1j share one contract: no signal, exit `0`, empty stderr, and `1 ≤ received ≤ full length` with the reader provably destroyed *after* the first chunk; R-2 destroys it before any data and asserts `received === 0`; R-2f keeps the read's code and the fatal line. Every spawned child carries its **own 20 s limit** and is killed when it fires, so a hang fails that case instead of the suite |
 | R-11 receipt | `cli-tables-io.test.ts` | txt-01: text byte-compared with the hand-authored block, JSON **composed** from the committed golden's shared members plus the hand-derived `result`, never from `serialize()`/`toTablesEnvelope()`. `<big>`: the file-redirect bytes equal the fully received pipe bytes, and every row's physical and logical name is decoded in order with no gap or duplicate |
@@ -486,19 +487,44 @@ The `tables` tests run in the same `verify` job, in-process or by spawning the b
 | Byte fence for `inspect`/`validate` (G-10) | `cli-byte-regression.test.ts` | 88 spawned runs, `encoding: 'buffer'` |
 
 **Not in CI.** The `tables` measurement beyond the string limit (B-6: a 1,999,000-unknown-key
-document through `--format json`, more than 536,870,888 bytes of stdout) is a manual run: it needs
-about 3 GB of RAM and minutes per run. It is recorded in the implementation PR as a measurement, and
-CI covers the same code paths at bounded size (B-3, B-5). The in-memory stage shared with `inspect`
-can exhaust the V8 heap on inputs within the read limits; that risk is tracked in
+document through `--format json`) is a manual run: the recorded one needed a 4 GiB V8 heap and took
+177 s. It is reported in the implementation PR as a measurement, and CI covers the same code paths at
+bounded size (B-3, B-5). The in-memory stage shared with `inspect` can exhaust the V8 heap on inputs
+within the read limits; that risk is tracked in
 [issue #27](https://github.com/j1nn0/a5er-cli/issues/27) and is not an acceptance condition of the
 `tables` implementation.
 
-**How B-6 is validated.** The output is larger than V8's maximum string length, so `JSON.parse`
-cannot be the check: the measurement is validated with a true streaming parser (`jq --stream`, whose
-own peak memory is recorded with each pass), which proves that exactly one document is present, that
-it ends normally with no trailing bytes, and that the record counts and the `command`/
-`contractVersion` members are the expected ones. A parser that loads the document into memory is
-never accepted as B-6 evidence.
+**The B-6 run as recorded.** Node.js 24.22.3; a synthetic document of one entity carrying 1,999,000
+`Unknown<i>=1` keys (32,872,026 bytes); `tables --format json` with the V8 heap limit at 4 GiB and a
+300 s timeout. Measured: **987,502,548 bytes** of stdout, exit `0`, **0 bytes** of stderr, **177.03 s**
+elapsed, **2,775,624 KiB** peak RSS. The stream was consumed by `jq --stream` (jq 1.8.1) on two
+passes, which exited normally with a peak RSS of about 3.8 MB (3,848 KB and 3,796 KB).
+
+**What that run proves.** Only these four things:
+
+1. The command emits JSON larger than V8's maximum string length — 987,502,548 bytes, past both the
+   536,870,888-byte expectation and the single-string limit — so `JSON.parse` cannot be the check.
+2. A true streaming parser consumed the whole stream and ended normally: `jq --stream` exited `0`
+   after roughly four million `[path, leaf]` events, within about 3.8 MB of memory.
+3. The child process exited `0` and wrote nothing to stderr.
+4. The fields and array events the `--stream` filter selected matched the counts the run reported.
+
+**What it does not prove.** Nothing below may be described as verified on this evidence:
+
+1. That exactly one document is present — no pass counted document starts or ends.
+2. That every top-level member was inspected.
+3. That every array element was validated; the filter selected fields and elements, it did not check
+   each record's shape or value.
+4. That there is no trailing document or trailing whitespace after the final byte.
+5. That the input matches the conditions of §7.1's older input generation — the run generated its own
+   document, and the relation between the two shapes is not established by the record.
+
+**What the record retains and what it does not.** Retained: the runtime version, the input shape and
+byte size, the heap limit, the timeout, the stdout and stderr byte counts, the exit code, the elapsed
+time, the peak RSS, and the streaming parser's version and per-pass memory. Not retained: the exact
+shell command line, the exact `jq` filter text, the input generator, the RSS sampling method, and any
+raw log excerpt. Those are therefore not stated here, and a re-run cannot yet be reproduced verbatim
+from this note alone. A parser that loads the document into memory is never accepted as B-6 evidence.
 
 ---
 

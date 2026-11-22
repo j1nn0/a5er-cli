@@ -18,10 +18,20 @@
  */
 
 import { EventEmitter } from 'node:events';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Writable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
+import { loadSource } from '../src/decode/load.js';
 import type { OutputStream } from '../src/io/stdout.js';
 import { writeOutput } from '../src/io/stdout.js';
+import { classify } from '../src/schema/index.js';
+import { derivePartialSemantics } from '../src/semantic/index.js';
+import { scanSource } from '../src/syntax/index.js';
+import { tablesDiagnosticLines } from '../src/text/index.js';
+import type { Integration } from '../src/validate/index.js';
+import { integrate } from '../src/validate/index.js';
 
 /** §7.3's diagnostic line. */
 const D =
@@ -798,4 +808,206 @@ describe('writer — the first terminal event wins (§7.2 item 6, MAJOR-1 1-B)',
 
     expect(harness.stderr.chunks.join('')).toBe(D);
   });
+});
+
+/* ── §7.7 B-3 and N-2: the real stderr source over §7.7's heavy documents ──────────────────── */
+
+/**
+ * The third path B-3 names, over the same six inputs the other two files use.
+ *
+ * `tests/json-stream.test.ts` pins `encodeJson` over §7.7's documents and `tests/text-render.test.ts`
+ * pins `renderTablesText` over the same six; this block pins what `tablesDiagnosticLines()` hands to
+ * *this* writer. Each case builds one `Integration` from the real four stages, so the lines are the
+ * product's and not a stub, and asserts on every chunk the writer wrote: under 262,144 code units,
+ * no boundary inside a surrogate pair, and a concatenation that byte-equals the source. Five of the
+ * six documents raise no `fatal`/`error` diagnostic at all, so their stderr must be empty — asserted,
+ * never assumed.
+ *
+ * Determinism: every `write()` returns `true`, so the writer never waits for `'drain'`; one
+ * `complete()` on stdout settles it and the rest is a microtask chain. No timer, no event is
+ * invented, and nothing depends on how the event loop happens to be scheduled.
+ */
+describe('writer — §7.7 B-3: the six heavy stderr sources', () => {
+  /** §7.7's chunk bound, written out rather than taken from the modules under test. */
+  const SPEC_CHUNK_LIMIT = 262_144;
+
+  /** §7.7's preamble: the format line and the one `[Manager]` section. */
+  function preamble(): string[] {
+    return ['# A5:ER FORMAT:21', '', '[Manager]', 'PageInfo="Main",3,"A4Landscape","$FFFFFF"', ''];
+  }
+
+  /** One `[Entity]` section. */
+  function entity(pname: string, position: string): string[] {
+    return ['[Entity]', `PName="${pname}"`, 'UsingCommonColumns=0', position, ''];
+  }
+
+  /** B-1: one 200,001-character `PName` and 3,999 short ones. */
+  function longNameDocument(): string {
+    const lines = preamble();
+    lines.push(...entity('p'.repeat(200_001), 'Position="Main",10,10'));
+    for (let index = 0; index < 3_999; index += 1) {
+      lines.push(...entity(`t${String(index)}`, 'Position="Main",20,20'));
+    }
+    return lines.join('\n');
+  }
+
+  /** B-2: 400,000 escape characters in one `PName` and 3,999 short ones. */
+  function escapeDocument(): string {
+    const lines = preamble();
+    lines.push(...entity('\u001b'.repeat(400_000), 'Position="Main",10,10'));
+    for (let index = 0; index < 3_999; index += 1) {
+      lines.push(...entity(`t${String(index)}`, 'Position="Main",20,20'));
+    }
+    return lines.join('\n');
+  }
+
+  /** N-1 and its 200,000-key sibling: one entity carrying `count` unknown keys. */
+  function unknownKeysDocument(count: number): string {
+    const lines = preamble();
+    lines.push('[Entity]', 'PName="wide"', 'UsingCommonColumns=0', 'Position="Main",10,10');
+    for (let index = 0; index < count; index += 1) lines.push(`Unknown${String(index)}=1`);
+    return lines.join('\n');
+  }
+
+  /** N-2: 30,000 entities with no `PName`, each one a `V_MISSING_REQUIRED_KEY` error. */
+  function missingNameDocument(): string {
+    const lines = preamble();
+    for (let index = 0; index < 30_000; index += 1) {
+      lines.push(
+        '[Entity]',
+        'LName="名前なし"',
+        'UsingCommonColumns=0',
+        'Position="Main",10,10',
+        '',
+      );
+    }
+    return lines.join('\n');
+  }
+
+  /** N-3: 30,000 views, one section each. */
+  function viewsDocument(): string {
+    const lines = preamble();
+    for (let index = 0; index < 30_000; index += 1) {
+      lines.push('[View]', `PName="v${String(index)}"`, 'Position="Main",10,10', '');
+    }
+    return lines.join('\n');
+  }
+
+  /** The `Integration` of one generated `.a5er` text: the four real stages, then `integrate()`. */
+  function integrationOf(text: string): Integration {
+    const directory = mkdtempSync(join(tmpdir(), 'a5er-writer-heavy-'));
+    try {
+      const path = join(directory, 'heavy.a5er');
+      writeFileSync(path, text, 'utf8');
+      const load = loadSource(path);
+      if (!load.ok) throw new Error('the generated document did not load');
+      const scan = scanSource(load.source);
+      const classification = classify(scan);
+      return integrate({
+        load,
+        scan,
+        classification,
+        semantics: derivePartialSemantics(classification),
+      });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+
+  /**
+   * Run the writer with the real diagnostic lines.
+   *
+   * `stdout` is one fixed chunk — B-3 is about the diagnostics here — and it is completed once, which
+   * is all a `true`-returning write needs. The promise must then settle on the read's own code.
+   */
+  async function runHeavy(integration: Integration): Promise<Harness> {
+    const harness = start({
+      stdoutChunks: () => ['A'],
+      stderrLines: () => tablesDiagnosticLines(integration),
+      readCode: integration.exitPolicy.inspect,
+    });
+    harness.stdout.complete(0);
+    await expect(harness.done).resolves.toBe(integration.exitPolicy.inspect);
+    return harness;
+  }
+
+  /** Every chunk under the bound, and no chunk boundary inside a surrogate pair (§7.7 B-3). */
+  function expectStderrChunksBounded(chunks: readonly string[]): void {
+    for (const [index, chunk] of chunks.entries()) {
+      expect(chunk.length).toBeGreaterThan(0);
+      expect(chunk.length, `chunk ${String(index)}`).toBeLessThan(SPEC_CHUNK_LIMIT);
+
+      const first = chunk.charCodeAt(0);
+      const last = chunk.charCodeAt(chunk.length - 1);
+      expect(first >= 0xdc00 && first <= 0xdfff, `chunk ${String(index)} start`).toBe(false);
+      expect(last >= 0xd800 && last <= 0xdbff, `chunk ${String(index)} end`).toBe(false);
+    }
+  }
+
+  const cases: readonly (readonly [string, () => string])[] = [
+    ['B-1', longNameDocument],
+    ['B-2', escapeDocument],
+    ['N-1', () => unknownKeysDocument(30_000)],
+    ['N-2', missingNameDocument],
+    ['N-3', viewsDocument],
+    ['200,000 unknown keys', () => unknownKeysDocument(200_000)],
+  ];
+
+  for (const [label, build] of cases) {
+    it(`writes ${label}'s stderr whole and inside the bound`, async () => {
+      const integration = integrationOf(build());
+      const expected = [...tablesDiagnosticLines(integration)];
+      const harness = await runHeavy(integration);
+
+      // stdout settled normally, in one chunk, on the read's own code.
+      expect(harness.stdout.chunks).toEqual(['A']);
+      // Two independent runs of the generator agree: the source is a pure function of the input.
+      expect([...tablesDiagnosticLines(integration)]).toEqual(expected);
+      // The writer wrote the source and nothing else: no line lost, none doubled, no reordering.
+      expect(harness.stderr.chunks.join('')).toBe(expected.join(''));
+      expectStderrChunksBounded(harness.stderr.chunks);
+
+      if (expected.length === 0) {
+        // Nothing may be invented for a document whose worst diagnostic is a `warning` or an `info`.
+        expect(integration.diagnostics.every((one) => one.severity !== 'fatal')).toBe(true);
+        expect(integration.diagnostics.every((one) => one.severity !== 'error')).toBe(true);
+        expect(harness.stderr.chunks).toHaveLength(0);
+      } else {
+        // 30,000 lines of §7.7's size cannot fit one chunk: the bound is exercised, not dodged.
+        expect(harness.stderr.chunks.length).toBeGreaterThan(1);
+      }
+    }, 120_000);
+  }
+
+  it('N-2: 30,000 missing `PName`s keep their order, their count and their LF (§7.7 N-2)', async () => {
+    const integration = integrationOf(missingNameDocument());
+
+    // Entity k sits on line 6 + 5k of this document, and §3.6 prints `a5er: <severity>: <code>:
+    // <message> (line <n>)`, so all 30,000 lines are derived from the input's own layout.
+    const text = 'a5er: error: V_MISSING_REQUIRED_KEY: A key the specification requires is absent';
+    const expected = Array.from(
+      { length: 30_000 },
+      (_, index) => `${text} (line ${String(6 + 5 * index)})\n`,
+    );
+
+    // The input must really raise 30,000 `error`s before the writer is asked anything.
+    const errors = integration.diagnostics.filter((one) => one.severity === 'error');
+    expect(errors).toHaveLength(30_000);
+    expect(errors.every((one) => one.code === 'V_MISSING_REQUIRED_KEY')).toBe(true);
+    expect([...tablesDiagnosticLines(integration)]).toEqual(expected);
+
+    const harness = await runHeavy(integration);
+    const written = harness.stderr.chunks.join('');
+
+    // stdout settles normally, in the one chunk it was given.
+    expect(harness.stdout.chunks).toEqual(['A']);
+
+    // Multi-chunk: 30,000 lines cannot fit one chunk, so the bound is exercised, not dodged.
+    expect(harness.stderr.chunks.length).toBeGreaterThan(1);
+    expectStderrChunksBounded(harness.stderr.chunks);
+
+    // Byte equality pins the order, the absence of duplicates and the trailing LF at once.
+    expect(written).toBe(expected.join(''));
+    expect(written.split('\n')).toHaveLength(30_001);
+  }, 120_000);
 });

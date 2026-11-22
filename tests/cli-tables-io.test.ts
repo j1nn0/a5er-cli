@@ -337,7 +337,11 @@ describe('a5er tables — real pipes (§7.3)', () => {
       // The JSON expectation is composed from the committed golden's shared members and the
       // hand-derived `result` — never from `serialize()`/`toTablesEnvelope()` (§8.5, R-11).
       expect(json.code).toBe(0);
-      expect(json.stdout.toString('utf8')).toBe(expectedTxt01Json(staged.path));
+      // Raw bytes, not a decoded string: the comparison must fail on an encoding slip, a stray
+      // CRLF or a missing final LF, not survive one via UTF-8 replacement characters.
+      expect(Buffer.compare(json.stdout, Buffer.from(expectedTxt01Json(staged.path), 'utf8'))).toBe(
+        0,
+      );
     } finally {
       staged.cleanup();
     }
@@ -405,8 +409,13 @@ describe('a5er tables — real pipes (§7.3)', () => {
       expect(notes[3]).toBe(
         '#   info D_BOM_MISSING: The input has no byte-order mark; UTF-8 without one is tolerated (file)',
       );
-      expect(notes[4]).toMatch(/^# completeness: /);
-      expect(notes[4]?.endsWith('; dropped 0')).toBe(true);
+      // The completeness note is pinned in full, derived from the generated document itself: the
+      // 5-line preamble and 4,000 blocks of 6 lines give 5 + 6·4000 − 1 = 24,004 lines, `[Manager]`
+      // plus one `[Entity]` per object give 1 + 4000 = 4,001 sections, and `PageInfo` plus four keys
+      // per entity give 1 + 4·4000 = 16,001 keys. None is preserved raw, unknown or dropped.
+      expect(notes[4]).toBe(
+        '# completeness: sections 4001 (parsed 4001, preservedRaw 0, unknown 0); keys 16001 (parsed 16001, preservedRaw 0); lines 24004 (accounted 24004, dropped 0); dropped 0',
+      );
 
       // JSON: the encoder's bytes equal `JSON.stringify` of the same document (B-5, permitted for a
       // generated document).
