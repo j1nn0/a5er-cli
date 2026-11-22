@@ -7,7 +7,7 @@
  * the reader accepts produces a document past V8's maximum string length. `encodeJson` walks the
  * document and yields chunks instead, so the memory the output costs is one chunk.
  *
- * **What it promises.** For every document `serialize()` and `toTablesEnvelope()` can produce —
+ * **What it promises.** For every document `serialize()` and `buildTablesEnvelope()` can produce —
  * plain objects and arrays whose leaves are strings, finite numbers, booleans and `null` — the
  * concatenated chunks equal `JSON.stringify(document, strictReplacer) + "\n"`, byte for byte, and
  * every chunk is under 262,144 code units. The traversal is `JSON.stringify`'s own: `Object.keys`

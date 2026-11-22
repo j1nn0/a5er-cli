@@ -3,9 +3,9 @@
  *
  * **Two phases, one writer.** Phase A is eager and runs before any output: the same four stages
  * `inspect` uses, then `integrate()` for the exit policy. Phase B is lazy and runs *inside* the
- * writer's guard, so a defect in `serialize()`, in the projection or in a renderer becomes an
+ * writer's guard, so a defect in the projection or in a renderer becomes an
  * output-generation failure (exit `70`) instead of a stack trace: the tables envelope is a pure
- * function of the inspect envelope, and the CLI stays the only parser.
+ * function of the stage results and their integration, and the CLI stays the only parser.
  *
  * **Why the writer is separate.** `src/io/stdout.ts` owns the §7.2 state machine — the single
  * terminal stdout state, backpressure, `EPIPE` versus an early close, and the rule that a stderr
@@ -25,14 +25,14 @@
 import { loadSource } from './decode/load.js';
 import type { OutputStream, WriteOutcome } from './io/stdout.js';
 import { OUTPUT_GENERATION_FAILED_LINE, writeOutput } from './io/stdout.js';
-import { encodeJson, serialize } from './json/index.js';
+import { encodeJson } from './json/index.js';
 import { classify } from './schema/index.js';
 import { derivePartialSemantics } from './semantic/index.js';
 import { scanSource } from './syntax/index.js';
 import { renderTablesText, tablesDiagnosticLines } from './text/index.js';
 import type { Integration, IntegrationInput } from './validate/index.js';
 import { integrate } from './validate/index.js';
-import { toTablesEnvelope } from './view/index.js';
+import { buildTablesEnvelope } from './view/index.js';
 
 /** The two output formats `tables` accepts (§3.2, §3.3). */
 export type TablesFormat = 'text' | 'json';
@@ -120,7 +120,7 @@ export async function runTablesCommand(options: TablesCommandOptions): Promise<W
   // ── Phase B: lazy, pulled chunk by chunk by the writer (§2) ────────────────────────────────
   const stdoutChunks = (): Iterable<string> => {
     // Inside the writer's guard: a throw here is reported as a generation failure, never as prose.
-    const document = toTablesEnvelope(serialize(input, { command: 'inspect', path }));
+    const document = buildTablesEnvelope(input, integration, { path });
     return format === 'json' ? encodeJson(document) : renderTablesText(document);
   };
 

@@ -57,30 +57,34 @@ Phase A (eager, before any output; guarded, §7.2 item 10)
   loadSource → scanSource → classify → derivePartialSemantics    (unchanged, src/cli.ts inputFor)
         → integrate()                 exit policy: exitPolicy.inspect          (unchanged)
 Phase B (lazy, pulled chunk by chunk by the writer)
-  stdout: serialize(input, { command: 'inspect', path })   the inspect envelope, as an object
-                                                            (unchanged; tables never stringifies it)
-        → toTablesEnvelope(inspectEnvelope)                 src/view/tables.ts        (new, pure)
+  stdout: buildTablesEnvelope(input, integration, { path }) src/view/tables.ts        (new, pure)
         → --format json: encodeJson(tablesEnvelope)         src/json/stream.ts        (new, §5.10)
           --format text: renderTablesText(tablesEnvelope)   src/text/tables.ts        (new, §4.10)
   stderr: tablesDiagnosticLines(integration)                src/text/diagnostics.ts   (new, §3.6)
         → writeOutput({ stdoutChunks, stderrLines, … })     src/io/stdout.ts          (new, §7.2)
 ```
 
-The tables envelope is a pure function of the inspect envelope for the same bytes. Two things
-follow from that. `tables` and `inspect` cannot disagree about a file, and every fact `tables`
-reports can be traced to a member of the inspect envelope. The CLI stays the only parser
-(AGENTS.md), and the view layer only counts and copies.
+The tables envelope is a pure function of the stage results and of the `Integration` over those
+same results, not of the inspect envelope: it selects its rows while it walks the classification,
+takes every count from the semantic records, and shares the remaining members through one function
+with `inspect`, so `serialize()` and `inspect.schema` are never built for `tables`. Two things
+follow from that. `tables` and `inspect` cannot disagree about a file, because neither re-derives a
+fact the other projects; and every fact `tables` reports is a length counted there or a value
+copied from a record the CLI already holds. The CLI stays the only parser (AGENTS.md), and the
+view layer only counts and copies.
 
 `tables` never builds a whole output as one string, on stdout or on stderr. Both renderers and the
 stderr line source are lazy, and the writer pulls bounded chunks from them one at a time (§4.10,
-§5.10, §7.2). Because Phase B is lazy, an exception in `serialize()`, in the projection or in a
-renderer happens inside the writer's guard, and is reported as an output-generation failure
-(§7.2), never as a stack trace.
+§5.10, §7.2). Because Phase B is lazy, an exception in the projection or in a renderer happens
+inside the writer's guard, and is reported as an output-generation failure (§7.2), never as a
+stack trace.
 
-**Memory is not bounded by P0.** The in-memory inspect envelope is the same object that `inspect`
-builds, so `tables` has the same peak heap as `inspect` up to the end of `serialize()`. Inputs
-within the current read limits can exhaust the default V8 heap in this shared stage (§7.1): the
-process then aborts, outside every exit code of §3.7. This is tracked as F-4 in
+**Memory is not bounded by P0.** Peak heap still grows with the input: Phase A's stage results and
+semantic records are held whole, and that is what a large diagram exhausts. `tables` no longer
+builds `inspect`'s `schema`, so that document is not part of its peak; what the projection does
+cost, and how much the omission saves, are measured rather than asserted here. Inputs within the
+current read limits can still exhaust the default V8 heap (§7.1): the process then aborts, outside
+every exit code of §3.7. This is tracked as F-4 in
 [issue #27](https://github.com/j1nn0/a5er-cli/issues/27). P0 does not fix it. P1 measures it, and
 the release decision for `tables` must address it (§11).
 
@@ -335,9 +339,9 @@ For text, the matching check is that the output ends with `\n` and its last line
 completeness note or the dropped warning (§4.1). Text is for humans, and scripts use JSON.
 
 The runtime itself can still end the process outside this table. The known case is a V8 heap
-exhaustion abort on an input that also exhausts `inspect` (§2, §7.1, F-4). That happens in the
-shared `serialize()` stage, before the first stdout chunk is generated, so it does not leave
-partial output behind. It ends the process by signal (`SIGABRT`, exit status `134` in a POSIX
+exhaustion abort in Phase A's stages, which hold the classification and the semantic records whole
+(§2, §7.1, F-4). That is before the first stdout chunk is generated, so it does not leave partial
+output behind. It ends the process by signal (`SIGABRT`, exit status `134` in a POSIX
 shell), which a consumer must treat as a failure (check 1 above).
 
 ### 3.8 `failed` and `degraded`
@@ -1028,13 +1032,14 @@ from the construction rule of §5.3, and the CLI JSON contract tests of §8.4 ch
   For the full model, run `inspect` (§4.9).
 - `result` invents nothing (see the number table below).
 
-**Construction rule (runtime).** `toTablesEnvelope(e)` builds every object as an object literal
-with its keys spelled out, in emission order. It never uses spread (`...e`), `Object.assign`,
-`structuredClone` or any other copy of an inspect object, because a copy would carry `schema` or
-other keys along. The strict replacer of `serialize.ts` rejects `undefined`, functions, symbols,
-`bigint` and non-finite numbers, but it would serialise an extra *defined* key without complaint.
-So the replacer does not protect the key set. Explicit construction does, and the key-set tests of
-§8.4 check it. The key lists are constants in `src/view/tables.ts`:
+**Construction rule (runtime).** `buildTablesEnvelope(input, integration, { path })` builds every
+object as an object literal with its keys spelled out, in emission order. It never uses spread
+(`...e`), `Object.assign`, `structuredClone` or any other copy of an inspect object, because a copy
+would carry `schema` or other keys along — and it never has one: `serialize()` is not called. The
+strict replacer of `serialize.ts` rejects `undefined`, functions, symbols, `bigint` and non-finite
+numbers, but it would serialise an extra *defined* key without complaint. So the replacer does not
+protect the key set. Explicit construction does, and the key-set tests of §8.4 check it. The key
+lists are constants in `src/view/tables.ts`:
 
 | Object | Keys, in order |
 |---|---|
@@ -1046,9 +1051,10 @@ So the replacer does not protect the key set. Explicit construction does, and th
 | `omitted` | `subtypes` |
 | `omitted.subtypes` | `count, sectionIndexes` |
 
-The shared members (`tool`, `source`, `limits`, `unsupported`, `diagnostics`, `completeness`) are
-taken by reference from the inspect envelope. Their key sets are those of the existing contract,
-and the goldens already pin them.
+The shared members (`tool`, `source`, `limits`, `unsupported`, `diagnostics`, `completeness`) come
+from `sharedEnvelopeMembers()` in `src/json/serialize.ts`, the one function the inspect envelope
+uses too, over the same input and one `Integration` of it (§5.5). Their key sets are those of the
+existing contract, and the goldens already pin them.
 
 **Status and nulls (runtime).** `JsonEnvelope` does not tie `status` to the nulls in its type, so
 `toTablesEnvelope` checks it when it narrows into one of the two arms. `failed` requires `source`,
@@ -1099,9 +1105,11 @@ For every input, with `S = inspect.schema` and `R = tables.result`:
 
 `contractVersion`, `tool`, `status`, `source`, `limits`, `unsupported`, `diagnostics` and
 `completeness` must deep-equal the inspect envelope's members for the same input, and must
-serialise to the same bytes. The view layer copies them by reference from the inspect envelope and
-never rebuilds them. Their meaning, rules 1–4 and 7 of `architecture.md` §12, and the `limits`
-semantics apply unchanged.
+serialise to the same bytes. The view layer builds them through the same function the inspect
+envelope uses (`sharedEnvelopeMembers()` in `src/json/serialize.ts`), over the same input and one
+`Integration` of it, so neither document is projected from the other and neither rebuilds them.
+Their meaning, rules 1–4 and 7 of `architecture.md` §12, and the `limits` semantics apply
+unchanged.
 
 ### 5.6 `failed`
 
@@ -1423,8 +1431,8 @@ Windows or macOS host was available.
 | Review reproduction: one 200,001-character `PName`, plus 3,999 entities with 5-character names (616,068 bytes) | `inspect`: exit `0`, 17,032,749-byte envelope, 0.69 s, peak RSS 232 MB. A prototype renderer that pads every row to the longest name and joins the output into one string failed with `RangeError: Invalid string length`: about 200,001 × 4,000 ≈ 800 million padding characters. That is the B1 defect, and §4.3 and §4.10 remove it |
 | Escape expansion: one `PName` of 400,000 ESC characters (each renders as the 8-character `\u{001B}`), plus 3,999 short names (816,067 bytes) | `inspect`: exit `0`, 25,832,745-byte envelope, 0.74 s, peak RSS 259 MB |
 | 1,999,000 unknown keys in one entity (20,878,001 bytes, 1,999,008 lines) | `inspect`: exit `1`, no stdout, `RangeError: Invalid string length` thrown from `JSON.stringify` in `toJsonString`, 23.5 s, peak RSS 3.0 GB. With the §5.10 chunking, a tables-like envelope wrote 951,520,194 bytes of valid JSON (13.8 s, peak RSS 2.75 GB, largest chunk 65,792 code units) |
-| 200,000 `Field` lines in one entity (11,377,891 bytes) | `inspect`: exit `0`, 372,293,684-byte envelope (69 % of the maximum string length), 8.0 s, peak RSS 1.78 GB. A tables-like run: heap 791 MiB after `serialize()`, peak RSS 984 MB |
-| 1,155,516 `Field` lines (67,108,851 bytes, just under `maxBytes`) | Pipeline through `integrate()`: heap 2,847 MiB (load 82, scan 594, classify 2,628, semantics 2,847). `serialize()` then exhausted the 4,288 MiB heap: `FATAL ERROR … heap out of memory`, exit `134` (SIGABRT), 28 s. This is the shared stage of §2, so `inspect` and `tables` would both abort on this input. No stdout write happens before the abort |
+| 200,000 `Field` lines in one entity (11,377,891 bytes) | `inspect`: exit `0`, 372,293,684-byte envelope (69 % of the maximum string length), 8.0 s, peak RSS 1.78 GB. A tables-like prototype that ran `serialize()`: heap 791 MiB after it, peak RSS 984 MB |
+| 1,155,516 `Field` lines (67,108,851 bytes, just under `maxBytes`) | Pipeline through `integrate()`: heap 2,847 MiB (load 82, scan 594, classify 2,628, semantics 2,847). `serialize()` then exhausted the 4,288 MiB heap: `FATAL ERROR … heap out of memory`, exit `134` (SIGABRT), 28 s. That stage is `inspect`'s, and it was `tables`'s at this baseline; the plan-B builder no longer runs it (§2), so `tables` no longer aborts here while `inspect` still does. No stdout write happens before the abort |
 
 Findings:
 
@@ -1433,9 +1441,9 @@ Findings:
   change (§3.10, §11 F-1).
 - Whole-output strings fail on accepted inputs. That covers both the text padding defect and
   `JSON.stringify` of a large envelope. P0 bounds every output string (§4.10, §5.10).
-- After that, the only stage that still grows with the input is the in-memory pipeline shared with
-  `inspect`. It hits the heap limit, not the string limit, at the maximum input size. P0 does not
-  change that stage (§11 F-4).
+- After that, the only stage that still grows with the input is Phase A — load, scan, classify,
+  semantics — which `inspect`, `validate` and `tables` share. It hits the heap limit, not the string
+  limit, at the maximum input size. P0 does not change that stage (§11 F-4).
 
 A throwaway prototype of the §7.2 state machine, run against real pipes and against a controlled
 fake, gave the results recorded under "Feasibility" in §7.3. In particular, `>&-` (stdout closed
@@ -2154,6 +2162,6 @@ member at position 7 under the same additive rule (§5.9).
 | F-1 | `inspect`/`validate` crash on a broken pipe or a stdout write error: exit `1` (the code for a failed read) and a stack trace that includes the install path (§7.1, measured) | A separate issue to route every command through `writeOutput` (§7.2). It changes observable `inspect`/`validate` behaviour in that error case, so it needs explicit approval outside decision 6. R-C's observation is then expected to change |
 | F-2 | `quote()` in misuse messages leaves C1 and bidi controls raw | **Moved into P0**: `quoteArg` (§3.5, §3.10, S-6) |
 | F-3 | macOS is not in the CI matrix | C-2 in §9, if wanted |
-| F-4 | Large accepted inputs exhaust shared resources in the existing pipeline (§7.1, measured). `inspect`'s `toJsonString` throws `RangeError: Invalid string length` on a 20.9 MB file of 1,999,000 unknown keys, and exits `1` with no envelope. At 64 MiB of `Field` lines, `serialize()` exhausts the default 4,288 MiB heap (abort, exit status `134`), and that stage is shared by `tables`. So an out-of-memory abort is possible for inputs **within the current read limits**, for `inspect`, `validate` and `tables` alike | Tracked in [issue #27](https://github.com/j1nn0/a5er-cli/issues/27). **P0 does not fix the parser or `serialize()` memory use**, and does not hide the risk: §2, §3.7 and §7.1 state it. Handed over to P1: measure peak heap per stage (load, scan, classify, semantics, serialize, projection) against input size on Node 24 and 26, and find the smallest accepted input that aborts. Before any release that ships `tables`, a recorded decision is required: for example lower read limits (TBD-O3), a lower-memory projection for `tables` that does not build the whole `schema`, or a documented limit. Routing `inspect`'s JSON through `encodeJson` changes its failure behaviour and needs approval outside decision 6 |
+| F-4 | Large accepted inputs exhaust shared resources in the existing pipeline (§7.1, measured). `inspect`'s `toJsonString` throws `RangeError: Invalid string length` on a 20.9 MB file of 1,999,000 unknown keys, and exits `1` with no envelope. At 64 MiB of `Field` lines, `serialize()` exhausts the default 4,288 MiB heap (abort, exit status `134`); at that baseline the stage was shared by `tables` as well, and Phase A's stage results are still held whole, so an out-of-memory abort is possible for inputs **within the current read limits**, for `inspect`, `validate` and `tables` alike | Tracked in [issue #27](https://github.com/j1nn0/a5er-cli/issues/27). **P0 does not fix the parser or `serialize()` memory use**, and does not hide the risk: §2, §3.7 and §7.1 state it. The schema-side half has since been addressed for `tables`: `buildTablesEnvelope()` (§2, §5.5) builds the document from the stage results and never calls `serialize()`, so `inspect`'s `schema` is no longer part of `tables`' peak — measuring what remains is still open. Handed over to P1: measure peak heap per stage (load, scan, classify, semantics, serialize, projection) against input size on Node 24 and 26, and find the smallest accepted input that aborts. Before any release that ships `tables`, a recorded decision is required: for example lower read limits (TBD-O3), the plan-B projection, or a documented limit. Routing `inspect`'s JSON through `encodeJson` changes its failure behaviour and needs approval outside decision 6 |
 
 No contract question about `tables` is left open (§5.9).

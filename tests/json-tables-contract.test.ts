@@ -43,6 +43,8 @@ import { classify } from '../src/schema/index.js';
 import { derivePartialSemantics } from '../src/semantic/index.js';
 import { scanSource } from '../src/syntax/index.js';
 import { toTablesEnvelope } from '../src/view/tables.js';
+import type { IntegrationInput } from '../src/validate/index.js';
+import { integrate } from '../src/validate/index.js';
 import {
   TABLE_COLUMNS_KEYS,
   TABLE_ROW_KEYS,
@@ -51,6 +53,7 @@ import {
   TABLES_OMITTED_KEYS,
   TABLES_OMITTED_SUBTYPES_KEYS,
   TABLES_RESULT_KEYS,
+  buildTablesEnvelope,
   projectTables,
 } from '../src/view/tables.js';
 import { GENERATED_BUILDERS } from './helpers/generated.js';
@@ -87,15 +90,17 @@ const SPEC_CHUNK_LIMIT = 262_144;
 const BYTE_FIXTURES = [enc03, enc04, enc05, hst02, hst05] as const;
 
 /** The real four stages over a path — the same composition `src/cli.ts` runs. */
-function envelopeOf(path: string): JsonEnvelope {
+function inputOf(path: string): IntegrationInput {
   const load = loadSource(path);
-  if (!load.ok) return serialize({ load }, { command: 'inspect', path });
+  if (!load.ok) return { load };
   const scan = scanSource(load.source);
   const classification = classify(scan);
-  return serialize(
-    { load, scan, classification, semantics: derivePartialSemantics(classification) },
-    { command: 'inspect', path },
-  );
+  return { load, scan, classification, semantics: derivePartialSemantics(classification) };
+}
+
+/** The inspect envelope of a path: the oracle's only input, and no `tables` input at all. */
+function envelopeOf(path: string): JsonEnvelope {
+  return serialize(inputOf(path), { command: 'inspect', path });
 }
 
 /** The encoded chunks of a tables document, in order. */
@@ -168,51 +173,83 @@ function withDocument<T>(content: string, probe: (path: string) => T): T {
   }
 }
 
+/**
+ * The two ways to produce one tables document, checked against each other everywhere below.
+ *
+ * `oracle` is the shipped `inspect` path projected afterwards — `toTablesEnvelope()` over
+ * `serialize()` — and is what every expectation in this file was originally written against.
+ * `builder` is the `tables` command's own path: the stage results and one `Integration` of them,
+ * with no inspect envelope in between. A fact only one of them can state is a finding.
+ */
+interface Producer {
+  readonly name: string;
+  /** The tables document for one staged path. */
+  documentOf(path: string): JsonTablesEnvelope;
+}
+
+const ORACLE: Producer = {
+  name: 'oracle',
+  documentOf: (path) => toTablesEnvelope(envelopeOf(path)),
+};
+
+const BUILDER: Producer = {
+  name: 'builder',
+  documentOf: (path) => {
+    const input = inputOf(path);
+    return buildTablesEnvelope(input, integrate(input), { path });
+  },
+};
+
+/** Both producers, for the loops that must hold for either. */
+const PRODUCERS: readonly Producer[] = [ORACLE, BUILDER];
+
 /** The tables document of a path, parsed back from its own encoded bytes. */
-function parsedTablesOf(path: string): Record<string, unknown> {
-  const parsed: unknown = JSON.parse(jsonOf(toTablesEnvelope(envelopeOf(path))));
+function parsedTablesOf(producer: Producer, path: string): Record<string, unknown> {
+  const parsed: unknown = JSON.parse(jsonOf(producer.documentOf(path)));
   return parsed as Record<string, unknown>;
 }
 
 describe('tables JSON — the §5.3 key sets, from the emitted bytes', () => {
-  for (const id of ['txt-01', 'sem-08', 'sem-09']) {
-    it(`emits every level of ${id} with exactly the §5.3 keys`, () => {
-      withFixture(id, (path) => {
-        const parsed = parsedTablesOf(path);
+  for (const producer of PRODUCERS) {
+    for (const id of ['txt-01', 'sem-08', 'sem-09']) {
+      it(`emits every level of ${id} with exactly the §5.3 keys (${producer.name})`, () => {
+        withFixture(id, (path) => {
+          const parsed = parsedTablesOf(producer, path);
 
-        expect(Object.keys(parsed)).toEqual([...TABLES_ENVELOPE_KEYS]);
-        expect(Object.keys(parsed['tool'] as object)).toEqual(['name', 'version']);
-        expect(Object.keys(parsed['source'] as object)).toEqual([
-          'path',
-          'sizeBytes',
-          'sha256',
-          'encoding',
-          'format',
-        ]);
-        expect(Object.keys(parsed['limits'] as object)).toEqual(['maxBytes', 'truncated']);
+          expect(Object.keys(parsed)).toEqual([...TABLES_ENVELOPE_KEYS]);
+          expect(Object.keys(parsed['tool'] as object)).toEqual(['name', 'version']);
+          expect(Object.keys(parsed['source'] as object)).toEqual([
+            'path',
+            'sizeBytes',
+            'sha256',
+            'encoding',
+            'format',
+          ]);
+          expect(Object.keys(parsed['limits'] as object)).toEqual(['maxBytes', 'truncated']);
 
-        const result = parsed['result'] as Record<string, unknown>;
-        expect(Object.keys(result)).toEqual([...TABLES_RESULT_KEYS]);
-        expect(Object.keys(result['omitted'] as object)).toEqual([...TABLES_OMITTED_KEYS]);
+          const result = parsed['result'] as Record<string, unknown>;
+          expect(Object.keys(result)).toEqual([...TABLES_RESULT_KEYS]);
+          expect(Object.keys(result['omitted'] as object)).toEqual([...TABLES_OMITTED_KEYS]);
 
-        const subtypes = (result['omitted'] as Record<string, object>)['subtypes'] as object;
-        expect(Object.keys(subtypes)).toEqual([...TABLES_OMITTED_SUBTYPES_KEYS]);
+          const subtypes = (result['omitted'] as Record<string, object>)['subtypes'] as object;
+          expect(Object.keys(subtypes)).toEqual([...TABLES_OMITTED_SUBTYPES_KEYS]);
 
-        for (const row of result['tables'] as readonly Record<string, unknown>[]) {
-          expect(Object.keys(row)).toEqual([...TABLE_ROW_KEYS]);
-          expect(Object.keys(row['span'] as object)).toEqual([...TABLE_SPAN_KEYS]);
-          expect(Object.keys(row['columns'] as object)).toEqual([...TABLE_COLUMNS_KEYS]);
-        }
+          for (const row of result['tables'] as readonly Record<string, unknown>[]) {
+            expect(Object.keys(row)).toEqual([...TABLE_ROW_KEYS]);
+            expect(Object.keys(row['span'] as object)).toEqual([...TABLE_SPAN_KEYS]);
+            expect(Object.keys(row['columns'] as object)).toEqual([...TABLE_COLUMNS_KEYS]);
+          }
 
-        expect(parsed['command']).toBe('tables');
-        expect(parsed['contractVersion']).toBe(CONTRACT_VERSION);
+          expect(parsed['command']).toBe('tables');
+          expect(parsed['contractVersion']).toBe(CONTRACT_VERSION);
+        });
       });
-    });
+    }
   }
 
   it('has no schema key at any level, and the inspect document has no result key', () => {
     withFixture('txt-01', (path) => {
-      const tables = parsedTablesOf(path);
+      const tables = parsedTablesOf(ORACLE, path);
       const inspect = JSON.parse(inspectJson(envelopeOf(path))) as Record<string, unknown>;
 
       expect(Object.keys(tables)).not.toContain('schema');
@@ -249,7 +286,7 @@ describe('tables JSON — the §5.3 key sets, from the emitted bytes', () => {
 describe('tables JSON — status arms and their nulls (§5.6)', () => {
   it('emits the failed arm with source, result and completeness null', () => {
     withDocument('', (path) => {
-      const parsed = parsedTablesOf(path);
+      const parsed = parsedTablesOf(ORACLE, path);
 
       expect(parsed['status']).toBe('failed');
       expect(parsed['source']).toBeNull();
@@ -265,7 +302,7 @@ describe('tables JSON — status arms and their nulls (§5.6)', () => {
 
   it('emits the degraded arm with a result, a source and completeness', () => {
     withFixture('sem-08', (path) => {
-      const parsed = parsedTablesOf(path);
+      const parsed = parsedTablesOf(ORACLE, path);
 
       expect(parsed['status']).toBe('degraded');
       expect(parsed['source']).not.toBeNull();
@@ -276,7 +313,7 @@ describe('tables JSON — status arms and their nulls (§5.6)', () => {
 
   it('emits zero rows for a file with no objects, and no rows but a count for subtypes', () => {
     withFixture('sem-09', (path) => {
-      const result = parsedTablesOf(path)['result'] as Record<string, unknown>;
+      const result = parsedTablesOf(ORACLE, path)['result'] as Record<string, unknown>;
 
       expect(result['objects']).toBe(0);
       expect(result['tables']).toEqual([]);
@@ -284,7 +321,7 @@ describe('tables JSON — status arms and their nulls (§5.6)', () => {
     });
 
     withFixture('sem-05', (path) => {
-      const result = parsedTablesOf(path)['result'] as Record<string, unknown>;
+      const result = parsedTablesOf(ORACLE, path)['result'] as Record<string, unknown>;
 
       expect(result['objects']).toBe(2);
       expect(result['tables']).toHaveLength(1);
@@ -308,7 +345,7 @@ describe('tables JSON — status arms and their nulls (§5.6)', () => {
     ].join('\n');
 
     withDocument(document, (path) => {
-      const result = parsedTablesOf(path)['result'] as Record<string, unknown>;
+      const result = parsedTablesOf(ORACLE, path)['result'] as Record<string, unknown>;
       const row = (result['tables'] as readonly Record<string, unknown>[])[0];
 
       expect(row?.['columns']).toEqual({
@@ -326,7 +363,7 @@ describe('tables JSON — status arms and their nulls (§5.6)', () => {
   it('emits unsupported evidence and both diagnostic lists verbatim', () => {
     withFixture('txt-04', (path) => {
       const envelope = envelopeOf(path);
-      const parsed = parsedTablesOf(path);
+      const parsed = parsedTablesOf(ORACLE, path);
 
       expect(parsed['unsupported']).toEqual(
         JSON.parse(JSON.stringify(envelope.unsupported, strictReplacer)) as unknown,
@@ -476,7 +513,7 @@ describe('tables JSON — what §5.10 cannot be reached with', () => {
     // generalized cases of `json-stream.test.ts` reach the long-key path.
     for (const id of ['txt-01', 'txt-04', 'hst-04', 'val-08', 'sem-07']) {
       withFixture(id, (path) => {
-        const parsed: unknown = parsedTablesOf(path);
+        const parsed: unknown = parsedTablesOf(ORACLE, path);
         for (const key of keysAtAnyDepth(parsed)) {
           expect(key.length, `${id}: ${key}`).toBeLessThanOrEqual(64);
         }
@@ -643,8 +680,8 @@ describe('tables JSON — the real CLI emits the §5.3 key sets (§8.4)', () => 
 
 describe('tables JSON — the result equals the §8.1 table derived from the fixture text', () => {
   /** The projected shape compared against the hand-derived row. */
-  function comparableRows(path: string): unknown[] {
-    const result = toTablesEnvelope(envelopeOf(path)).result;
+  function comparableRows(producer: Producer, path: string): unknown[] {
+    const result = producer.documentOf(path).result;
     if (result === null) return [];
     return result.tables.map((table) => ({
       sectionIndex: table.sectionIndex,
@@ -659,43 +696,52 @@ describe('tables JSON — the result equals the §8.1 table derived from the fix
     }));
   }
 
-  /** Compare one fixture and record a failure by name instead of throwing out of the loop. */
-  function check(id: string, path: string, failures: string[]): void {
+  /**
+   * Compare one fixture against the hand-derived table, for one producer.
+   *
+   * The table is §8.1's, derived from the fixture text and the specification alone. Checking both
+   * producers against it is the point: the builder is a second implementation, and a row it cannot
+   * state is a finding about the builder rather than a detail of the oracle.
+   */
+  function check(producer: Producer, id: string, path: string, failures: string[]): void {
+    const label = `${id} (${producer.name})`;
     const expected = TABLE_EXPECTATIONS[id];
     if (expected === undefined) {
-      failures.push(`${id}: no hand-derived expectation`);
+      failures.push(`${label}: no hand-derived expectation`);
       return;
     }
 
-    const result = toTablesEnvelope(envelopeOf(path)).result;
+    const result = producer.documentOf(path).result;
     if (result === null) {
-      if (expected.rows.length > 0) failures.push(`${id}: expected rows, got null`);
+      if (expected.rows.length > 0) failures.push(`${label}: expected rows, got null`);
       return;
     }
 
-    if (JSON.stringify(comparableRows(path)) !== JSON.stringify(expected.rows)) {
-      failures.push(`${id}: rows differ`);
+    if (JSON.stringify(comparableRows(producer, path)) !== JSON.stringify(expected.rows)) {
+      failures.push(`${label}: rows differ`);
     }
     if (
       JSON.stringify(result.omitted.subtypes.sectionIndexes) !== JSON.stringify(expected.subtypes)
     ) {
-      failures.push(`${id}: omitted subtypes differ`);
+      failures.push(`${label}: omitted subtypes differ`);
     }
     if (result.objects !== expected.rows.length + expected.subtypes.length) {
-      failures.push(`${id}: objects ${String(result.objects)}`);
+      failures.push(`${label}: objects ${String(result.objects)}`);
     }
   }
 
   it('matches every synthetic fixture, in row order, with its omitted subtypes', () => {
     const failures: string[] = [];
 
-    for (const spec of FIXTURES) {
-      if (spec.fixtureClass !== 'synthetic') continue;
-      const staged = stage(spec.id);
-      try {
-        check(spec.id, staged.path, failures);
-      } finally {
-        staged.cleanup();
+    for (const producer of PRODUCERS) {
+      for (const spec of FIXTURES) {
+        if (spec.fixtureClass !== 'synthetic') continue;
+        const staged = stage(spec.id);
+        try {
+          check(producer, spec.id, staged.path, failures);
+        } finally {
+          staged.cleanup();
+        }
       }
     }
 
@@ -708,10 +754,12 @@ describe('tables JSON — the result equals the §8.1 table derived from the fix
     withFiles(
       BYTE_FIXTURES.map((fixture) => ({ name: `${fixture.ID}.a5er`, bytes: fixture.BYTES })),
       (paths) => {
-        for (const [index, path] of paths.entries()) {
-          const id = BYTE_FIXTURES[index]?.ID;
-          if (id === undefined) continue;
-          check(id, path, failures);
+        for (const producer of PRODUCERS) {
+          for (const [index, path] of paths.entries()) {
+            const id = BYTE_FIXTURES[index]?.ID;
+            if (id === undefined) continue;
+            check(producer, id, path, failures);
+          }
         }
       },
     );
@@ -807,4 +855,237 @@ describe('tables JSON — K-4 on every fixture through the real CLI (§5.5)', ()
 
     expect(failures).toEqual([]);
   }, 300_000);
+});
+
+/* ── the builder against the oracle: one document from two derivations (§5.3–§5.5) ────────── */
+
+describe('tables JSON — the builder and the oracle produce the same document', () => {
+  /**
+   * Every key list §5.3 fixes, read off the live object rather than off parsed bytes.
+   *
+   * `toEqual` ignores property order, so this is the only place the *construction* order of the
+   * builder's object literals is asserted: a member assigned in the wrong place would still
+   * deep-equal the oracle and still fail here.
+   */
+  function keyOrderProblems(document: JsonTablesEnvelope): string[] {
+    const problems: string[] = [];
+    const keys = (value: object): string[] => Object.keys(value);
+    const same = (actual: readonly string[], expected: readonly string[], what: string): void => {
+      if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+        problems.push(`${what}: ${actual.join(',')} != ${expected.join(',')}`);
+      }
+    };
+
+    same(keys(document), TABLES_ENVELOPE_KEYS, 'envelope');
+    same(keys(document.tool), ['name', 'version'], 'tool');
+    same(keys(document.limits), ['maxBytes', 'truncated'], 'limits');
+
+    if (document.result === null) {
+      if (document.status !== 'failed') problems.push('result null outside the failed arm');
+      if (document.source !== null) problems.push('failed arm with a source');
+      if (document.completeness !== null) problems.push('failed arm with counts');
+      return problems;
+    }
+
+    same(keys(document.result), TABLES_RESULT_KEYS, 'result');
+    same(keys(document.result.omitted), TABLES_OMITTED_KEYS, 'omitted');
+    same(keys(document.result.omitted.subtypes), TABLES_OMITTED_SUBTYPES_KEYS, 'subtypes');
+    for (const row of document.result.tables) {
+      same(keys(row), TABLE_ROW_KEYS, `row ${String(row.sectionIndex)}`);
+      same(keys(row.span), TABLE_SPAN_KEYS, `row ${String(row.sectionIndex)}.span`);
+      same(keys(row.columns), TABLE_COLUMNS_KEYS, `row ${String(row.sectionIndex)}.columns`);
+    }
+    return problems;
+  }
+
+  /**
+   * Compare one path's two documents and record every difference by name.
+   *
+   * The byte comparison is the strong one: `encodeJson` is `JSON.stringify`'s traversal, so identical
+   * bytes mean identical key order, identical escaping, identical number spelling (`-0` included)
+   * and the same single trailing newline. The structural comparisons say which member disagreed
+   * when the bytes do not.
+   */
+  function compare(id: string, path: string, failures: string[]): void {
+    const oracle = ORACLE.documentOf(path);
+    const builder = BUILDER.documentOf(path);
+
+    const oracleBytes = jsonOf(oracle);
+    const builderBytes = jsonOf(builder);
+    if (builderBytes !== oracleBytes) failures.push(`${id}: encoded bytes differ`);
+    if (builderBytes !== `${JSON.stringify(builder, strictReplacer)}\n`) {
+      failures.push(`${id}: builder bytes are not JSON.stringify + one LF`);
+    }
+
+    if (JSON.stringify(builder, strictReplacer) !== JSON.stringify(oracle, strictReplacer)) {
+      failures.push(`${id}: document differs`);
+    }
+
+    failures.push(...keyOrderProblems(builder).map((problem) => `${id}: ${problem}`));
+
+    // §5.4 item 1: `result` is the projection of the same `schema`, and the builder must state the
+    // same projection without ever holding that schema.
+    const inspect = envelopeOf(path);
+    if (inspect.schema === null) {
+      if (builder.result !== null) failures.push(`${id}: a result without a schema`);
+      return;
+    }
+    if (builder.result === null) {
+      failures.push(`${id}: no result for a schema`);
+      return;
+    }
+    if (
+      JSON.stringify(builder.result, strictReplacer) !==
+      JSON.stringify(projectTables(inspect.schema), strictReplacer)
+    ) {
+      failures.push(`${id}: result differs from projectTables(schema)`);
+    }
+    if (builder.result.objects !== inspect.schema.objects.length) {
+      failures.push(`${id}: objects is not schema.objects.length`);
+    }
+  }
+
+  it('matches byte for byte and key for key on every synthetic fixture', () => {
+    const failures: string[] = [];
+
+    for (const spec of FIXTURES) {
+      if (spec.fixtureClass !== 'synthetic') continue;
+      const staged = stage(spec.id);
+      try {
+        compare(spec.id, staged.path, failures);
+      } finally {
+        staged.cleanup();
+      }
+    }
+
+    expect(failures).toEqual([]);
+  }, 120_000);
+
+  it('matches on every byte fixture, the two rejected reads included', () => {
+    const failures: string[] = [];
+
+    withFiles(
+      BYTE_FIXTURES.map((fixture) => ({ name: `${fixture.ID}.a5er`, bytes: fixture.BYTES })),
+      (paths) => {
+        for (const [index, path] of paths.entries()) {
+          const id = BYTE_FIXTURES[index]?.ID;
+          if (id === undefined) continue;
+          compare(id, path, failures);
+        }
+      },
+    );
+
+    expect(failures).toEqual([]);
+  }, 120_000);
+
+  it('keeps objectIndex a position in schema.objects when a subtype comes first', () => {
+    const document = [
+      '\ufeff# A5:ER FORMAT:21',
+      '',
+      '[Manager]',
+      'PageInfo="Main",3,"A4Landscape","$FFFFFF"',
+      '',
+      '[Subtype]',
+      'PName="s_first"',
+      'Position="Main",10,10',
+      '',
+      '[View]',
+      'PName="v_second"',
+      'Query="SELECT 1"',
+      'Position="Main",20,20',
+      '',
+      '[Entity]',
+      'PName="e_third"',
+      'UsingCommonColumns=0',
+      'Position="Main",30,30',
+    ].join('\n');
+
+    withDocument(document, (path) => {
+      const oracle = ORACLE.documentOf(path);
+      const builder = BUILDER.documentOf(path);
+
+      // §4.9: the omitted subtype still occupies object 0, so the two rows are objects 1 and 2. A
+      // filtered row counter would renumber them to 0 and 1 — the corpus never declares a subtype
+      // before an entity, so this document is the case that states the rule.
+      expect(builder.result?.tables.map((row) => row.objectIndex)).toEqual([1, 2]);
+      expect(oracle.result?.tables.map((row) => row.objectIndex)).toEqual([1, 2]);
+      expect(builder.result?.objects).toBe(3);
+      expect(builder.result?.omitted.subtypes).toEqual({ count: 1, sectionIndexes: [2] });
+      expect(jsonOf(builder)).toBe(jsonOf(oracle));
+    });
+  });
+});
+
+/* ── the partial arm, which no committed fixture reaches (§4.5, §8.6) ──────────────────────── */
+
+describe('tables JSON — the partial entity no committed fixture reaches', () => {
+  /**
+   * `UsingCommonColumns=2`: neither `1` nor `0`, so the composition cannot be decided (§4.5).
+   *
+   * One declared `Field` and one `[Manager]` `CommonField`, and the entity's own `Field` list is the
+   * only column list the file states — `declared` is counted, `common`/`effective`/`collisions` are
+   * `null` rather than `0`.
+   */
+  const PARTIAL_DOCUMENT = [
+    '\ufeff# A5:ER FORMAT:21',
+    '',
+    '[Manager]',
+    'PageInfo="Main",3,"A4Landscape","$FFFFFF"',
+    'CommonField="作成日時","created_at","Timestamp",,,,"",$FFFFFFFF',
+    '',
+    '[Entity]',
+    'PName="partial_one"',
+    'UsingCommonColumns=2',
+    'Field="ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,"",""',
+    'Position="Main",10,10',
+  ].join('\n');
+
+  /** The one row §5.4 item 5 allows for a partial entity. */
+  const PARTIAL_COLUMNS = {
+    status: 'partial',
+    reason: 'using-common-columns-unrecognised',
+    declared: 1,
+    common: null,
+    effective: null,
+    collisions: null,
+  } as const;
+
+  it('is absent from every committed fixture, so the generated document is the only cover', () => {
+    const partial: string[] = [];
+
+    for (const spec of FIXTURES) {
+      if (spec.fixtureClass !== 'synthetic') continue;
+      const staged = stage(spec.id);
+      try {
+        for (const row of ORACLE.documentOf(staged.path).result?.tables ?? []) {
+          if (row.columns.status === 'partial')
+            partial.push(`${spec.id}:${String(row.sectionIndex)}`);
+        }
+      } finally {
+        staged.cleanup();
+      }
+    }
+
+    expect(partial).toEqual([]);
+  }, 120_000);
+
+  it('states the same partial row through both producers, byte for byte', () => {
+    withDocument(PARTIAL_DOCUMENT, (path) => {
+      for (const producer of PRODUCERS) {
+        const document = producer.documentOf(path);
+        const result = document.result;
+        if (result === null) throw new Error(`${producer.name}: no result`);
+
+        expect(result.objects, producer.name).toBe(1);
+        expect(result.tables, producer.name).toHaveLength(1);
+        expect(result.tables[0]?.pname, producer.name).toBe('partial_one');
+        expect(result.tables[0]?.columns, producer.name).toEqual(PARTIAL_COLUMNS);
+        // The declared count is the file's own: one `Field` line.
+        expect(result.tables[0]?.columns.declared, producer.name).toBe(1);
+        expect(result.omitted.subtypes, producer.name).toEqual({ count: 0, sectionIndexes: [] });
+      }
+
+      expect(jsonOf(BUILDER.documentOf(path))).toBe(jsonOf(ORACLE.documentOf(path)));
+    });
+  });
 });

@@ -111,6 +111,7 @@ import type {
   JsonIndexes,
   JsonInvalidOrdinal,
   JsonLegacyIndex,
+  JsonLimits,
   JsonObject,
   JsonObjectPosition,
   JsonObjectScalarKey,
@@ -1347,16 +1348,40 @@ function jsonCompleteness(completeness: CompletedIntegration['completeness']): J
 }
 
 /**
- * Build the envelope for one invocation.
+ * The envelope members `serialize()` and `buildTablesEnvelope()` both emit (§12, §5.5).
  *
- * `integrate()` is called exactly once, and every policy answer in the result comes from it. A
- * rejected input has no source, no schema and no counts, so all three are `null` rather than empty
- * placeholders (§12 rule 1, §14 row 11). `limits.truncated` is derived from the integrated
- * diagnostic sequence and nothing else: `E_TRUNCATED_INPUT` is the only code that reports a read
- * that stopped early, and Integration already placed it where it belongs.
+ * Not an envelope: `contractVersion`, `tool` and `command` are a constant and the invocation's
+ * own, and `schema`/`result` is the one member the two documents disagree about on purpose.
  */
-export function serialize(input: IntegrationInput, context: SerializeContext): JsonEnvelope {
-  const integration = integrate(input);
+export interface SharedEnvelopeMembers {
+  readonly source: JsonSource | null;
+  readonly limits: JsonLimits;
+  readonly unsupported: readonly JsonUnsupported[];
+  readonly diagnostics: readonly JsonDiagnostic[];
+  readonly completeness: JsonCompleteness | null;
+}
+
+/**
+ * The members every document shares, projected from one input and one `Integration`.
+ *
+ * `serialize()` and `view/tables.ts`'s `buildTablesEnvelope()` both call this, which is the whole
+ * reason it exists: `tables` states the same `source`, `limits`, `unsupported`, `diagnostics` and
+ * `completeness` as `inspect` for the same bytes, and it can do so without building the inspect
+ * envelope. One projection rather than two, so the two documents cannot drift.
+ *
+ * `limits.truncated` is derived from the integrated diagnostic sequence and nothing else:
+ * `E_TRUNCATED_INPUT` is the only code that reports a read that stopped early, and Integration
+ * already placed it where it belongs. `source` is `null` only for a rejected read, which is also
+ * the only read without counters.
+ *
+ * The members are returned together, but each document assigns them one at a time: their key
+ * order is `envelope.ts`'s emission order, and a spread of this object would impose its own.
+ */
+export function sharedEnvelopeMembers(
+  input: IntegrationInput,
+  integration: Integration,
+  context: { readonly path: string; readonly limits?: Limits },
+): SharedEnvelopeMembers {
   const limits = context.limits ?? DEFAULT_LIMITS;
   const truncated = integration.diagnostics.some(
     (diagnostic) => diagnostic.code === 'E_TRUNCATED_INPUT',
@@ -1364,17 +1389,38 @@ export function serialize(input: IntegrationInput, context: SerializeContext): J
   const loaded: LoadedIntegrationInput | null = isLoadedInput(input) ? input : null;
 
   return {
-    contractVersion: CONTRACT_VERSION,
-    tool: { name: TOOL_NAME, version: TOOL_VERSION },
-    command: context.command,
-    status: integration.status,
     source: loaded === null ? null : jsonSource(loaded, context.path),
     limits: { maxBytes: limits.maxBytes, truncated },
-    schema: loaded === null ? null : jsonSchema(loaded),
     unsupported: jsonUnsupportedList(integration, loaded),
     diagnostics: integration.diagnostics.map(jsonDiagnostic),
     completeness:
       integration.completeness === null ? null : jsonCompleteness(integration.completeness),
+  };
+}
+
+/**
+ * Build the envelope for one invocation.
+ *
+ * `integrate()` is called exactly once, and every policy answer in the result comes from it. A
+ * rejected input has no source, no schema and no counts, so all three are `null` rather than empty
+ * placeholders (§12 rule 1, §14 row 11). The members `tables` also emits are
+ * `sharedEnvelopeMembers()`'s, over the same input and the same integration.
+ */
+export function serialize(input: IntegrationInput, context: SerializeContext): JsonEnvelope {
+  const integration = integrate(input);
+  const shared = sharedEnvelopeMembers(input, integration, context);
+
+  return {
+    contractVersion: CONTRACT_VERSION,
+    tool: { name: TOOL_NAME, version: TOOL_VERSION },
+    command: context.command,
+    status: integration.status,
+    source: shared.source,
+    limits: shared.limits,
+    schema: isLoadedInput(input) ? jsonSchema(input) : null,
+    unsupported: shared.unsupported,
+    diagnostics: shared.diagnostics,
+    completeness: shared.completeness,
   };
 }
 
