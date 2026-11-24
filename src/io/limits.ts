@@ -24,13 +24,23 @@ export const DEFAULT_LIMITS: Limits = {
 /**
  * Resolve per-call overrides into a complete `Limits`.
  *
- * Throws on a non-positive or non-integer value: a limit of `0` or `1.5` would silently change
- * what the tool accepts, and every override here comes from code, not from the input file.
+ * Throws unless every value is a **positive safe integer**. `0`, `-1` and `1.5` would silently
+ * change what the tool accepts. `2**53` is a positive integer, but one past `Number.MAX_SAFE_INTEGER`
+ * the value itself no longer counts exactly — the next integer shares its double — so a limit there
+ * cannot be compared or reported as the number it names; `Number.isSafeInteger` draws exactly that
+ * line and keeps `Number.MAX_SAFE_INTEGER` a valid setting.
+ *
+ * The bound is **per field**. It makes each value exact, nothing more: no product or sum of two
+ * limits is made safe by this check, and no engine limit is raised (§10.3).
+ *
+ * Fail-closed (§10.2) is a rule about *files*. An override comes from code, not from the input, so
+ * a bad setting is a programming error: it throws here, before any byte is read or any text decoded
+ * — never clamped, never replaced by the default, never turned into an `E_*` diagnostic.
  */
 export function withLimits(overrides: Partial<Limits> | undefined = undefined): Limits {
   const limits: Limits = { ...DEFAULT_LIMITS, ...overrides };
   for (const [name, value] of Object.entries(limits)) {
-    if (!Number.isInteger(value) || value <= 0) {
+    if (!Number.isSafeInteger(value) || value <= 0) {
       throw new Error(`limit ${name} must be a positive integer, got ${String(value)}`);
     }
   }

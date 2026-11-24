@@ -22,6 +22,7 @@ import {
 } from '../src/io/binary.js';
 import type { FileSystem, SourceHandle, SourceStat } from '../src/io/fs.js';
 import { DEFAULT_LIMITS, withLimits } from '../src/io/limits.js';
+import type { Limits } from '../src/io/limits.js';
 import { READ_CHUNK_BYTES, readSource } from '../src/io/read.js';
 import { FIXTURES } from './helpers/fixture-registry.js';
 import { assertCodes } from './helpers/assert-codes.js';
@@ -585,5 +586,220 @@ describe('limits', () => {
     expect(() => withLimits({ maxLines: 1.5 })).toThrow(
       /limit maxLines must be a positive integer/,
     );
+  });
+});
+
+/**
+ * U3-B2 — the limit range is the safe-integer range, not merely "positive integer".
+ *
+ * `withLimits` is the only validator for `Limits`, and it throws: a limit is code, never input
+ * (§10.2), so nothing here may become an `E_*` diagnostic. `2**53` is the value this change exists
+ * for — it was accepted by the old `Number.isInteger` check and is exactly representable, but the
+ * integer after it is not, so a limit there stops naming the count it claims to be.
+ *
+ * Every rule is proven for all three fields, because the condition is one loop over one object and
+ * a field that stopped being covered would otherwise pass silently.
+ */
+
+const LIMIT_FIELDS = ['maxBytes', 'maxLines', 'maxLineLength'] as const;
+
+/**
+ * A `Partial<Limits>` holding a value TypeScript refuses, for the runtime-only cases.
+ *
+ * `withLimits` is a runtime boundary: JavaScript callers, JSON-shaped configuration and casts can
+ * hand it anything, so the validator is pinned for values the type system already rejects.
+ */
+function rawLimits(field: string, value: unknown): Partial<Limits> {
+  return { [field]: value } as Partial<Limits>;
+}
+
+describe('limits — the accepted range is the safe-integer range (U3-B2)', () => {
+  const accepted: readonly (readonly [string, number])[] = [
+    ['the smallest limit, 1', 1],
+    ['a small byte cap, 1024', 1024],
+    ['2**32', 2 ** 32],
+    ['Number.MAX_SAFE_INTEGER', Number.MAX_SAFE_INTEGER],
+  ];
+
+  for (const [label, value] of accepted) {
+    it(`accepts ${label} for every field and defaults the other two`, () => {
+      for (const field of LIMIT_FIELDS) {
+        const limits = withLimits({ [field]: value });
+        expect(limits[field], `${field} = ${String(value)}`).toBe(value);
+        for (const other of LIMIT_FIELDS) {
+          if (other === field) continue;
+          expect(limits[other], `${field} = ${String(value)} leaves ${other}`).toBe(
+            DEFAULT_LIMITS[other],
+          );
+        }
+      }
+    });
+  }
+
+  it('accepts a multi-field override and defaults only the omitted field', () => {
+    expect(withLimits({ maxBytes: 1024, maxLineLength: 1 })).toEqual({
+      maxBytes: 1024,
+      maxLines: DEFAULT_LIMITS.maxLines,
+      maxLineLength: 1,
+    });
+    // An empty override and no override are the documented defaults, exactly.
+    expect(withLimits({})).toEqual(DEFAULT_LIMITS);
+    expect(withLimits(undefined)).toEqual(DEFAULT_LIMITS);
+  });
+
+  it('accepts all three fields at MAX_SAFE_INTEGER at once', () => {
+    const all: Limits = {
+      maxBytes: Number.MAX_SAFE_INTEGER,
+      maxLines: Number.MAX_SAFE_INTEGER,
+      maxLineLength: Number.MAX_SAFE_INTEGER,
+    };
+    expect(withLimits(all)).toEqual(all);
+  });
+
+  const rejected: readonly (readonly [string, number])[] = [
+    ['zero', 0],
+    ['a negative limit, -1', -1],
+    ['a fraction, 1.5', 1.5],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['-Infinity', Number.NEGATIVE_INFINITY],
+    ['2**53, the value the old check accepted', 2 ** 53],
+    ['MAX_SAFE_INTEGER + 1, the same double as 2**53', Number.MAX_SAFE_INTEGER + 1],
+    ['-2**53', -(2 ** 53)],
+    ['2**54', 2 ** 54],
+    ['Number.MIN_SAFE_INTEGER', Number.MIN_SAFE_INTEGER],
+    ['an integer far outside the range, 1e300', 1e300],
+  ];
+
+  for (const [label, value] of rejected) {
+    it(`rejects ${label} for every field and names the field`, () => {
+      for (const field of LIMIT_FIELDS) {
+        expect(() => withLimits({ [field]: value }), field).toThrow(
+          `limit ${field} must be a positive integer, got ${String(value)}`,
+        );
+      }
+    });
+  }
+
+  it('rejects when any one field of a multi-field override is out of range', () => {
+    // The valid values beside it are never used: the throw is the whole result, with no clamp.
+    expect(() => withLimits({ maxBytes: 1024, maxLines: 2 ** 53 })).toThrow(
+      'limit maxLines must be a positive integer, got 9007199254740992',
+    );
+    expect(() => withLimits({ maxBytes: 2 ** 53, maxLines: 1 })).toThrow(
+      'limit maxBytes must be a positive integer, got 9007199254740992',
+    );
+  });
+
+  const wrongTypes: readonly (readonly [string, unknown])[] = [
+    ['a numeric string', '1024'],
+    ['null', null],
+    ['a boolean', true],
+    ['a bigint', 1024n],
+    ['an object that is not a number', { valueOf: () => 1024 }],
+    ['a symbol', Symbol('limit')],
+  ];
+
+  for (const [label, value] of wrongTypes) {
+    it(`rejects ${label} for every field`, () => {
+      for (const field of LIMIT_FIELDS) {
+        expect(() => withLimits(rawLimits(field, value)), field).toThrow(
+          new RegExp(`^limit ${field} must be a positive integer, got `),
+        );
+      }
+    });
+  }
+
+  it('keeps an explicit undefined an invalid value, not an omitted field', () => {
+    // `{ ...defaults, ...overrides }` shadows the default with `undefined`; only an absent key is
+    // an omission, which is why the two spellings have different results.
+    for (const field of LIMIT_FIELDS) {
+      expect(() => withLimits(rawLimits(field, undefined)), field).toThrow(
+        `limit ${field} must be a positive integer, got undefined`,
+      );
+    }
+  });
+
+  it('keeps one exact message, naming the field and the value it was given', () => {
+    try {
+      withLimits({ maxBytes: 2 ** 53 });
+      throw new Error('expected a throw');
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      if (!(error instanceof Error)) throw error;
+      expect(error.message).toBe('limit maxBytes must be a positive integer, got 9007199254740992');
+    }
+  });
+});
+
+describe('readSource — an invalid limit is a setting error, never a file condition', () => {
+  it('rejects out-of-range values for every field before opening the file', () => {
+    let opened = 0;
+    const fileSystem: FileSystem = {
+      open(): SourceHandle {
+        opened += 1;
+        throw errnoError('ENOENT', 'the reader must not open a file for an invalid setting');
+      },
+    };
+
+    for (const field of LIMIT_FIELDS) {
+      for (const value of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53, -(2 ** 53)]) {
+        expect(
+          () => readSource('never-opened', { limits: rawLimits(field, value), fileSystem }),
+          `${field} = ${String(value)}`,
+        ).toThrow(`limit ${field} must be a positive integer`);
+      }
+    }
+    // Not one of those calls reached the seam: the setting is judged before any I/O.
+    expect(opened).toBe(0);
+  });
+
+  it('never turns a bad setting into an E_IO diagnostic', () => {
+    withTempDir((directory) => {
+      const path = join(directory, 'document.a5er');
+      writeFileSync(path, '[Entity]\nPName="x"\n');
+
+      // A real file that would otherwise read fine: the throw is the whole answer, not a diagnostic.
+      try {
+        readSource(path, { limits: { maxBytes: 2 ** 53 } });
+        throw new Error('expected a throw');
+      } catch (error) {
+        expect(error).toBeInstanceOf(Error);
+        if (!(error instanceof Error)) throw error;
+        expect(error.message).toBe(
+          'limit maxBytes must be a positive integer, got 9007199254740992',
+        );
+        expect(error.message).not.toMatch(/\bE_[A-Z_]+\b/);
+      }
+    });
+  });
+
+  it('reads normally under a legitimate override, including MAX_SAFE_INTEGER', () => {
+    withTempDir((directory) => {
+      const text = '[Entity]\nPName="x"\n';
+      const path = join(directory, 'document.a5er');
+      writeFileSync(path, text);
+
+      for (const maxBytes of [1024, Number.MAX_SAFE_INTEGER]) {
+        const outcome = readSource(path, { limits: { maxBytes } });
+        expect(outcome.ok, `maxBytes = ${String(maxBytes)}`).toBe(true);
+        if (!outcome.ok) continue;
+        // Same bytes, same size, same refusal-free result as the default: only the cap moved.
+        expect(outcome.source.sizeBytes).toBe(Buffer.byteLength(text, 'utf8'));
+        expect(outcome.source.bytes.toString('utf8')).toBe(text);
+      }
+    });
+  });
+
+  it('accepts the two text limits it does not enforce', () => {
+    withTempDir((directory) => {
+      const path = join(directory, 'document.a5er');
+      writeFileSync(path, '[Entity]\nPName="x"\n');
+
+      // `readSource` reads bytes only. A low `maxLines`/`maxLineLength` is a legitimate setting that
+      // `decode/` applies later, so it must be accepted here and change nothing about this read.
+      const outcome = readSource(path, { limits: { maxLines: 1, maxLineLength: 1 } });
+      expect(outcome.ok).toBe(true);
+    });
   });
 });

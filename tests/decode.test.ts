@@ -15,6 +15,8 @@ import { describe, expect, it } from 'vitest';
 import { emit, messageOf, severityOf } from '../src/diagnostics/diagnostic.js';
 import { MAX_DETAIL_LENGTH } from '../src/diagnostics/diagnostic.js';
 import { nulDensity } from '../src/io/binary.js';
+import type { FileSystem } from '../src/io/fs.js';
+import { DEFAULT_LIMITS } from '../src/io/limits.js';
 import { NO_BOM, sniffBom } from '../src/decode/bom.js';
 import { decodeBytes, isCodecAvailable } from '../src/decode/decode.js';
 import { NO_HEADER, parseHeader, peekHeader } from '../src/decode/header.js';
@@ -663,6 +665,96 @@ describe('the text limits (§10.2)', () => {
     });
     expect(outcome.ok).toBe(false);
     assertCodes(failureCodes(outcome), ['E_LIMIT_LINES']);
+  });
+});
+
+/**
+ * U3-B2 — the text limits are validated in the safe-integer range, and the decode contract around
+ * them does not move: the boundary is still inclusive, the refusal still happens before any codec
+ * runs, and a legitimate override still produces exactly the diagnostics it produced before.
+ */
+describe('the text limits — the safe-integer range (U3-B2)', () => {
+  it('accepts MAX_SAFE_INTEGER for both text limits', () => {
+    const outcome = decodeBytes(Buffer.from('a\nb', 'utf8'), {
+      limits: { maxLines: Number.MAX_SAFE_INTEGER, maxLineLength: Number.MAX_SAFE_INTEGER },
+    });
+    expect(outcome.ok).toBe(true);
+  });
+
+  it('refuses a limit one past the safe range instead of comparing with it', () => {
+    const bytes = Buffer.from('a\nb', 'utf8');
+    expect(() => decodeBytes(bytes, { limits: { maxLines: 2 ** 53 } })).toThrow(
+      'limit maxLines must be a positive integer, got 9007199254740992',
+    );
+    expect(() => decodeBytes(bytes, { limits: { maxLineLength: 2 ** 53 } })).toThrow(
+      'limit maxLineLength must be a positive integer, got 9007199254740992',
+    );
+    // A limit of 1 is still the boundary it always was: valid, and it refuses a longer document.
+    expect(decodeBytes(bytes, { limits: { maxLines: 1 } }).ok).toBe(false);
+  });
+
+  it('judges an invalid limit before decoding, so it outranks an undecodable input', () => {
+    // enc-04's committed bytes have no decoding candidate at all; the setting is still what reports
+    // first, because `withLimits` runs before the BOM sniff and every codec probe.
+    const bytes = Buffer.from(enc04.BYTES);
+    expect(failureCodes(decodeBytes(bytes))).toEqual(expectedCodes('enc-04'));
+    expect(() => decodeBytes(bytes, { limits: { maxLines: 2 ** 53 } })).toThrow(
+      /limit maxLines must be a positive integer/,
+    );
+  });
+
+  it('decodes identically for an explicit default as for an omitted override', () => {
+    const bytes = Buffer.from('# A5:ER FORMAT:21\n[Entity]\nPName="x"\n', 'utf8');
+    // Naming the defaults is not a different request: same text, same diagnostics, same order.
+    expect(decodeBytes(bytes, { limits: { ...DEFAULT_LIMITS } })).toEqual(decodeBytes(bytes));
+  });
+});
+
+describe('loadSource — the limits it forwards (§10.2)', () => {
+  const DOCUMENT = '# A5:ER FORMAT:21\n[Entity]\nPName="x"\n';
+
+  it('forwards a legitimate partial override to decode and keeps its diagnostic', () => {
+    // Three physical lines, as §4.1 counts them: the trailing terminator adds none.
+    const atLimit = loadBytes(Buffer.from(DOCUMENT, 'utf8'), 'three-lines.a5er', {
+      limits: { maxLines: 3 },
+    });
+    expect(atLimit.ok).toBe(true);
+
+    const over = loadBytes(Buffer.from(DOCUMENT, 'utf8'), 'three-lines.a5er', {
+      limits: { maxLines: 2 },
+    });
+    expect(over.ok).toBe(false);
+    assertCodes(failureCodes(over), ['E_LIMIT_LINES']);
+    expect(over.ok ? {} : over.diagnostics[0]?.details).toEqual({ lines: 3, maxLines: 2 });
+  });
+
+  it('leaves the decode diagnostics and their order alone when a limit is overridden', () => {
+    const omitted = loadBytes(Buffer.from(DOCUMENT, 'utf8'), 'document.a5er');
+    const overridden = loadBytes(Buffer.from(DOCUMENT, 'utf8'), 'document.a5er', {
+      limits: { maxBytes: 1024 },
+    });
+    if (!omitted.ok || !overridden.ok) throw new Error('the document must load');
+
+    expect(overridden.source.diagnostics).toEqual(omitted.source.diagnostics);
+    expect(overridden.source.text).toBe(omitted.source.text);
+  });
+
+  it('rejects an out-of-range limit before opening the file', () => {
+    let opened = 0;
+    const fileSystem: FileSystem = {
+      open() {
+        opened += 1;
+        throw new Error('the reader must not open a file for an invalid setting');
+      },
+    };
+
+    for (const field of ['maxBytes', 'maxLines', 'maxLineLength'] as const) {
+      expect(
+        () => loadSource('never-opened', { limits: { [field]: 2 ** 53 }, fileSystem }),
+        field,
+      ).toThrow(`limit ${field} must be a positive integer, got 9007199254740992`);
+    }
+    expect(opened).toBe(0);
   });
 });
 
