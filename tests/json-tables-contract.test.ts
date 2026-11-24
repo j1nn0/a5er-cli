@@ -31,6 +31,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadSource } from '../src/decode/load.js';
 import type { JsonEnvelope, JsonTablesEnvelope } from '../src/json/index.js';
+import type { Limits } from '../src/io/limits.js';
+import { DEFAULT_LIMITS } from '../src/io/limits.js';
 import {
   CONTRACT_VERSION,
   TOOL_NAME,
@@ -42,6 +44,7 @@ import { strictReplacer } from '../src/json/serialize.js';
 import { classify } from '../src/schema/index.js';
 import { derivePartialSemantics } from '../src/semantic/index.js';
 import { scanSource } from '../src/syntax/index.js';
+import { renderTablesText } from '../src/text/index.js';
 import { toTablesEnvelope } from '../src/view/tables.js';
 import type { IntegrationInput } from '../src/validate/index.js';
 import { integrate } from '../src/validate/index.js';
@@ -90,8 +93,9 @@ const SPEC_CHUNK_LIMIT = 262_144;
 const BYTE_FIXTURES = [enc03, enc04, enc05, hst02, hst05] as const;
 
 /** The real four stages over a path — the same composition `src/cli.ts` runs. */
-function inputOf(path: string): IntegrationInput {
-  const load = loadSource(path);
+/** The real four stages over a path — the same composition `src/cli.ts` runs. */
+function inputOf(path: string, limits?: Partial<Limits>): IntegrationInput {
+  const load = limits === undefined ? loadSource(path) : loadSource(path, { limits });
   if (!load.ok) return { load };
   const scan = scanSource(load.source);
   const classification = classify(scan);
@@ -1086,6 +1090,106 @@ describe('tables JSON — the partial entity no committed fixture reaches', () =
       }
 
       expect(jsonOf(BUILDER.documentOf(path))).toBe(jsonOf(ORACLE.documentOf(path)));
+    });
+  });
+});
+
+/* ── U3-B3-B2: the read's limits are the authority in every document ───────────────────────── */
+
+/**
+ * The fixed contract message a `SerializeContext.limits` that disagrees with the read throws.
+ *
+ * Mirror of the pin in `tests/json-contract.test.ts`: the same contract, checked through the
+ * `tables` builder so the two documents cannot diverge in how they refuse a wrong assertion.
+ */
+function limitsMismatchMessage(given: Limits, applied: Limits): string {
+  return (
+    'serialize context limits must equal the limits the read applied: ' +
+    `maxBytes ${String(given.maxBytes)}, maxLines ${String(given.maxLines)}, ` +
+    `maxLineLength ${String(given.maxLineLength)} given, but the read used ` +
+    `maxBytes ${String(applied.maxBytes)}, maxLines ${String(applied.maxLines)}, ` +
+    `maxLineLength ${String(applied.maxLineLength)}`
+  );
+}
+
+describe('tables JSON — the read’s limits are the authority (U3-B3-B2)', () => {
+  it('reports one set of numbers in inspect, validate and tables for the same read', () => {
+    withFixture('fmt-01', (path) => {
+      const input = inputOf(path, { maxBytes: 4096 });
+      const applied = input.load.limits;
+
+      // Independent expectation: the value `withLimits` must resolve for a 4 KiB override.
+      expect(applied.maxBytes).toBe(4096);
+
+      const inspect = serialize(input, { command: 'inspect', path });
+      const validate = serialize(input, { command: 'validate', path });
+      const integration = integrate(input);
+      const built = buildTablesEnvelope(input, integration, { path });
+      const oracle = toTablesEnvelope(inspect);
+
+      expect(inspect.limits).toEqual({ maxBytes: 4096, truncated: false });
+      expect(validate.limits).toEqual(inspect.limits);
+      // Both tables paths: the builder (stage results only) and the oracle (inspect projected).
+      expect(built.limits).toEqual(inspect.limits);
+      expect(oracle.limits).toEqual(inspect.limits);
+      // The documented key set and construction order are unchanged by the new authority.
+      expect(Object.keys(built.limits)).toEqual(['maxBytes', 'truncated']);
+    });
+  });
+
+  it('shows a matching context and refuses a disagreeing one, on both arms', () => {
+    withFixture('fmt-01', (path) => {
+      const input = inputOf(path, { maxBytes: 4096 });
+      const applied = input.load.limits;
+
+      const omitted = buildTablesEnvelope(input, integrate(input), { path });
+      const matching = buildTablesEnvelope(input, integrate(input), { path, limits: applied });
+      expect(matching).toEqual(omitted);
+      expect(omitted.limits).toEqual({ maxBytes: 4096, truncated: false });
+
+      // A `maxLines`-only disagreement: a comparison of `maxBytes` alone would accept it.
+      const wrong = { ...applied, maxLines: applied.maxLines - 1 };
+      expect(() => buildTablesEnvelope(input, integrate(input), { path, limits: wrong })).toThrow(
+        Error,
+      );
+      expect(() => buildTablesEnvelope(input, integrate(input), { path, limits: wrong })).toThrow(
+        limitsMismatchMessage(wrong, applied),
+      );
+    });
+
+    // The rejected arm is projected by the same function, so it is checked the same way.
+    withDocument('[Entity]\nPName="x"\n', (path) => {
+      const input = inputOf(path, { maxBytes: 8 });
+      if (input.load.ok) throw new Error('maxBytes 8 must reject this document');
+      const applied = input.load.limits;
+
+      const built = buildTablesEnvelope(input, integrate(input), { path });
+      expect(built.status).toBe('failed');
+      expect(built.limits).toEqual({ maxBytes: 8, truncated: false });
+
+      const wrong = { ...applied, maxBytes: applied.maxBytes - 1 };
+      expect(() => buildTablesEnvelope(input, integrate(input), { path, limits: wrong })).toThrow(
+        limitsMismatchMessage(wrong, applied),
+      );
+    });
+  });
+
+  it('leaves the text rendering independent of the numbers', () => {
+    withFixture('fmt-01', (path) => {
+      const input = inputOf(path, { maxBytes: 4096 });
+      const document = buildTablesEnvelope(input, integrate(input), { path });
+      expect(document.status).toBe('ok');
+      expect(document.status).toBe('ok');
+
+      const text = [...renderTablesText(document)].join('');
+      expect(text.length).toBeGreaterThan(0);
+
+      // The listing prints names and counts, never the cap: replacing the numbers cannot move it.
+      const other: JsonTablesEnvelope = {
+        ...document,
+        limits: { maxBytes: DEFAULT_LIMITS.maxBytes, truncated: false },
+      };
+      expect([...renderTablesText(other)].join('')).toBe(text);
     });
   });
 });

@@ -43,7 +43,6 @@
  */
 
 import type { Limits } from '../io/limits.js';
-import { DEFAULT_LIMITS } from '../io/limits.js';
 import type { Span } from '../model/span.js';
 import type { DecodedField } from '../schema/field.js';
 import type { DecodedIndexes } from '../schema/indexinfo.js';
@@ -147,13 +146,14 @@ export interface SerializeContext {
   /** The path the caller read; echoed, never resolved any further. */
   readonly path: string;
   /**
-   * The limits the read ran under; omitted means "the documented defaults" (§10.2).
+   * The limits the caller believes the read ran under; omitted means "assert nothing".
    *
-   * **Caller precondition.** The read does not carry its effective limits, so this is the only
-   * source of `limits.maxBytes` in the envelope: pass the same object that loaded the input, or the
-   * envelope states a cap the read never used. Omission is a claim that `DEFAULT_LIMITS` applied —
-   * honest for the fixtures staged here, and pinned by `tests/json-contract.test.ts` for both
-   * branches (§12, §17 TBD-O3).
+   * This is an **assertion, not a source**: `limits.maxBytes` in the envelope comes from
+   * `input.load.limits` — the numbers `loadSource()` resolved and applied — so an envelope always
+   * states the cap that actually ran. When this field is present, all three numbers must equal the
+   * read's; one that does not is a caller defect and throws, because stating a cap the read never
+   * used would describe an input that was never read (§12, §17 TBD-O3). Nothing is copied from
+   * here into the envelope, clamped, or turned into a diagnostic.
    */
   readonly limits?: Limits;
 }
@@ -1362,6 +1362,45 @@ export interface SharedEnvelopeMembers {
 }
 
 /**
+ * The limits the read applied, with the caller's context only checked against them.
+ *
+ * `input.load.limits` is the authority: `loadSource()` resolved the override before it opened
+ * anything, so those three numbers are what actually ran, arm for arm. `SerializeContext.limits`
+ * is an assertion kept for callers that already track the value — when it is present all three
+ * numbers must match, or this throws, because an envelope that states a cap the read never used
+ * would describe an input that was never read. Neither object is written to, nothing is clamped,
+ * and a mismatch never becomes a diagnostic: a wrong assertion is a caller defect, not a property
+ * of the file (§12, §17 TBD-O3).
+ *
+ * `context.limits` itself and each of its fields may be getter-backed, so the context is read once
+ * into locals and compared numerically; object identity is never required, only equal numbers.
+ */
+function appliedLimits(input: IntegrationInput, context: { readonly limits?: Limits }): Limits {
+  const applied = input.load.limits;
+  const claimed: Limits | undefined = context.limits;
+  if (claimed === undefined) return applied;
+
+  const maxBytes = claimed.maxBytes;
+  const maxLines = claimed.maxLines;
+  const maxLineLength = claimed.maxLineLength;
+  if (
+    maxBytes === applied.maxBytes &&
+    maxLines === applied.maxLines &&
+    maxLineLength === applied.maxLineLength
+  ) {
+    return applied;
+  }
+
+  throw new Error(
+    'serialize context limits must equal the limits the read applied: ' +
+      `maxBytes ${String(maxBytes)}, maxLines ${String(maxLines)}, ` +
+      `maxLineLength ${String(maxLineLength)} given, but the read used ` +
+      `maxBytes ${String(applied.maxBytes)}, maxLines ${String(applied.maxLines)}, ` +
+      `maxLineLength ${String(applied.maxLineLength)}`,
+  );
+}
+
+/**
  * The members every document shares, projected from one input and one `Integration`.
  *
  * `serialize()` and `view/tables.ts`'s `buildTablesEnvelope()` both call this, which is the whole
@@ -1382,7 +1421,8 @@ export function sharedEnvelopeMembers(
   integration: Integration,
   context: { readonly path: string; readonly limits?: Limits },
 ): SharedEnvelopeMembers {
-  const limits = context.limits ?? DEFAULT_LIMITS;
+  // The read's own numbers, and only a check of the caller's claim: no fallback, no override.
+  const limits = appliedLimits(input, context);
   const truncated = integration.diagnostics.some(
     (diagnostic) => diagnostic.code === 'E_TRUNCATED_INPUT',
   );

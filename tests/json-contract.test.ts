@@ -28,7 +28,7 @@
 
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadSource } from '../src/decode/load.js';
@@ -52,6 +52,8 @@ import type { IntegrationInput, LoadedIntegrationInput } from '../src/validate/i
 import { integrate } from '../src/validate/index.js';
 import { CAPPED_READ_LIMIT_BYTES, GENERATED_BUILDERS } from './helpers/generated.js';
 import { stage } from './helpers/stage.js';
+import * as enc04 from './fixtures/bytes/enc-04-undecodable.js';
+import * as hst02 from './fixtures/bytes/hst-02-binary.js';
 
 /** §12's envelope fields, in the order `serialize` constructs them (construction = emission). */
 const ENVELOPE_KEYS = [
@@ -73,8 +75,9 @@ const CONTEXT = { command: 'inspect', path: '/tmp/schema.a5er' } as const;
 const JSON_DIR = fileURLToPath(new URL('../src/json/', import.meta.url));
 
 /** Run the real four stages over a path, without a shortcut or an invented result. */
-function inputFromPath(path: string): LoadedIntegrationInput {
-  const load = loadSource(path);
+/** Run the real four stages over a path, without a shortcut or an invented result. */
+function inputFromPath(path: string, limits?: Partial<Limits>): LoadedIntegrationInput {
+  const load = limits === undefined ? loadSource(path) : loadSource(path, { limits });
   if (!load.ok) throw new Error(`input ${path} did not load`);
   const scan = scanSource(load.source);
   const classification = classify(scan);
@@ -94,6 +97,23 @@ function pipelineFor(id: string): LoadedIntegrationInput {
   } finally {
     staged.cleanup();
   }
+}
+
+/**
+ * The fixed contract message a `SerializeContext.limits` that disagrees with the read throws.
+ *
+ * Written here from the two `Limits` objects rather than read back out of a thrown error, so the
+ * test states the contract: the caller's three numbers `given`, then the three the read used, in a
+ * fixed field order, with no path and no file content in it.
+ */
+function limitsMismatchMessage(given: Limits, applied: Limits): string {
+  return (
+    'serialize context limits must equal the limits the read applied: ' +
+    `maxBytes ${String(given.maxBytes)}, maxLines ${String(given.maxLines)}, ` +
+    `maxLineLength ${String(given.maxLineLength)} given, but the read used ` +
+    `maxBytes ${String(applied.maxBytes)}, maxLines ${String(applied.maxLines)}, ` +
+    `maxLineLength ${String(applied.maxLineLength)}`
+  );
 }
 
 /** The JSON projection of a stage span, for span-equality assertions without importing internals. */
@@ -206,13 +226,35 @@ describe('json envelope — determinism and key order', () => {
     expect(headerless.source?.format).toEqual({ declared: null, effective: null, known: false });
   });
 
-  it('takes maxBytes from the caller context and truncation from the diagnostics alone', () => {
-    const envelope = serialize(pipelineFor('fmt-01'), {
-      ...CONTEXT,
-      limits: { ...DEFAULT_LIMITS, maxBytes: 4096 },
-    });
+  it('reports the maxBytes the read actually applied, with no context at all', () => {
+    const staged = stage('fmt-01');
+    try {
+      // The read is the only place this number comes from: 4 KiB here, the defaults elsewhere.
+      const input = inputFromPath(staged.path, { maxBytes: 4096 });
+      expect(input.load.limits).toEqual({ ...DEFAULT_LIMITS, maxBytes: 4096 });
 
-    expect(envelope.limits).toEqual({ maxBytes: 4096, truncated: false });
+      const envelope = serialize(input, { command: 'inspect', path: staged.path });
+      expect(envelope.limits).toEqual({ maxBytes: 4096, truncated: false });
+      // Omission asserts nothing and changes nothing: restating the same three numbers produces
+      // the same envelope.
+      expect(
+        serialize(input, { command: 'inspect', path: staged.path, limits: input.load.limits }),
+      ).toEqual(envelope);
+    } finally {
+      staged.cleanup();
+    }
+  });
+
+  it('throws when the context states a maxBytes the read did not use', () => {
+    const input = pipelineFor('fmt-01');
+    // The read ran under the defaults, so a context claiming 4 KiB is a caller defect: the envelope
+    // must not repeat a cap that never applied.
+    const claimed = { ...DEFAULT_LIMITS, maxBytes: 4096 };
+
+    expect(() => serialize(input, { ...CONTEXT, limits: claimed })).toThrow(Error);
+    expect(() => serialize(input, { ...CONTEXT, limits: claimed })).toThrow(
+      limitsMismatchMessage(claimed, DEFAULT_LIMITS),
+    );
   });
 });
 
@@ -2288,7 +2330,7 @@ describe('json envelope — limits and the failure contract (stage 6-B unit 5)',
       });
     });
   });
-  it('echoes the caller-supplied cap, so the context must repeat what the read used', () => {
+  it('reports the cap the read applied, and refuses a context that states another', () => {
     const built = GENERATED_BUILDERS['res-01']?.() ?? [];
     const first = built[0];
     if (first === undefined) throw new Error('res-01 built no file');
@@ -2310,23 +2352,312 @@ describe('json envelope — limits and the failure contract (stage 6-B unit 5)',
         maxBytes: CAPPED_READ_LIMIT_BYTES,
       });
       assertFatalShape(honest, 'res-01');
-      // Omitting the context is the documented *claim* that the defaults applied — the envelope
-      // repeats the claim, and the diagnostic still names the cap that really fired.
+      // Omitting the context asserts nothing and loses nothing: the envelope still reports the cap
+      // the read really used, not the defaults it would have fallen back to.
       const omitted = serialize(input, { command: 'inspect', path });
       expect(omitted.limits).toEqual({
-        maxBytes: DEFAULT_LIMITS.maxBytes,
+        maxBytes: CAPPED_READ_LIMIT_BYTES,
         truncated: false,
       });
       expect(omitted.diagnostics).toEqual(honest.diagnostics);
-      // Nothing detects a mismatch: a different explicit cap is echoed verbatim, which is exactly
-      // why the precondition is documented (§12) instead of being silently "fixed".
-      const mismatched = serialize(input, {
-        command: 'inspect',
-        path,
-        limits: { ...DEFAULT_LIMITS, maxBytes: 512 },
+      // A context stating another cap is refused: echoing it would describe a read that never ran.
+      const mismatched = { ...DEFAULT_LIMITS, maxBytes: 512 };
+      expect(() => serialize(input, { command: 'inspect', path, limits: mismatched })).toThrow(
+        limitsMismatchMessage(mismatched, load.limits),
+      );
+    });
+  });
+
+  /**
+   * U3-B3-B2 — the read's numbers are the authority and the context is only an assertion.
+   *
+   * Every expectation below is derived from the `Limits` the load resolved (`input.load.limits`),
+   * never from the context object and never from `DEFAULT_LIMITS` unless that is what was applied.
+   */
+  describe('limits: the read is the authority, the context is an assertion (U3-B3-B2)', () => {
+    it("reports the read's own maxBytes for defaults, each single field and a full override", () => {
+      withBytes(Buffer.from(DOCUMENT, 'utf8'), (path) => {
+        const cases: readonly (readonly [string, Partial<Limits>, number])[] = [
+          ['no override', {}, DEFAULT_LIMITS.maxBytes],
+          ['the documented defaults, restated', { ...DEFAULT_LIMITS }, DEFAULT_LIMITS.maxBytes],
+          ['maxBytes only', { maxBytes: 4096 }, 4096],
+          ['maxLines only', { maxLines: 1000 }, DEFAULT_LIMITS.maxBytes],
+          ['maxLineLength only', { maxLineLength: 4096 }, DEFAULT_LIMITS.maxBytes],
+          ['all three', { maxBytes: 4000, maxLines: 1000, maxLineLength: 4096 }, 4000],
+          ['MAX_SAFE_INTEGER', { maxBytes: Number.MAX_SAFE_INTEGER }, Number.MAX_SAFE_INTEGER],
+        ];
+
+        for (const [label, limits, expectedMaxBytes] of cases) {
+          const input = pipelineWithLimits(path, limits);
+          if (input === null) throw new Error(`${label}: the document must load`);
+
+          // Two independent statements of the number: what the resolver must produce, and what the
+          // read stored. Neither is taken from the serializer's output.
+          expect(withLimits(limits).maxBytes, label).toBe(expectedMaxBytes);
+          expect(input.load.limits.maxBytes, label).toBe(expectedMaxBytes);
+
+          const envelope = serialize(input, { command: 'inspect', path });
+          expect(envelope.limits, label).toEqual({ maxBytes: expectedMaxBytes, truncated: false });
+          // Saying nothing and restating the same three numbers produce the same envelope.
+          expect(
+            serialize(input, { command: 'inspect', path, limits: input.load.limits }),
+            label,
+          ).toEqual(envelope);
+        }
       });
-      expect(mismatched.limits.maxBytes).toBe(512);
-      expect(mismatched.diagnostics).toEqual(honest.diagnostics);
+    });
+
+    it('compares the three numbers numerically, whatever object states them', () => {
+      withBytes(Buffer.from(DOCUMENT, 'utf8'), (path) => {
+        const input = pipelineWithLimits(path, { maxBytes: 4096 });
+        if (input === null) throw new Error('the document must load');
+        const applied = input.load.limits;
+
+        const restated: Limits = {
+          maxBytes: applied.maxBytes,
+          maxLines: applied.maxLines,
+          maxLineLength: applied.maxLineLength,
+        };
+        // A different object with the same numbers: identity is not part of the contract.
+        expect(restated).not.toBe(applied);
+
+        let reads = 0;
+        const getterBacked: Limits = {
+          get maxBytes() {
+            reads += 1;
+            return applied.maxBytes;
+          },
+          get maxLines() {
+            reads += 1;
+            return applied.maxLines;
+          },
+          get maxLineLength() {
+            reads += 1;
+            return applied.maxLineLength;
+          },
+        };
+
+        const plain = serialize(input, { command: 'inspect', path });
+        expect(serialize(input, { command: 'inspect', path, limits: restated })).toEqual(plain);
+        expect(serialize(input, { command: 'inspect', path, limits: getterBacked })).toEqual(plain);
+        // Each field is read exactly once, so a getter cannot be asked twice or reordered.
+        expect(reads).toBe(3);
+      });
+    });
+
+    it('throws for any single disagreeing field, on the success and the failure arm', () => {
+      withBytes(Buffer.from(DOCUMENT, 'utf8'), (path) => {
+        const input = pipelineWithLimits(path, {});
+        if (input === null) throw new Error('the document must load');
+        const applied = input.load.limits;
+
+        // One field at a time: a comparison of `maxBytes` alone would pass the middle two.
+        const mismatches: readonly (readonly [string, Limits])[] = [
+          ['maxBytes only', { ...applied, maxBytes: applied.maxBytes - 1 }],
+          ['maxLines only', { ...applied, maxLines: applied.maxLines - 1 }],
+          ['maxLineLength only', { ...applied, maxLineLength: applied.maxLineLength - 1 }],
+          [
+            'all three',
+            {
+              maxBytes: applied.maxBytes - 1,
+              maxLines: applied.maxLines - 1,
+              maxLineLength: applied.maxLineLength - 1,
+            },
+          ],
+        ];
+
+        for (const [label, claimed] of mismatches) {
+          expect(
+            () => serialize(input, { command: 'inspect', path, limits: claimed }),
+            label,
+          ).toThrow(Error);
+          expect(
+            () => serialize(input, { command: 'validate', path, limits: claimed }),
+            label,
+          ).toThrow(limitsMismatchMessage(claimed, applied));
+        }
+
+        // A rejected read carries its numbers too, so this is not a success-arm-only rule.
+        const rejected = loadSource(path, { limits: { maxBytes: 8 } });
+        if (rejected.ok) throw new Error('expected E_LIMIT_BYTES');
+        const rejectedClaim = { ...rejected.limits, maxLines: rejected.limits.maxLines - 1 };
+        expect(() =>
+          serialize({ load: rejected }, { command: 'inspect', path, limits: rejectedClaim }),
+        ).toThrow(limitsMismatchMessage(rejectedClaim, rejected.limits));
+        // The honest context still serializes the rejection.
+        expect(
+          serialize({ load: rejected }, { command: 'inspect', path, limits: rejected.limits })
+            .limits,
+        ).toEqual({ maxBytes: 8, truncated: false });
+      });
+    });
+
+    it('projects the carried numbers on every rejection family', () => {
+      const size = Buffer.byteLength(DOCUMENT);
+      const lines = lineCountOf(DOCUMENT);
+      const longest = longestLineOf(DOCUMENT);
+      const rows: readonly {
+        readonly label: string;
+        readonly code: string;
+        readonly bytes: Uint8Array;
+        readonly limits: Partial<Limits>;
+        readonly maxBytes: number;
+        readonly truncated: boolean;
+        readonly fileSystem?: FileSystem;
+      }[] = [
+        {
+          label: 'E_LIMIT_BYTES',
+          code: 'E_LIMIT_BYTES',
+          bytes: Buffer.from(DOCUMENT, 'utf8'),
+          limits: { maxBytes: size - 1 },
+          maxBytes: size - 1,
+          truncated: false,
+        },
+        {
+          label: 'E_LIMIT_LINES',
+          code: 'E_LIMIT_LINES',
+          bytes: Buffer.from(DOCUMENT, 'utf8'),
+          limits: { maxLines: lines - 1 },
+          maxBytes: DEFAULT_LIMITS.maxBytes,
+          truncated: false,
+        },
+        {
+          label: 'E_LIMIT_LINE_LENGTH',
+          code: 'E_LIMIT_LINE_LENGTH',
+          bytes: Buffer.from(DOCUMENT, 'utf8'),
+          limits: { maxLineLength: longest - 1 },
+          maxBytes: DEFAULT_LIMITS.maxBytes,
+          truncated: false,
+        },
+        {
+          label: 'E_TRUNCATED_INPUT',
+          code: 'E_TRUNCATED_INPUT',
+          bytes: Buffer.from(DOCUMENT, 'utf8'),
+          limits: { maxBytes: 8192 },
+          maxBytes: 8192,
+          truncated: true,
+          fileSystem: shortReadFileSystem(size),
+        },
+        {
+          label: 'E_EMPTY_INPUT',
+          code: 'E_EMPTY_INPUT',
+          bytes: Buffer.alloc(0),
+          limits: { maxLines: 100 },
+          maxBytes: DEFAULT_LIMITS.maxBytes,
+          truncated: false,
+        },
+        {
+          label: 'E_UNRECOGNIZED_DOCUMENT',
+          code: 'E_UNRECOGNIZED_DOCUMENT',
+          bytes: Buffer.from('key=value\n', 'utf8'),
+          limits: { maxBytes: 3000 },
+          maxBytes: 3000,
+          truncated: false,
+        },
+        {
+          label: 'E_BINARY_INPUT',
+          code: 'E_BINARY_INPUT',
+          bytes: Buffer.from(hst02.BYTES),
+          limits: { maxLines: 500 },
+          maxBytes: DEFAULT_LIMITS.maxBytes,
+          truncated: false,
+        },
+        {
+          label: 'E_UNDECODABLE',
+          code: 'E_UNDECODABLE',
+          bytes: Buffer.from(enc04.BYTES),
+          limits: { maxBytes: 5000 },
+          maxBytes: 5000,
+          truncated: false,
+        },
+      ];
+
+      for (const row of rows) {
+        withBytes(row.bytes, (path) => {
+          const options =
+            row.fileSystem === undefined
+              ? { limits: row.limits }
+              : { limits: row.limits, fileSystem: row.fileSystem };
+          const load = loadSource(path, options);
+          if (load.ok) throw new Error(`${row.label}: expected a rejection`);
+
+          expect(
+            load.diagnostics.map((diagnostic) => diagnostic.code),
+            row.label,
+          ).toEqual([row.code]);
+          // The value the read resolved, spelled out independently of the serializer.
+          expect(load.limits.maxBytes, row.label).toBe(row.maxBytes);
+
+          const envelope = serialize({ load }, { command: 'inspect', path });
+          expect(envelope.limits, row.label).toEqual({
+            maxBytes: row.maxBytes,
+            truncated: row.truncated,
+          });
+          expect(envelope.status, row.label).toBe('failed');
+          expect(
+            envelope.diagnostics.map((diagnostic) => diagnostic.code),
+            row.label,
+          ).toEqual([row.code]);
+          assertFatalShape(envelope, row.label);
+          // `truncated` is the read's fact, not a function of how tight the numbers are: the short
+          // read above runs under a generous 8 KiB cap and is still the only truncated row.
+          expect(envelope.limits.truncated, row.label).toBe(row.code === 'E_TRUNCATED_INPUT');
+        });
+      }
+    });
+
+    it('projects the carried numbers on an unopenable path as well', () => {
+      withBytes(Buffer.from(DOCUMENT, 'utf8'), (path) => {
+        const missing = join(dirname(path), 'absent.a5er');
+        const load = loadSource(missing, { limits: { maxLines: 250 } });
+        if (load.ok) throw new Error('expected E_IO');
+
+        expect(load.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(['E_IO']);
+        expect(load.limits.maxBytes).toBe(DEFAULT_LIMITS.maxBytes);
+
+        const envelope = serialize({ load }, { command: 'inspect', path: missing });
+        expect(envelope.limits).toEqual({ maxBytes: DEFAULT_LIMITS.maxBytes, truncated: false });
+        assertFatalShape(envelope, 'E_IO');
+      });
+    });
+
+    it('never infers `truncated` from the numbers', () => {
+      withBytes(Buffer.from(DOCUMENT, 'utf8'), (path, sizeBytes) => {
+        // Exactly at the cap: no breach, so nothing is truncated.
+        const exact = pipelineWithLimits(path, { maxBytes: sizeBytes });
+        if (exact === null) throw new Error('a document exactly at maxBytes must load');
+        expect(serialize(exact, { command: 'inspect', path }).limits).toEqual({
+          maxBytes: sizeBytes,
+          truncated: false,
+        });
+
+        // A short read under the largest legitimate cap: truncated although no limit is near.
+        const short = loadSource(path, {
+          limits: { maxBytes: Number.MAX_SAFE_INTEGER },
+          fileSystem: shortReadFileSystem(sizeBytes),
+        });
+        if (short.ok) throw new Error('a short read must be reported');
+        expect(serialize({ load: short }, { command: 'inspect', path }).limits).toEqual({
+          maxBytes: Number.MAX_SAFE_INTEGER,
+          truncated: true,
+        });
+      });
+    });
+
+    it('leaves `source`, diagnostics and order untouched by where the number comes from', () => {
+      const input = pipelineFor('sem-01');
+      const envelope = serialize(input, { command: 'inspect', path: CONTEXT.path });
+
+      expect(envelope.limits).toEqual({
+        maxBytes: input.load.limits.maxBytes,
+        truncated: false,
+      });
+      // The rejection-free arm still has exactly one list, from Integration, in its order.
+      expect(envelope.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
+        integrate(input).diagnostics.map((diagnostic) => diagnostic.code),
+      );
+      expect(envelope.status).toBe(integrate(input).status);
+      expect(envelope.source).not.toBeNull();
     });
   });
   it('treats an invalid limit override as a programmer error, before any envelope', () => {
