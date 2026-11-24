@@ -473,6 +473,31 @@ function buildDiagnostics(declared: number | null, input: CoverageInput): Diagno
 }
 
 /**
+ * The section each `sectionIndex` resolves to, the first declaration winning, for `O(1)` lookups.
+ *
+ * This answers `sections.find((section) => section.index === wanted)` once instead of at every
+ * comment, whose cost was the whole section list per comment. It is a memo of *that* predicate, so
+ * it has to keep that predicate's two edge rules:
+ *
+ * - **First wins.** `find` returns the first match in file order, so an input that gives two
+ *   sections one `index` — only a deliberately broken one can — resolves to the earlier section and
+ *   its extent, never to a later one's.
+ * - **`NaN` is not a key.** `Map` compares keys with SameValueZero, which holds `NaN` equal to
+ *   itself, while `===` does not. Registering a `NaN` index would invent an owner that `find` could
+ *   never have returned and quietly swallow a "names no section" violation. Every other number
+ *   agrees between the two comparisons, `+0`/`-0` included, so no other value is filtered.
+ */
+function sectionOwnerIndex(sections: readonly SectionScan[]): Map<number, SectionScan> {
+  const owners = new Map<number, SectionScan>();
+  for (const section of sections) {
+    if (Number.isNaN(section.index)) continue;
+    if (owners.has(section.index)) continue;
+    owners.set(section.index, section);
+  }
+  return owners;
+}
+
+/**
  * Check that every line of the document is claimed by exactly one record.
  *
  * This is §13's guarantee expressed as a property of the data rather than of the code that built
@@ -480,6 +505,17 @@ function buildDiagnostics(declared: number | null, input: CoverageInput): Diagno
  * claim, and a `sectionIndex` that names no section all become visible. It is exported because a
  * test must be able to hand it a deliberately broken structure — that is the only way to know the
  * checker still checks anything.
+ *
+ * Cost. Every loop here is one pass over its own collection — the line numbering, the section
+ * validation (header, entries, continuity), the header-region records, the comments, the blank
+ * positions, the claim sweep and the claim map — so with `L` physical lines, `S` sections, `E`
+ * section entries, `H` header-region records, `C` comments and `B` blank lines the check is
+ * `O(L + S + E + H + C + B)` in time. The one step that was not is a comment's owner: it used to be
+ * `sections.find(...)`, a full scan per comment (`O(S*C)` — quadratic in a comment-heavy file, and
+ * beyond repair by any later gate, because the time is already spent when the gate sees the
+ * result). `sectionOwnerIndex()` builds that answer once per call in `O(S)`, so each lookup becomes
+ * one average-`O(1)` probe: `O(S + C)` for the step and `O(S)` extra memory. Nothing else moved;
+ * the index is a statement about cost, not a relaxation of the check.
  */
 export function verifyCoverage(input: CoverageInput): readonly CoverageViolation[] {
   const violations: CoverageViolation[] = [];
@@ -603,6 +639,9 @@ export function verifyCoverage(input: CoverageInput): readonly CoverageViolation
     claim(record.span.keyLine, `header ${record.kind}`);
   }
 
+  // Built once for the loop below: one probe per comment instead of one section scan per comment.
+  const sectionOwners = sectionOwnerIndex(input.sections);
+
   for (const comment of input.comments) {
     const line = comment.span.keyLine;
     if (comment.span.sectionIndex === 0) {
@@ -614,7 +653,7 @@ export function verifyCoverage(input: CoverageInput): readonly CoverageViolation
         });
       }
     } else {
-      const owner = input.sections.find((section) => section.index === comment.span.sectionIndex);
+      const owner = sectionOwners.get(comment.span.sectionIndex);
       if (owner === undefined) {
         violations.push({
           rule: 'bad-section-index',
