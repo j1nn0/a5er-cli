@@ -1022,19 +1022,30 @@ Contract rules:
 
 **`limits`.** Two facts, and the second is narrower than its name suggests:
 
-- `maxBytes` is the byte cap the read ran under (§10.2). It is **caller-supplied**: the read does
-  not carry its effective limits into `DecodedSource`, so `serialize()` echoes
-  `context.limits.maxBytes`, and an omitted context is a claim that the documented defaults were
-  used. The precondition is therefore on the caller — pass the same limits object that loaded the
-  input — and it is pinned by a test rather than enforced at runtime (§17 TBD-O3). The other two
+- `maxBytes` is the byte cap the read **actually applied** (§10.2): the effective value
+  `loadSource()` resolved before it opened anything. `LoadOutcome` keeps that `Limits` on **both**
+  arms, so a rejected read reports the cap it was judged against as well, and the serializer reads
+  it from `input.load.limits` — `serialize()`, and `tables`' `buildTablesEnvelope()` through the
+  same projection — so the envelope states what ran, never what a caller claims. The other two
   limits are not projected: only the byte cap bounds what a consumer can re-allocate — the *input*
   those bytes came from, not the memory this process retained while reading it (§10.3).
+- `SerializeContext.limits` is an optional **assertion**, not a source. Omitted, the effective value
+  is used as it is; specified, all three of its numbers (`maxBytes`, `maxLines`, `maxLineLength`) are
+  compared numerically with the read's, and any single mismatch throws a programming-side contract
+  violation. That comparison is about the caller, never about the file: a mismatch is **never**
+  turned into an `E_*` diagnostic, and omitting the context asserts nothing — it is not a
+  declaration that the documented defaults were used.
+- The JSON projects only `maxBytes` and `truncated`; `maxLines` and `maxLineLength` stay internal to
+  the read and are not echoed.
 - `truncated` is `true` for exactly one condition: a **physical short read**, i.e. an
   `E_TRUNCATED_INPUT` in `diagnostics`. A limit refusal (`E_LIMIT_BYTES`, `E_LIMIT_LINES`,
   `E_LIMIT_LINE_LENGTH`) rejects the whole file and is `false`; so is every other fatal
   (`E_IO`, `E_UNDECODABLE`, `E_BINARY_INPUT`, `E_FILE_CHANGED_DURING_READ`), because nothing
   partial ever leaves the reader. The field is derived from the diagnostic sequence and from
-  nothing else, so it cannot disagree with the reason the read stopped.
+  nothing else, so it cannot disagree with the reason the read stopped, and it is never inferred
+  from the limit numbers.
+- The caps bound **input size, not memory**: they limit how many bytes may be read, and that is not
+  a memory-safety guarantee — the retained cost also follows the document's shape (§10.3).
 
 **Exit codes are not an envelope member.** The envelope has the ten fields above and no
 `exitPolicy`; adding one would be a contract change for information the command layer already owns.
@@ -1265,7 +1276,7 @@ not as spec behaviour. None of U1–U15 is presented as settled by these decisio
 |---|---|---|---|
 | TBD-O1 | Byte offsets in spans (only if a consumer needs binary extraction) | Absent | Phase 2, stage 1 |
 | TBD-O2 | Streaming threshold for very large files | None; `maxBytes` only. The cap is judged from `fstat` before any allocation, so the peak cost of a refused file is one `stat` — but a file *at* the cap is still materialised whole. Not exercised above 4 KiB in any test | Phase 2, stage 2 |
-| TBD-O3 | Final limit defaults (`maxBytes`, `maxLines`, `maxLineLength`) | The values in §10.2. Two gaps are recorded here rather than papered over: the envelope's `limits.maxBytes` is the **caller-supplied** cap, not one carried by the read (§12), and the 64 MiB default breach is never executed — the `E_LIMIT_BYTES` path is proven with a 4 KiB cap and a fake `fstat` | Phase 2, stage 2 |
+| TBD-O3 | Final limit defaults (`maxBytes`, `maxLines`, `maxLineLength`), and the provenance of the envelope's `limits` | **Resolved — provenance.** `LoadOutcome` keeps the effective three numbers on both arms, the JSON reports that effective `maxBytes` (§12), and a `SerializeContext.limits` that disagrees with the read is detected at runtime instead of trusted, so the old caller-supplied gap is closed. **Still open:** the final judgement on the default caps (the §10.2 values stand); evidence at the 64 MiB default boundary itself — no breach at that size is executed, `E_LIMIT_BYTES` being proven with a 4 KiB cap and a fake `fstat`, so the 64 MiB boundary is **not** verified; and the resource-exhaustion risk, which is F-4 in [issue #27](https://github.com/j1nn0/a5er-cli/issues/27), still open | Phase 2, stage 2 |
 | TBD-O4 | Whether a JSON Schema file ships with the CLI | Not in v0.1.0 | Phase 2, stage 7 |
 | TBD-O5 | `contractVersion` bump policy and its relation to package semver | **Closed in §12 rule 6**: the version versions each command's envelope and moves when a field of an existing command's envelope changes or a value's meaning changes. A new command with its own shape, selected by `(command, contractVersion)`, that keeps the shared members verbatim and leaves every existing envelope byte-identical is additive — which is how `tables` arrives without moving `0.1.0`. Independent of the package version | Closed — Phase 2 stage 7 |
 | TBD-O6 | Whether the AST is exposed behind a flag (`--ast`) | Not exposed | Phase 2, stage 7 |

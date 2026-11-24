@@ -870,10 +870,19 @@ export interface JsonSource {
 /**
  * The limits the read ran under (§10.2) and the one truncation fact the envelope reports.
  *
- * `maxBytes` is **caller-supplied** (`SerializeContext.limits`), not carried by the read: the
- * precondition is that the caller passes the same object that loaded the input, and omitting it is
- * a claim that the documented defaults were used (§12, §17 TBD-O3). The other two limits are not
- * projected — only the byte cap bounds what a consumer can re-allocate.
+ * `maxBytes` is the byte cap the read **actually applied**. `loadSource()` keeps the effective
+ * `Limits` on both arms of `LoadOutcome`, so `serialize()` reads `maxBytes` from
+ * `input.load.limits` and the envelope states what ran — neither `ReadOutcome` nor `DecodedSource`
+ * carries a limit of its own, and a rejected read reports the cap it was judged against too.
+ * `SerializeContext.limits` is only an optional assertion: when it is given, all three of its
+ * numbers (`maxBytes`, `maxLines`, `maxLineLength`) must equal the read's, and any mismatch throws
+ * a programming-side contract error; omitting it asserts nothing and is **not** a declaration that
+ * the documented defaults were used.
+ *
+ * The other two limits are not projected — this type holds `maxBytes` and `truncated` only, and the
+ * byte cap bounds what a consumer can re-allocate: the *input* those bytes came from, not the
+ * memory this process retained while reading it (§10.3). `truncated` is still derived from
+ * `E_TRUNCATED_INPUT` in `diagnostics`, never from the limit numbers.
  */
 export interface JsonLimits {
   readonly maxBytes: number;
