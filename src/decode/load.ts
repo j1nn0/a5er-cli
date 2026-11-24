@@ -80,9 +80,23 @@ export function loadSource(path: string, options: LoadOptions = {}): LoadOutcome
   // `limits` on the outcome is therefore the value that actually applied, not a second resolution
   // that could disagree with it. `withLimits` keeps its own range check (U3-B2), so an invalid
   // setting still throws here, before anything is opened.
-  const limits = withLimits(options.limits);
-  const readOptions: ReadOptions =
-    options.fileSystem === undefined ? { limits } : { limits, fileSystem: options.fileSystem };
+  const validated = withLimits(options.limits);
+  // `withLimits` validates every own enumerable member of the override — including one that no
+  // `Limits` field names — and spreads the override into its result, so a runtime-only extra would
+  // otherwise ride along into the read, the decode and the outcome. The validation is therefore
+  // kept as it is, and only the three numbers are picked into a fresh object afterwards: what this
+  // load applies is exactly `maxBytes`, `maxLines` and `maxLineLength`.
+  const limits: Limits = {
+    maxBytes: validated.maxBytes,
+    maxLines: validated.maxLines,
+    maxLineLength: validated.maxLineLength,
+  };
+
+  // Read once: a getter-backed `options.fileSystem` may answer differently on each evaluation, and
+  // the reader must be handed the very value that was tested. An absent option still means the
+  // default filesystem, which `readSource` supplies itself.
+  const fileSystem = options.fileSystem;
+  const readOptions: ReadOptions = fileSystem === undefined ? { limits } : { limits, fileSystem };
 
   const read = readSource(path, readOptions);
   if (!read.ok) return { ok: false, diagnostics: read.diagnostics, limits };

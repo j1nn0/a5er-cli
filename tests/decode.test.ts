@@ -1112,6 +1112,228 @@ describe('LoadOutcome — the effective limits on both arms (U3-B3-B1)', () => {
         expect(outcome.limits).toEqual({ ...DEFAULT_LIMITS, maxBytes: 1024 });
       });
     });
+
+    it('E_EMPTY_INPUT — whitespace-only keeps the override it was read with', () => {
+      // The whitespace-only path is this module's own `E_EMPTY_INPUT`, after decoding. Substituting
+      // `DEFAULT_LIMITS` there would pass any test that loads the same input without an override,
+      // so the check names a non-default `maxLines` and compares the other two as well.
+      const outcome = loadBytes(encode('  \n\n\t\n'), 'blank.a5er', { limits: { maxLines: 100 } });
+      if (outcome.ok) throw new Error('expected E_EMPTY_INPUT');
+
+      assertCodes(failureCodes(outcome), ['E_EMPTY_INPUT']);
+      expect(outcome.limits).toEqual({ ...DEFAULT_LIMITS, maxLines: 100 });
+      expect(outcome.limits.maxLines).toBe(100);
+      expect(outcome.limits.maxBytes).toBe(DEFAULT_LIMITS.maxBytes);
+      expect(outcome.limits.maxLineLength).toBe(DEFAULT_LIMITS.maxLineLength);
+      // Still no place for text: the rejection carries diagnostics and limits only.
+      expect(Object.keys(outcome)).toEqual(['ok', 'diagnostics', 'limits']);
+      expect(outcome.diagnostics[0]?.details).toEqual({
+        sizeBytes: encode('  \n\n\t\n').byteLength,
+      });
+    });
+  });
+});
+
+/**
+ * Review MAJOR 1 — `options.fileSystem` is a property read, so it must be read once.
+ *
+ * A `LoadOptions`-conforming getter may answer differently on every evaluation. Testing the value
+ * and then reading it again to forward it can therefore hand the reader a *different* filesystem
+ * from the one that was tested — reproduced below: the second evaluation refuses to open, so the
+ * pre-fix code turned a readable input into `E_IO`.
+ */
+describe('loadSource — a getter-backed fileSystem is evaluated once (review MAJOR 1)', () => {
+  const DOCUMENT = '# A5:ER FORMAT:21\n[Entity]\nPName="x"\n';
+
+  /** A filesystem plus the seam calls it received. */
+  interface RecordingSeam {
+    readonly fileSystem: FileSystem;
+    readonly calls: { open: number; stat: number; read: number; close: number };
+  }
+
+  /** A filesystem that serves `text` once and counts every seam call it receives. */
+  function servingFileSystem(text: string): RecordingSeam {
+    const bytes = encode(text);
+    const calls = { open: 0, stat: 0, read: 0, close: 0 };
+    let served = false;
+
+    return {
+      calls,
+      fileSystem: {
+        open() {
+          calls.open += 1;
+          return {
+            stat: () => {
+              calls.stat += 1;
+              return {
+                sizeBytes: bytes.byteLength,
+                mtimeMs: 1_700_000_000_000,
+                ino: 7,
+                isRegularFile: true,
+              };
+            },
+            read: () => {
+              calls.read += 1;
+              if (served) return Buffer.alloc(0);
+              served = true;
+              return bytes;
+            },
+            close: () => {
+              calls.close += 1;
+            },
+          };
+        },
+      },
+    };
+  }
+
+  /** A filesystem that would fail the load if it were ever used. */
+  function refusingFileSystem(): RecordingSeam {
+    const calls = { open: 0, stat: 0, read: 0, close: 0 };
+    return {
+      calls,
+      fileSystem: {
+        open() {
+          calls.open += 1;
+          throw Object.assign(new Error('this filesystem must never be used'), { code: 'ENOENT' });
+        },
+      },
+    };
+  }
+
+  it('uses the first value only, and matches the plain-option run call for call', () => {
+    const first = servingFileSystem(DOCUMENT);
+    const second = refusingFileSystem();
+    let evaluations = 0;
+
+    const options: LoadOptions = {
+      get fileSystem() {
+        evaluations += 1;
+        return evaluations === 1 ? first.fileSystem : second.fileSystem;
+      },
+    };
+
+    const outcome = loadSource('getter.a5er', options);
+
+    // The defect as produced: evaluating the property twice forwarded the second value, which here
+    // refuses to open, so a readable input came back as `E_IO`.
+    if (!outcome.ok) {
+      throw new Error(
+        `the first filesystem must serve the input: ${failureCodes(outcome).join(',')}`,
+      );
+    }
+    expect(outcome.source.text).toBe(DOCUMENT);
+
+    // The mechanism: one read of the property, so the tested value is the forwarded one.
+    expect(evaluations).toBe(1);
+    expect(second.calls).toEqual({ open: 0, stat: 0, read: 0, close: 0 });
+
+    // A plain, single-valued option produces the same result through the same seam contract.
+    const reference = servingFileSystem(DOCUMENT);
+    const expected = loadSource('getter.a5er', { fileSystem: reference.fileSystem });
+
+    expect(outcome).toEqual(expected);
+    expect(first.calls).toEqual(reference.calls);
+    // One open, two stats (before and after the read), one read, one close: the reader's contract.
+    expect(first.calls).toEqual({ open: 1, stat: 2, read: 1, close: 1 });
+  });
+
+  it('still uses the default filesystem when the option is absent', () => {
+    withTempDir((directory) => {
+      const path = join(directory, 'document.a5er');
+      writeFileSync(path, DOCUMENT);
+
+      const outcome = loadSource(path);
+      if (!outcome.ok) throw new Error('the default filesystem must read a real file');
+      expect(outcome.source.text).toBe(DOCUMENT);
+      expect(outcome.limits).toEqual(DEFAULT_LIMITS);
+    });
+  });
+});
+
+/**
+ * Review MAJOR 2 — only the three validated numbers survive into the outcome.
+ *
+ * `withLimits()` spreads the override into its result and validates every own enumerable member, so
+ * a runtime-only extra (a plain key that happens to hold a number, or a symbol key it cannot even
+ * see) used to ride along into the read, the decode and `LoadOutcome.limits`. The fix keeps that
+ * validation and picks the three fields afterwards; these tests pin the key set from both sides.
+ */
+describe('LoadOutcome — only the three validated limit fields are kept (review MAJOR 2)', () => {
+  const DOCUMENT = '# A5:ER FORMAT:21\n[Entity]\nPName="x"\n';
+  const LIMIT_KEYS = ['maxBytes', 'maxLines', 'maxLineLength'];
+  const symbolKey = Symbol('extra');
+
+  it('drops a string-keyed and a symbol-keyed extra on the success arm', () => {
+    const source = { maxBytes: 1024, overrideMarker: 1, [symbolKey]: 'extra' };
+    const overrides: Partial<Limits> = source;
+
+    const outcome = loadBytes(encode(DOCUMENT), 'document.a5er', { limits: overrides });
+    if (!outcome.ok) throw new Error('the override is a legitimate cap');
+
+    expect(Object.keys(outcome.limits)).toEqual(LIMIT_KEYS);
+    // Own keys, so the symbol is checked too: `Object.keys` alone would miss it.
+    expect(Reflect.ownKeys(outcome.limits)).toEqual(LIMIT_KEYS);
+    expect(outcome.limits).toEqual({
+      maxBytes: 1024,
+      maxLines: DEFAULT_LIMITS.maxLines,
+      maxLineLength: DEFAULT_LIMITS.maxLineLength,
+    });
+
+    // The caller's object is untouched: nothing removed, nothing added, the symbol still there.
+    expect(Reflect.ownKeys(source)).toEqual(['maxBytes', 'overrideMarker', symbolKey]);
+    expect(source.overrideMarker).toBe(1);
+    expect(source[symbolKey]).toBe('extra');
+  });
+
+  it('drops the extras on the rejection arm, and the read used the validated cap', () => {
+    const source = { maxBytes: 8, overrideMarker: 1, [symbolKey]: 'extra' };
+    const overrides: Partial<Limits> = source;
+
+    const outcome = loadBytes(encode(DOCUMENT), 'document.a5er', { limits: overrides });
+    if (outcome.ok) throw new Error('expected E_LIMIT_BYTES');
+
+    assertCodes(failureCodes(outcome), ['E_LIMIT_BYTES']);
+    expect(Object.keys(outcome.limits)).toEqual(LIMIT_KEYS);
+    expect(Reflect.ownKeys(outcome.limits)).toEqual(LIMIT_KEYS);
+    expect(outcome.limits).toEqual({ ...DEFAULT_LIMITS, maxBytes: 8 });
+    // The number in the diagnostic is the number the reader was given, not the caller's object.
+    expect(outcome.diagnostics[0]?.details).toEqual({
+      sizeBytes: encode(DOCUMENT).byteLength,
+      maxBytes: 8,
+    });
+    expect(Reflect.ownKeys(source)).toEqual(['maxBytes', 'overrideMarker', symbolKey]);
+  });
+
+  it('gives decode the validated maxLines, not the caller object', () => {
+    const source = { maxLines: 3, overrideMarker: 1, [symbolKey]: 'extra' };
+    const overrides: Partial<Limits> = source;
+
+    expect(loadBytes(encode(DOCUMENT), 'document.a5er', { limits: overrides }).ok).toBe(true);
+
+    const over = loadBytes(encode(`${DOCUMENT}\n`), 'four-lines.a5er', { limits: overrides });
+    if (over.ok) throw new Error('expected E_LIMIT_LINES');
+    assertCodes(failureCodes(over), ['E_LIMIT_LINES']);
+    expect(over.diagnostics[0]?.details).toEqual({ lines: 4, maxLines: 3 });
+  });
+
+  it('still validates an extra member, so the validation was not pre-stripped', () => {
+    // A pre-stripped override would never reach this member; `withLimits` does, unchanged.
+    const source = { maxBytes: 1024, overrideMarker: 'not a number' };
+    const overrides: Partial<Limits> = source;
+
+    expect(() => loadBytes(encode(DOCUMENT), 'document.a5er', { limits: overrides })).toThrow(
+      'limit overrideMarker must be a positive integer, got not a number',
+    );
+  });
+
+  it('still rejects an out-of-range standard field that arrives with extras', () => {
+    const source = { maxBytes: 2 ** 53, overrideMarker: 1 };
+    const overrides: Partial<Limits> = source;
+
+    expect(() => loadBytes(encode(DOCUMENT), 'document.a5er', { limits: overrides })).toThrow(
+      'limit maxBytes must be a positive integer, got 9007199254740992',
+    );
   });
 });
 
