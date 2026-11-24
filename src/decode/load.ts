@@ -22,11 +22,13 @@ import { emit } from '../diagnostics/diagnostic.js';
 import type { Diagnostic } from '../diagnostics/diagnostic.js';
 import { looksBinary } from '../io/binary.js';
 import type { FileSystem } from '../io/fs.js';
-import { readSource } from '../io/read.js';
+import { withLimits } from '../io/limits.js';
 import type { Limits } from '../io/limits.js';
+import { readSource } from '../io/read.js';
+import type { ReadOptions } from '../io/read.js';
 import { sniffBom } from './bom.js';
 import { decodeBytes } from './decode.js';
-import type { DecodeOptions, EncodingInfo } from './decode.js';
+import type { EncodingInfo } from './decode.js';
 import { hasRecognisedSection } from './sections.js';
 
 /** The decoded, classified input the syntax stage consumes. */
@@ -42,9 +44,21 @@ export interface DecodedSource {
   readonly diagnostics: readonly Diagnostic[];
 }
 
+/**
+ * What a load decided, and the limits it decided it under.
+ *
+ * `limits` is on **both** arms and is not optional: a rejected read was still judged against a
+ * `maxBytes`, and a decoded document still had `maxLines` and `maxLineLength` applied, so the
+ * numbers a caller needs in order to report or re-check the read exist even when there is no
+ * `source`. It is the object `loadSource()` resolved once — the very value handed to `io/` and
+ * `decode/` — not a second resolution that could disagree with what ran (U3-B3-B1).
+ *
+ * Only the numbers survive: whether they came from the defaults, an empty override or an explicit
+ * restatement of the defaults is not recorded and cannot be told apart here.
+ */
 export type LoadOutcome =
-  | { readonly ok: true; readonly source: DecodedSource }
-  | { readonly ok: false; readonly diagnostics: readonly Diagnostic[] };
+  | { readonly ok: true; readonly source: DecodedSource; readonly limits: Limits }
+  | { readonly ok: false; readonly diagnostics: readonly Diagnostic[]; readonly limits: Limits };
 
 export interface LoadOptions {
   readonly limits?: Partial<Limits>;
@@ -62,8 +76,16 @@ export interface LoadOptions {
  * can report an empty-but-healthy document.
  */
 export function loadSource(path: string, options: LoadOptions = {}): LoadOutcome {
-  const read = readSource(path, options);
-  if (!read.ok) return { ok: false, diagnostics: read.diagnostics };
+  // Resolved once, before any I/O, and the same object is what `io/` and `decode/` are given: the
+  // `limits` on the outcome is therefore the value that actually applied, not a second resolution
+  // that could disagree with it. `withLimits` keeps its own range check (U3-B2), so an invalid
+  // setting still throws here, before anything is opened.
+  const limits = withLimits(options.limits);
+  const readOptions: ReadOptions =
+    options.fileSystem === undefined ? { limits } : { limits, fileSystem: options.fileSystem };
+
+  const read = readSource(path, readOptions);
+  if (!read.ok) return { ok: false, diagnostics: read.diagnostics, limits };
 
   const { bytes, sizeBytes, sha256 } = read.source;
 
@@ -78,15 +100,12 @@ export function loadSource(path: string, options: LoadOptions = {}): LoadOutcome
           construct: 'Source',
         }),
       ],
+      limits,
     };
   }
 
-  // `exactOptionalPropertyTypes` keeps "absent" and "undefined" distinct, so the override is
-  // only forwarded when the caller actually passed one.
-  const decodeOptions: DecodeOptions =
-    options.limits === undefined ? {} : { limits: options.limits };
-  const decoded = decodeBytes(bytes, decodeOptions);
-  if (!decoded.ok) return { ok: false, diagnostics: decoded.diagnostics };
+  const decoded = decodeBytes(bytes, { limits });
+  if (!decoded.ok) return { ok: false, diagnostics: decoded.diagnostics, limits };
 
   const { text, encoding, format, diagnostics } = decoded.decoded;
 
@@ -95,6 +114,7 @@ export function loadSource(path: string, options: LoadOptions = {}): LoadOutcome
     return {
       ok: false,
       diagnostics: [emit('E_EMPTY_INPUT', { details: { sizeBytes }, construct: 'Source' })],
+      limits,
     };
   }
 
@@ -107,8 +127,13 @@ export function loadSource(path: string, options: LoadOptions = {}): LoadOutcome
           construct: 'Document',
         }),
       ],
+      limits,
     };
   }
 
-  return { ok: true, source: { text, sizeBytes, sha256, encoding, format, diagnostics } };
+  return {
+    ok: true,
+    source: { text, sizeBytes, sha256, encoding, format, diagnostics },
+    limits,
+  };
 }

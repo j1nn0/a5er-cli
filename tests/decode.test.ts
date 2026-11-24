@@ -17,11 +17,12 @@ import { MAX_DETAIL_LENGTH } from '../src/diagnostics/diagnostic.js';
 import { nulDensity } from '../src/io/binary.js';
 import type { FileSystem } from '../src/io/fs.js';
 import { DEFAULT_LIMITS } from '../src/io/limits.js';
+import type { Limits } from '../src/io/limits.js';
 import { NO_BOM, sniffBom } from '../src/decode/bom.js';
 import { decodeBytes, isCodecAvailable } from '../src/decode/decode.js';
 import { NO_HEADER, parseHeader, peekHeader } from '../src/decode/header.js';
 import { loadSource } from '../src/decode/load.js';
-import type { LoadOptions } from '../src/decode/load.js';
+import type { LoadOptions, LoadOutcome } from '../src/decode/load.js';
 import { hasRecognisedSection, scanSectionHeaders } from '../src/decode/sections.js';
 import {
   CAPPED_READ_LIMIT_BYTES,
@@ -149,8 +150,9 @@ describe('the committed encoding fixtures (§8.4)', () => {
     expect(diagnostic?.severity).toBe('fatal');
     // Every candidate that was tried is named, so the refusal is not a silent one.
     expect(String(diagnostic?.details['tried'])).toContain('utf-8');
-    // A failure carries no text at all: the type has nowhere to put lossy output.
-    expect(Object.keys(outcome)).toEqual(['ok', 'diagnostics']);
+    // A failure carries no text at all: the type has nowhere to put lossy output. The key set is
+    // enumerated, so a `source` (or any other slot that could hold text) appearing here fails.
+    expect(Object.keys(outcome)).toEqual(['ok', 'diagnostics', 'limits']);
   });
 
   it('enc-05: a UTF-16LE BOM is decoded, not rejected as binary', () => {
@@ -821,7 +823,7 @@ describe('R13 — a BOM-less UTF-16 file is refused, never guessed at', () => {
     expect(outcome.ok).toBe(false);
     assertCodes(failureCodes(outcome), ['E_BINARY_INPUT']);
     // Neither a guessed UTF-16 decode nor a silent mis-decode: a failure carries no text at all.
-    expect(Object.keys(outcome)).toEqual(['ok', 'diagnostics']);
+    expect(Object.keys(outcome)).toEqual(['ok', 'diagnostics', 'limits']);
   });
 
   it('decodes the same document once it carries a BOM', () => {
@@ -884,6 +886,232 @@ describe('trusted codes, untrusted details (§11 rule 1)', () => {
     expect(emit('E_LIMIT_BYTES').severity).toBe(severityOf('E_LIMIT_BYTES'));
     expect(emit('E_LIMIT_BYTES').message).toBe(messageOf('E_LIMIT_BYTES'));
     expect(emit('E_EMPTY_INPUT').span).toBeNull();
+  });
+});
+
+/**
+ * U3-B3-B1 — the effective `Limits` ride on **both** `LoadOutcome` arms.
+ *
+ * `loadSource()` resolves the override once, hands that one object to the read and the decode, and
+ * returns it, so the numbers on the outcome are the numbers that actually applied — not a second
+ * resolution that could disagree with what ran. Both arms carry it: a rejected read was judged
+ * against `maxBytes` just as a decoded document was judged against `maxLines` and `maxLineLength`.
+ *
+ * Only the numbers survive. Defaults, an empty override and an explicit restatement of the
+ * defaults are the same three numbers here, and telling those histories apart is out of scope.
+ */
+describe('LoadOutcome — the effective limits on both arms (U3-B3-B1)', () => {
+  const DOCUMENT = '# A5:ER FORMAT:21\n[Entity]\nPName="x"\n';
+
+  /** Load `DOCUMENT` with `options` and fail loudly when it unexpectedly rejects. */
+  function loaded(options: LoadOptions = {}) {
+    const outcome = loadBytes(encode(DOCUMENT), 'document.a5er', options);
+    if (!outcome.ok) throw new Error(`load failed: ${failureCodes(outcome).join(',')}`);
+    return outcome;
+  }
+
+  it('carries the documented defaults when no override is given', () => {
+    const outcome = loaded();
+
+    expect(outcome.limits).toEqual(DEFAULT_LIMITS);
+    // Spelled out field by field: `toEqual(DEFAULT_LIMITS)` alone would also pass for an object
+    // built from the same constants by accident, and the three numbers are the whole contract.
+    expect(outcome.limits.maxBytes).toBe(64 * 1024 * 1024);
+    expect(outcome.limits.maxLines).toBe(2_000_000);
+    expect(outcome.limits.maxLineLength).toBe(4 * 1024 * 1024);
+  });
+
+  it('carries the defaults for an empty override', () => {
+    expect(loaded({ limits: {} }).limits).toEqual(DEFAULT_LIMITS);
+  });
+
+  it('fills the omitted fields from the defaults for a partial override', () => {
+    const cases: readonly (readonly [Partial<Limits>, Limits])[] = [
+      [
+        { maxBytes: 1024 },
+        {
+          maxBytes: 1024,
+          maxLines: DEFAULT_LIMITS.maxLines,
+          maxLineLength: DEFAULT_LIMITS.maxLineLength,
+        },
+      ],
+      [
+        { maxLines: 3 },
+        {
+          maxBytes: DEFAULT_LIMITS.maxBytes,
+          maxLines: 3,
+          maxLineLength: DEFAULT_LIMITS.maxLineLength,
+        },
+      ],
+      // 20 units admits the 17-unit FORMAT line, so the override is exercised by the carried value
+      // rather than by a refusal.
+      [
+        { maxLineLength: 20 },
+        { maxBytes: DEFAULT_LIMITS.maxBytes, maxLines: DEFAULT_LIMITS.maxLines, maxLineLength: 20 },
+      ],
+    ];
+
+    for (const [limits, expected] of cases) {
+      expect(loaded({ limits }).limits, JSON.stringify(limits)).toEqual(expected);
+    }
+  });
+
+  it('carries a full override unchanged', () => {
+    const limits: Limits = { maxBytes: 2048, maxLines: 10, maxLineLength: 64 };
+    expect(loaded({ limits }).limits).toEqual(limits);
+  });
+
+  it('accepts and carries MAX_SAFE_INTEGER in every field', () => {
+    const limits: Limits = {
+      maxBytes: Number.MAX_SAFE_INTEGER,
+      maxLines: Number.MAX_SAFE_INTEGER,
+      maxLineLength: Number.MAX_SAFE_INTEGER,
+    };
+    expect(loaded({ limits }).limits).toEqual(limits);
+  });
+
+  it("does not mutate the caller's override object", () => {
+    const limits: Partial<Limits> = { maxLines: 5 };
+    const outcome = loaded({ limits });
+
+    expect(outcome.limits).toEqual({ ...DEFAULT_LIMITS, maxLines: 5 });
+    // The caller's object holds exactly what it held: no defaulted key was written back into it.
+    expect(limits).toEqual({ maxLines: 5 });
+    expect(Object.keys(limits)).toEqual(['maxLines']);
+    // And the outcome owns a complete object of its own, not the caller's partial one.
+    expect(outcome.limits).not.toBe(limits);
+  });
+
+  it('resolves per call, so one override cannot leak into the next load', () => {
+    const lowered = loadBytes(encode(DOCUMENT), 'document.a5er', { limits: { maxLines: 2 } });
+    if (lowered.ok) throw new Error('two lines must reject a three-line document');
+    expect(lowered.limits).toEqual({ ...DEFAULT_LIMITS, maxLines: 2 });
+
+    // A load with no override is not affected by the previous call's numbers.
+    expect(loaded().limits).toEqual(DEFAULT_LIMITS);
+
+    const raised = loadBytes(encode(DOCUMENT), 'document.a5er', {
+      limits: { maxLines: Number.MAX_SAFE_INTEGER },
+    });
+    if (!raised.ok) throw new Error('the raised load must succeed');
+    expect(raised.limits).toEqual({ ...DEFAULT_LIMITS, maxLines: Number.MAX_SAFE_INTEGER });
+  });
+
+  it('throws for an invalid setting instead of returning an outcome, and leaves the next call alone', () => {
+    let opened = 0;
+    const fileSystem: FileSystem = {
+      open() {
+        opened += 1;
+        throw new Error('the reader must not open a file for an invalid setting');
+      },
+    };
+
+    // No `LoadOutcome` exists for an invalid setting, so no `limits` can be read off one.
+    expect(() => loadSource('never-opened', { limits: { maxBytes: 2 ** 53 }, fileSystem })).toThrow(
+      'limit maxBytes must be a positive integer, got 9007199254740992',
+    );
+    expect(opened).toBe(0);
+
+    // A throw resolves nothing: the next call starts from its own override, not from a half-built
+    // object left behind by the failed one.
+    expect(loaded().limits).toEqual(DEFAULT_LIMITS);
+  });
+
+  describe('a rejected load still reports the limits it was judged under', () => {
+    /** A handle that declares more bytes than it returns, for `E_TRUNCATED_INPUT`. */
+    const truncatingFileSystem: FileSystem = {
+      open() {
+        let reads = 0;
+        const value = encode(DOCUMENT);
+        return {
+          stat: () => ({ sizeBytes: 64, mtimeMs: 1_700_000_000_000, ino: 1, isRegularFile: true }),
+          read: () => {
+            reads += 1;
+            return reads === 1 ? value : Buffer.alloc(0);
+          },
+          close: () => {},
+        };
+      },
+    };
+
+    const cases: readonly (readonly [string, string, () => LoadOutcome, Limits])[] = [
+      [
+        'E_LIMIT_BYTES',
+        'the byte cap',
+        () => loadBytes(encode(DOCUMENT), 'document.a5er', { limits: { maxBytes: 8 } }),
+        { ...DEFAULT_LIMITS, maxBytes: 8 },
+      ],
+      [
+        'E_LIMIT_LINES',
+        'the line count',
+        () => loadBytes(encode(DOCUMENT), 'document.a5er', { limits: { maxLines: 2 } }),
+        { ...DEFAULT_LIMITS, maxLines: 2 },
+      ],
+      [
+        'E_LIMIT_LINE_LENGTH',
+        'the line length',
+        () => loadBytes(encode(DOCUMENT), 'document.a5er', { limits: { maxLineLength: 5 } }),
+        { ...DEFAULT_LIMITS, maxLineLength: 5 },
+      ],
+      [
+        'E_TRUNCATED_INPUT',
+        'a short read',
+        () =>
+          loadSource('short-read.a5er', {
+            limits: { maxLines: 7 },
+            fileSystem: truncatingFileSystem,
+          }),
+        { ...DEFAULT_LIMITS, maxLines: 7 },
+      ],
+      [
+        'E_BINARY_INPUT',
+        'the binary probe',
+        () => loadBytes(Buffer.from(hst02.BYTES), 'binary.a5er', { limits: { maxLineLength: 9 } }),
+        { ...DEFAULT_LIMITS, maxLineLength: 9 },
+      ],
+      [
+        'E_UNDECODABLE',
+        'no codec decodes it',
+        () =>
+          loadBytes(Buffer.from(enc04.BYTES), 'undecodable.a5er', { limits: { maxBytes: 4096 } }),
+        { ...DEFAULT_LIMITS, maxBytes: 4096 },
+      ],
+      [
+        'E_EMPTY_INPUT',
+        'a zero-byte file',
+        () => loadBytes(Buffer.alloc(0), 'empty.a5er', { limits: { maxLines: 11 } }),
+        { ...DEFAULT_LIMITS, maxLines: 11 },
+      ],
+      [
+        'E_UNRECOGNIZED_DOCUMENT',
+        'no recognised section header',
+        () =>
+          loadBytes(encode('key=value\n'), 'unrecognised.a5er', { limits: { maxLineLength: 12 } }),
+        { ...DEFAULT_LIMITS, maxLineLength: 12 },
+      ],
+    ];
+
+    for (const [code, label, run, expected] of cases) {
+      it(`${code} — ${label}`, () => {
+        const outcome = run();
+        if (outcome.ok) throw new Error(`expected ${code}`);
+
+        assertCodes(failureCodes(outcome), [code]);
+        expect(outcome.limits).toEqual(expected);
+      });
+    }
+
+    it('E_IO — a path that cannot be opened', () => {
+      withTempDir((directory) => {
+        // A child of an existing directory that was never written: the open fails, the read is
+        // still judged under its own limits.
+        const outcome = loadSource(join(directory, 'absent.a5er'), { limits: { maxBytes: 1024 } });
+        if (outcome.ok) throw new Error('expected E_IO');
+
+        assertCodes(failureCodes(outcome), ['E_IO']);
+        expect(outcome.limits).toEqual({ ...DEFAULT_LIMITS, maxBytes: 1024 });
+      });
+    });
   });
 });
 

@@ -50,6 +50,7 @@ import type { LoadOutcome } from '../src/decode/load.js';
 import { loadSource } from '../src/decode/load.js';
 import type { Diagnostic } from '../src/diagnostics/diagnostic.js';
 import { emit, emitRegistry, emitSemantic, emitSyntax } from '../src/diagnostics/diagnostic.js';
+import { DEFAULT_LIMITS } from '../src/io/limits.js';
 import type { Limits } from '../src/io/limits.js';
 import type { Span } from '../src/model/span.js';
 import type { Classification } from '../src/schema/registry.js';
@@ -172,7 +173,9 @@ function loadedFromText(text: string, format: number | null = 21): LoadedIntegra
   const scan = scanSource(source);
   const classification = classify(scan);
   const semantics = derivePartialSemantics(classification);
-  return { load: { ok: true, source }, scan, classification, semantics };
+  // No override reaches this helper, so the effective limits are the documented defaults — the
+  // same value `loadSource()` would have carried back for a real file read with no override.
+  return { load: { ok: true, source, limits: DEFAULT_LIMITS }, scan, classification, semantics };
 }
 
 /** Replace only the four diagnostic arrays, so counts stay exactly as the stages derived them. */
@@ -186,7 +189,12 @@ function withDiagnostics(
   },
 ): IntegrationInput {
   return {
-    load: { ok: true, source: { ...input.load.source, diagnostics: diagnostics.decode } },
+    // Spread first: only the four diagnostic arrays change, so `ok` and the carried `limits` stay
+    // exactly what the load produced.
+    load: {
+      ...input.load,
+      source: { ...input.load.source, diagnostics: diagnostics.decode },
+    },
     scan: { ...input.scan, diagnostics: diagnostics.syntax },
     classification: { ...input.classification, diagnostics: diagnostics.schema },
     semantics: { ...input.semantics, diagnostics: diagnostics.semantic },
@@ -1092,8 +1100,41 @@ describe('validate — immutability and repeated runs', () => {
 
 describe('validate — contract errors', () => {
   it('a rejected load with no fatal diagnostic is a contract violation', () => {
-    const rules = rulesOf(() => integrate({ load: { ok: false, diagnostics: [] } }));
+    const rules = rulesOf(() =>
+      integrate({ load: { ok: false, diagnostics: [], limits: DEFAULT_LIMITS } }),
+    );
     expect(rules).toEqual(['failure-without-fatal']);
+  });
+
+  it('carries the effective limits through this layer on a loaded input', () => {
+    const { input } = pipelineOf('fmt-01');
+    expect(input.load.limits).toEqual(DEFAULT_LIMITS);
+
+    // A different but still legitimate override rides along, and changes no stage result: the
+    // numbers are provenance, not an input the later stages read.
+    const staged = stage('fmt-01');
+    try {
+      const overridden = inputFromPath(staged.path, { maxLines: 100_000 });
+      if (!isLoadedInput(overridden)) throw new Error('fmt-01 must load');
+      expect(overridden.load.limits).toEqual({ ...DEFAULT_LIMITS, maxLines: 100_000 });
+      expect(integrate(overridden)).toEqual(pipelineOf('fmt-01').integration);
+    } finally {
+      staged.cleanup();
+    }
+  });
+
+  it('carries them on a rejected load too', () => {
+    withBytes(Buffer.from('[Entity]\nPName="x"\n', 'utf8'), (path) => {
+      const input = inputFromPath(path, { maxBytes: 8 });
+      if (isLoadedInput(input)) throw new Error('maxBytes 8 must reject this input');
+
+      expect(input.load.limits).toEqual({ ...DEFAULT_LIMITS, maxBytes: 8 });
+      const integration = integrate(input);
+      expect(integration.status).toBe('failed');
+      // The fatal family is unchanged by provenance: no counts are invented for a document that
+      // was never read.
+      if (integration.status === 'failed') expect(integration.completeness).toBeNull();
+    });
   });
 
   it('a loaded input carrying a fatal diagnostic is a contract violation', () => {
