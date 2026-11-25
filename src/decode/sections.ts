@@ -68,7 +68,37 @@ export function scanSectionHeaders(text: string): string[] {
   return headers;
 }
 
-/** True when at least one header names a section this project models (§10.4). */
+/**
+ * True when at least one header names a section this project models (§10.4).
+ *
+ * One forward index walk over the same lines `scanSectionHeaders()` splits out — same lines, same
+ * order, same `headerNameOf()` reading — so no array of lines and no whole-text copy is built, and
+ * the walk stops at the first recognised header. `\r\n` is one terminator and a lone `\r` or `\n`
+ * is one too, which is exactly `/\r\n|\n|\r/`'s alternation.
+ *
+ * Worst case `O(text.length)`: each code unit is read once, the only substring is the line being
+ * tested, and nothing is retained after that line is decided.
+ */
 export function hasRecognisedSection(text: string): boolean {
-  return scanSectionHeaders(text).some((name) => isRecognisedSection(name));
+  let start = 0;
+
+  while (start < text.length) {
+    let end = start;
+    while (end < text.length) {
+      const unit = text.charCodeAt(end);
+      if (unit === 0x0a || unit === 0x0d) break;
+      end += 1;
+    }
+
+    // The same helper the split-based scan calls, on the same line text: a header is recognised
+    // only when both the line and the name agree with what `scanSectionHeaders()` would produce.
+    const name = headerNameOf(text.slice(start, end));
+    if (name !== null && isRecognisedSection(name)) return true;
+
+    if (end === text.length) return false;
+    // CRLF is one boundary; a lone CR or LF is one. Nothing else is a terminator.
+    start = text.charCodeAt(end) === 0x0d && text.charCodeAt(end + 1) === 0x0a ? end + 2 : end + 1;
+  }
+
+  return false;
 }

@@ -23,7 +23,11 @@ import { decodeBytes, isCodecAvailable } from '../src/decode/decode.js';
 import { NO_HEADER, parseHeader, peekHeader } from '../src/decode/header.js';
 import { loadSource } from '../src/decode/load.js';
 import type { LoadOptions, LoadOutcome } from '../src/decode/load.js';
-import { hasRecognisedSection, scanSectionHeaders } from '../src/decode/sections.js';
+import {
+  hasRecognisedSection,
+  isRecognisedSection,
+  scanSectionHeaders,
+} from '../src/decode/sections.js';
 import {
   CAPPED_READ_LIMIT_BYTES,
   GENERATED_BUILDERS,
@@ -501,6 +505,201 @@ describe('the document guard (§10.4)', () => {
       'Entity',
       '[Entity]',
     ]);
+  });
+});
+
+describe('hasRecognisedSection — one forward walk instead of a split', () => {
+  /** The nine names §10.4 models; the guard must accept every one of them. */
+  const RECOGNISED = [
+    'Manager',
+    'Entity',
+    'Relation',
+    'Relationship',
+    'View',
+    'Subtype',
+    'Shape',
+    'Line',
+    'Comment',
+  ] as const;
+
+  it('recognises all nine kinds, with or without a trailing terminator', () => {
+    for (const name of RECOGNISED) {
+      expect(hasRecognisedSection(`[${name}]`), name).toBe(true);
+      expect(hasRecognisedSection(`[${name}]\n`), name).toBe(true);
+    }
+  });
+
+  it('recognises a header on the first, a middle and the last line', () => {
+    expect(hasRecognisedSection('[Entity]')).toBe(true);
+    expect(hasRecognisedSection('PName="x"\n[Entity]\nPosition="Main",1,1\n')).toBe(true);
+    expect(hasRecognisedSection('# note\nkey=value\n[View]')).toBe(true);
+  });
+
+  it('refuses unknown, case-variant and malformed headers', () => {
+    const refused = [
+      '[entity]',
+      '[Memo]',
+      '[E N T I T Y]',
+      '[Entity]x',
+      'x[Entity]',
+      'Entry="[Entity]"',
+      '[]',
+      '[[Entity]]',
+      '[[[Entity]]]',
+    ];
+
+    for (const line of refused) {
+      expect(hasRecognisedSection(line), line).toBe(false);
+    }
+    expect(hasRecognisedSection('[Memo]\n[Other]\n')).toBe(false);
+  });
+
+  it('recognises a padded header and one that follows comments and keys', () => {
+    expect(hasRecognisedSection('  [Entity]  \n')).toBe(true);
+    expect(hasRecognisedSection('\t[Line]\t')).toBe(true);
+    expect(hasRecognisedSection('# comment\n\nPName="x"\nkey=value\n[Comment]\n')).toBe(true);
+  });
+
+  it('refuses empty, whitespace-only and headerless inputs', () => {
+    for (const text of ['', ' ', '\n', '   \n\t\r\n  \n', 'key=value\n# note\n', '[]\n[]\n']) {
+      expect(hasRecognisedSection(text), JSON.stringify(text)).toBe(false);
+    }
+  });
+
+  it('treats LF, CR and CRLF as the same terminator', () => {
+    for (const terminator of ['\n', '\r', '\r\n']) {
+      const document = ['# A5:ER FORMAT:21', '[Entity]', 'PName="a"', ''].join(terminator);
+      expect(hasRecognisedSection(document), JSON.stringify(terminator)).toBe(true);
+      expect(hasRecognisedSection(`[Memo]${terminator}[Other]${terminator}`), terminator).toBe(
+        false,
+      );
+    }
+  });
+
+  it('walks mixed, repeated and blank-interleaved terminators', () => {
+    const accepted = [
+      'key=1\n[Entity]\r\nPName="x"\r',
+      '\r\n[Entity]',
+      '\r\r\n[Entity]\n\r',
+      'a\n\n\n[Entity]\r\n\r\n',
+      '[Entity]\r\r\n',
+    ];
+    const refused = ['\r\n\r\n[Memo]\r\n\r\n', 'a\rb\nc\r\nd', '\n\r[entity]\n\r'];
+
+    for (const text of accepted) {
+      expect(hasRecognisedSection(text), JSON.stringify(text)).toBe(true);
+    }
+    for (const text of refused) {
+      expect(hasRecognisedSection(text), JSON.stringify(text)).toBe(false);
+    }
+  });
+
+  it('agrees with the split-based oracle on a deterministic matrix of small inputs', () => {
+    // The oracle is the public helper that still splits the text into lines: this walk must return
+    // exactly what it says, for every terminator mix the matrix can produce.
+    const oracle = (text: string): boolean => scanSectionHeaders(text).some(isRecognisedSection);
+    const LINES = [
+      '',
+      ' ',
+      '\t',
+      '[Manager]',
+      '[Entity]',
+      '[Relationship]',
+      '[entity]',
+      '[Memo]',
+      '[Entity]x',
+      '[[Entity]]',
+      '[]',
+      ' [View] ',
+      '\t[Shape]\t',
+      '[ Line ]',
+      '[Line]x',
+      'PName="x"',
+      '# comment',
+      'key=value',
+      '[Comment]',
+      '[[[Line]]]',
+    ];
+    const TERMINATORS = ['\n', '\r\n', '\r'];
+
+    const cases: string[] = [];
+    for (const terminator of TERMINATORS) {
+      for (const line of LINES) {
+        cases.push(line);
+        cases.push(line + terminator);
+      }
+      for (const first of LINES) {
+        for (const second of LINES) {
+          cases.push(first + terminator + second);
+          cases.push(first + terminator + second + terminator);
+        }
+      }
+    }
+    // Mixed boundaries, so a CRLF/LF/CR terminator follows a different one.
+    const MIXED = ['[Memo]', '[Entity]', 'key=value', '', ' [View] '];
+    for (const first of MIXED) {
+      for (const second of MIXED) {
+        cases.push(`${first}\n${second}\r\n[Line]\r`);
+        cases.push(`${first}\r${second}\r\n[Subtype]\n`);
+      }
+    }
+
+    const disagreements = cases.filter((text) => hasRecognisedSection(text) !== oracle(text));
+
+    expect(cases).toHaveLength(
+      3 * (2 * LINES.length + 2 * LINES.length ** 2) + 2 * MIXED.length ** 2,
+    );
+    expect(disagreements.map((text) => JSON.stringify(text))).toEqual([]);
+    // The matrix must exercise both answers, or agreement would prove nothing.
+    expect(cases.some(oracle)).toBe(true);
+    expect(cases.some((text) => !oracle(text))).toBe(true);
+  });
+});
+
+describe('hasRecognisedSection — the decode guard is unchanged', () => {
+  it('keeps the accepted and refused outcomes under every terminator', () => {
+    for (const terminator of ['\n', '\r', '\r\n']) {
+      const accepted = loadBytes(
+        Buffer.from(['# A5:ER FORMAT:21', '[Entity]', 'PName="a"'].join(terminator), 'utf8'),
+        'guard-accepted.a5er',
+      );
+      expect(accepted.ok, JSON.stringify(terminator)).toBe(true);
+
+      const refused = loadBytes(
+        Buffer.from(['# A5:ER FORMAT:21', '[Memo]', 'Note="x"'].join(terminator), 'utf8'),
+        'guard-refused.a5er',
+      );
+      expect(refused.ok, JSON.stringify(terminator)).toBe(false);
+      assertCodes(failureCodes(refused), ['E_UNRECOGNIZED_DOCUMENT']);
+    }
+  });
+
+  it('reports the same E_UNRECOGNIZED_DOCUMENT diagnostic as before the walk', () => {
+    const content = '# comment\nPName="x"\n[Memo]\n';
+    const outcome = loadBytes(Buffer.from(content, 'utf8'), 'no-recognised.a5er');
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.diagnostics).toHaveLength(1);
+    const diagnostic = outcome.diagnostics[0];
+    expect(diagnostic?.code).toBe('E_UNRECOGNIZED_DOCUMENT');
+    expect(diagnostic?.severity).toBe('fatal');
+    expect(diagnostic?.message).toBe('The input contains no recognised section header');
+    expect(diagnostic?.details).toEqual({
+      sizeBytes: Buffer.byteLength(content, 'utf8'),
+      headers: 0,
+    });
+    expect(diagnostic?.span).toBeNull();
+    expect(diagnostic?.construct).toBe('Document');
+  });
+
+  it('accepts a document whose header follows comments and keys', () => {
+    const outcome = loadBytes(
+      Buffer.from('# A5:ER FORMAT:21\n# note\nPName="x"\n[Entity]\nPName="a"\n', 'utf8'),
+      'late-header.a5er',
+    );
+
+    expect(outcome.ok).toBe(true);
   });
 });
 
