@@ -16,21 +16,25 @@
  *    figures the *semantic* stage actually produces (`commonColumnsOf`, `relationsOf`), called from
  *    this file only: `measure()` never imports them;
  * 6. **purity** — a frozen scan is measurable, the result is deterministic, and `src/budget/` reads
- *    no clock, environment, filesystem or heap figure.
+ *    no clock, environment, filesystem or heap figure;
+ * 7. **range contract** — every numeric input and every published number is a non-negative safe
+ *    integer; a violation throws `ResourceMeasureError` naming the field, and the product/sum
+ *    boundaries are checked against exact `BigInt` arithmetic around `2^53`.
  */
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { measure } from '../src/budget/index.js';
+import { measure, ResourceMeasureError } from '../src/budget/index.js';
+import { checkedProduct, checkedSum } from '../src/budget/measure.js';
 import type { ResourceMeasure } from '../src/budget/measure.js';
 import { loadSource } from '../src/decode/load.js';
 import { classify } from '../src/schema/registry.js';
 import { commonColumnsOf } from '../src/semantic/common-columns.js';
 import { relationsOf } from '../src/semantic/relations.js';
 import { scanSource } from '../src/syntax/scanner.js';
-import type { SyntaxScan } from '../src/syntax/scanner.js';
+import type { SyntaxAccounting, SyntaxScan } from '../src/syntax/scanner.js';
 import { FIXTURES } from './helpers/fixture-registry.js';
 import { stage } from './helpers/stage.js';
 
@@ -623,6 +627,268 @@ describe('measure — pure and deterministic', () => {
   });
 });
 
+// ── the safe-integer contract ────────────────────────────────────────────
+
+/** `2^53 − 1`, the last integer a JavaScript number holds exactly and safely. */
+const MAX_SAFE = Number.MAX_SAFE_INTEGER;
+
+/** Every value a numeric field must refuse, none of which may be rounded into range. */
+const NOT_A_COUNT: readonly (readonly [label: string, value: unknown])[] = [
+  ['negative', -1],
+  ['fraction', 1.5],
+  ['NaN', Number.NaN],
+  ['Infinity', Number.POSITIVE_INFINITY],
+  ['-Infinity', Number.NEGATIVE_INFINITY],
+  ['2^53', 2 ** 53],
+  ['string', '3'],
+  ['undefined', undefined],
+  ['null', null],
+  ['bigint', 10n],
+];
+
+/** Every numeric field of §13's accounting object — the nested ones included. */
+const ACCOUNTING_FIELDS = [
+  'lines.total',
+  'lines.sectionHeaders',
+  'lines.keys',
+  'lines.comments',
+  'lines.blank',
+  'lines.raw',
+  'sections.total',
+  'sections.recognised',
+  'sections.unknown',
+  'keys.total',
+  'keys.inRecognisedSections',
+  'keys.inUnknownSections',
+  'keys.beforeFirstSection',
+  'dropped',
+] as const;
+
+describe('measure — the product boundary, derived with exact arithmetic', () => {
+  it('accepts exactly 2^53 − 1 and rejects one factor step past it', () => {
+    // 2^53 − 1 = 6361 × 69431 × 20,394,401, so these two factors multiply to the last safe integer.
+    // The expectation is BigInt's; only the code under test is numeric.
+    expect(BigInt(441_650_591) * BigInt(20_394_401)).toBe(BigInt(MAX_SAFE));
+    expect(checkedProduct(441_650_591, 20_394_401, 'product')).toBe(MAX_SAFE);
+
+    expect(() => checkedProduct(441_650_591, 20_394_402, 'product')).toThrow(ResourceMeasureError);
+    expect(() => checkedProduct(441_650_592, 20_394_401, 'product')).toThrow(ResourceMeasureError);
+  });
+
+  it('accepts the integer square root of 2^53 squared and rejects the next integer', () => {
+    expect(94_906_265n ** 2n).toBeLessThan(BigInt(MAX_SAFE) + 1n);
+    expect(94_906_266n ** 2n).toBeGreaterThan(BigInt(MAX_SAFE));
+
+    expect(BigInt(checkedProduct(94_906_265, 94_906_265, 'square'))).toBe(94_906_265n ** 2n);
+    expect(() => checkedProduct(94_906_266, 94_906_266, 'square')).toThrow(ResourceMeasureError);
+  });
+
+  it('rejects the product that lands exactly on 2^53', () => {
+    // 2^53 is an exact integer but not a *safe* one: `Number.isSafeInteger` is the expression of the
+    // contract, and a product that reaches it is rejected rather than published.
+    expect(2 ** 26 * 2 ** 27).toBe(2 ** 53);
+    expect(Number.isSafeInteger(2 ** 53)).toBe(false);
+
+    expect(() => checkedProduct(2 ** 26, 2 ** 27, 'power')).toThrow(ResourceMeasureError);
+  });
+
+  it('names the operation and its reason in a deterministic message', () => {
+    let caught: unknown = null;
+    try {
+      checkedProduct(2 ** 26, 2 ** 27, 'bounds.example');
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(ResourceMeasureError);
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).name).toBe('ResourceMeasureError');
+    expect((caught as Error).message).toBe(
+      'measure(): bounds.example exceeds the safe-integer range',
+    );
+  });
+});
+
+describe('measure — the sum boundary, derived with exact arithmetic', () => {
+  it('accepts a sum that lands exactly on the maximum', () => {
+    expect(checkedSum([MAX_SAFE - 1, 1], 'sum')).toBe(MAX_SAFE);
+    // Zero can never cross a boundary, so it must not be reported as one.
+    expect(checkedSum([MAX_SAFE, 0], 'sum')).toBe(MAX_SAFE);
+  });
+
+  it('rejects the addition that leaves the range', () => {
+    expect(() => checkedSum([MAX_SAFE, 1], 'sum')).toThrow(ResourceMeasureError);
+  });
+
+  it('rejects every further addition once the range is left', () => {
+    expect(() => checkedSum([MAX_SAFE, 1, 0], 'sum')).toThrow(ResourceMeasureError);
+    expect(() => checkedSum([MAX_SAFE, 1, 1], 'sum')).toThrow(ResourceMeasureError);
+  });
+
+  it('rejects a multi-term sum that only crosses on a later term', () => {
+    // Three terms fit exactly; the fourth is the one that leaves the range.
+    expect(checkedSum([MAX_SAFE - 2, 1, 1, 0], 'sum')).toBe(MAX_SAFE);
+    expect(() => checkedSum([MAX_SAFE - 2, 1, 1, 1], 'sum')).toThrow(ResourceMeasureError);
+  });
+});
+
+/** The document every accounting case is built from: one of each relevant shape. */
+const ACCOUNTING_TEXT =
+  `[Manager]\n${MANAGER_KEYS}${COMMON_FIELD('created_at')}\n` +
+  entitySection('a', `${FIELD('id')}UsingCommonColumns=1\n${POSITION(1, 1)}`) +
+  relationSection('[Relation]', 'a', 'a', 'id', 'id');
+
+/** The accounting object of `ACCOUNTING_TEXT` with one numeric field replaced. */
+function accountingWith(field: string, value: unknown): SyntaxAccounting {
+  const source = scanOf(ACCOUNTING_TEXT).accounting;
+  const accounting: Record<string, unknown> = {
+    lines: { ...source.lines },
+    sections: { ...source.sections },
+    keys: { ...source.keys },
+    dropped: source.dropped,
+  };
+
+  const parts = field.split('.');
+  const member = parts[1];
+  if (member === undefined) {
+    accounting[field] = value;
+  } else {
+    const group = accounting[parts[0] ?? ''] as Record<string, unknown>;
+    group[member] = value;
+  }
+  return accounting as unknown as SyntaxAccounting;
+}
+
+/** A scan whose accounting is `accounting`, otherwise the scan of `ACCOUNTING_TEXT`. */
+function scanWithAccounting(accounting: SyntaxAccounting): SyntaxScan {
+  return { ...scanOf(ACCOUNTING_TEXT), accounting };
+}
+
+describe('measure — a numeric input outside the range is rejected, never rounded', () => {
+  it('rejects every accounting field that is not a non-negative safe integer', () => {
+    for (const field of ACCOUNTING_FIELDS) {
+      for (const [label, value] of NOT_A_COUNT) {
+        let caught: unknown = null;
+        try {
+          measure(scanWithAccounting(accountingWith(field, value)));
+        } catch (error) {
+          caught = error;
+        }
+
+        // The field is named, so a bad number cannot be mistaken for a bad document.
+        expect(caught, `${field} = ${label}`).toBeInstanceOf(ResourceMeasureError);
+        expect((caught as Error).message, `${field} = ${label}`).toBe(
+          `measure(): accounting.${field} is not a non-negative safe integer`,
+        );
+      }
+    }
+  });
+
+  it('accepts an in-range accounting number however large it is', () => {
+    // The check is a range check: a big-but-safe total is published, not second-guessed.
+    const result = measure(scanWithAccounting(accountingWith('lines.total', MAX_SAFE)));
+
+    expect(result.counters.totalLines).toBe(MAX_SAFE);
+  });
+
+  it('keeps the document out of the message', () => {
+    const marker = 'Marker_9f3b';
+    const text = `[Manager]\n${MANAGER_KEYS}Note="${marker}"\n`;
+    let message = '';
+    try {
+      measure({ ...scanOf(text), accounting: accountingWith('keys.total', -1) });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+
+    expect(message).toBe('measure(): accounting.keys.total is not a non-negative safe integer');
+    expect(message).not.toContain(marker);
+    expect(message).not.toContain('PageInfo');
+  });
+});
+
+describe('measure — a result it cannot prove is rejected, never published', () => {
+  it('rejects an aggregate that a non-string value would turn into NaN', () => {
+    // A hand-built `Fields1` entry whose value is not a string makes the code-unit sum NaN. The
+    // aggregate check is what catches it, so no NaN can be published as a bound component.
+    const scan = scanOf(ACCOUNTING_TEXT);
+    const broken = {
+      ...scan,
+      sections: scan.sections.map((section) => ({
+        ...section,
+        entries: section.entries.map((entry) =>
+          entry.kind === 'key' && entry.key === 'Fields1'
+            ? { ...entry, value: 1 as unknown as string }
+            : entry,
+        ),
+      })),
+    };
+
+    expect(() => measure(broken as unknown as SyntaxScan)).toThrow(
+      'measure(): bounds.relationColumnSlotsUpperBound is not a non-negative safe integer',
+    );
+  });
+
+  it('rejects a section kind the counter map does not declare', () => {
+    // The result gate walks whatever the object carries, so an invented kind cannot leave an
+    // unproven number inside `sectionsByKind`.
+    const scan = scanOf(ACCOUNTING_TEXT);
+    const first = scan.sections[0];
+    const broken = {
+      ...scan,
+      sections: [...scan.sections, { ...first, kind: 'Nope', entries: [] }],
+    };
+
+    expect(() => measure(broken as unknown as SyntaxScan)).toThrow(
+      'measure(): counters.sectionsByKind.Nope is not a non-negative safe integer',
+    );
+  });
+});
+
+describe('measure — unknown-section keys stay inside §13’s one counter', () => {
+  it('counts only unknown-section keys, and totalKeys still holds every key line', () => {
+    const text =
+      // A header-region key: it is a key line, but it has no section, so the split excludes it.
+      'HeaderKey=1\n' +
+      `[Manager]\n${MANAGER_KEYS}` +
+      // An unknown key inside a recognised section: preserved by the registry, not counted here.
+      'UnknownManager=1\n' +
+      entitySection('a', `UnknownEntity=1\n${FIELD('id')}\n${POSITION(1, 1)}`) +
+      // An unknown section: its keys are the one population this counter holds.
+      '[Mystery]\nUnknownA=1\nPName="x"\n' +
+      '[View]\nPName="v"\nUnknownView=1\n';
+    const result = measureOf(text);
+
+    expect(result.counters.unknownSectionKeyOccurrences).toBe(2);
+    // 1 header key + 2 Manager + 4 Entity + 2 Mystery + 2 View.
+    expect(result.counters.totalKeys).toBe(11);
+    expect(result.counters.unknownSectionKeyOccurrences).toBeLessThanOrEqual(
+      result.counters.totalKeys,
+    );
+  });
+
+  it('adds no counter: the published field set is unchanged', () => {
+    expect(Object.keys(measureOf('').counters).sort()).toEqual(
+      [
+        'entityFieldOccurrences',
+        'entityUsingCommonColumnsOccurrences',
+        'fields1ValueCodeUnits',
+        'fields2ValueCodeUnits',
+        'managerCommonFieldOccurrences',
+        'relationFields1Occurrences',
+        'relationFields2Occurrences',
+        'sectionsByKind',
+        'totalBlankLines',
+        'totalComments',
+        'totalKeys',
+        'totalLines',
+        'totalRawLines',
+        'totalSections',
+        'unknownSectionKeyOccurrences',
+      ].sort(),
+    );
+  });
+});
 // ── module surface ─────────────────────────────────────────────────────────
 
 describe('src/budget — module surface and purity', () => {
