@@ -1473,19 +1473,18 @@ export function serialize(input: IntegrationInput, context: SerializeContext): J
  * key is named; the value is not echoed, because it can be file text.
  */
 export function strictReplacer(key: string, value: unknown): unknown {
-  const where = ` at key ${JSON.stringify(key)}`;
   switch (typeof value) {
     case 'undefined':
-      throw new TypeError(`cannot serialise undefined${where}`);
+      throw new TypeError(`cannot serialise undefined at key ${JSON.stringify(key)}`);
     case 'function':
-      throw new TypeError(`cannot serialise a function${where}`);
+      throw new TypeError(`cannot serialise a function at key ${JSON.stringify(key)}`);
     case 'symbol':
-      throw new TypeError(`cannot serialise a symbol${where}`);
+      throw new TypeError(`cannot serialise a symbol at key ${JSON.stringify(key)}`);
     case 'bigint':
-      throw new TypeError(`cannot serialise a bigint${where}`);
+      throw new TypeError(`cannot serialise a bigint at key ${JSON.stringify(key)}`);
     case 'number':
       if (!Number.isFinite(value))
-        throw new TypeError(`cannot serialise a non-finite number${where}`);
+        throw new TypeError(`cannot serialise a non-finite number at key ${JSON.stringify(key)}`);
       return value;
     default:
       return value;

@@ -156,7 +156,7 @@ describe('json/stream — key escaping (§5.10)', () => {
 
   it('slices a 40,001-code-unit key without changing its bytes', () => {
     // A generalized case: no product input produces such a key (§5.10). Only the output chunks are
-    // bound-checked; the temporary string `strictReplacer` builds is expected to be that size.
+    // bound-checked; the escapes the encoder builds for one slice are expected to be that size.
     const key = 'k'.repeat(40_001);
     const document = { [key]: 1 };
 
@@ -166,6 +166,16 @@ describe('json/stream — key escaping (§5.10)', () => {
     // A value-only check would miss a key split; the escaped key round-trips through JSON.
     const parsed: unknown = JSON.parse(text.slice(0, -1));
     expect(Object.keys(parsed as object)).toEqual([key]);
+  });
+
+  it('escapes a string of at most 16,384 code units as one piece, and slices past it', () => {
+    // 16,384 is the slice width: at or below it the whole string is escaped in one call, above it
+    // the slicing loop runs. Both arms must produce `JSON.stringify`'s bytes.
+    const atLimit = 'a'.repeat(16_384);
+    const overLimit = 'a'.repeat(16_385);
+
+    expect(expectEquivalent(wrapped(atLimit))).toBe(`{"value":"${atLimit}"}\n`);
+    expect(expectEquivalent(wrapped(overLimit))).toBe(`{"value":"${overLimit}"}\n`);
   });
 });
 

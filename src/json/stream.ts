@@ -26,9 +26,10 @@
  * and the concatenation is `JSON.stringify`'s bytes. The same protection guards the chunk buffer:
  * Node encodes each `write()` separately, so a split pair would reach the reader as two U+FFFD.
  *
- * **Temporaries are not bounded.** `strictReplacer` builds its error context — `` ` at key ${…}` ` —
- * on every call, so each value costs one temporary string proportional to its key (§5.10). Product
- * keys are fixed short names; only the generalized tests of §8.4 use a 40,001-code-unit key.
+ * **Temporaries are bounded by the keys.** `strictReplacer` builds its error context —
+ * `` ` at key ${…}` `` — only on the throw path, so a value it accepts costs no temporary string;
+ * a rejected value costs one proportional to its key (§5.10). Product keys are fixed short
+ * names; only the generalized tests of §8.4 use a 40,001-code-unit key.
  *
  * `toJsonString`, `serialize()` and the `inspect`/`validate` bytes deliberately do not change:
  * `strictReplacer` gains an `export` and no behaviour (§5.8, S-3).
@@ -69,6 +70,14 @@ function readProperty(holder: object, key: string): unknown {
  * equal to stringifying the whole value.
  */
 function* stringPieces(value: string): Generator<string, void, undefined> {
+  // A string that fits in one slice needs no slicing: `JSON.stringify` escapes the whole value
+  // exactly as the pieces of the loop below would, and it already carries its own quotes. One
+  // piece instead of three is the common case — product keys and values are short.
+  if (value.length <= STRING_SLICE_CODE_UNITS) {
+    yield JSON.stringify(value);
+    return;
+  }
+
   yield '"';
   let start = 0;
   while (start < value.length) {
