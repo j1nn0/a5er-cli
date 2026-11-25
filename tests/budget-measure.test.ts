@@ -17,9 +17,11 @@
  *    this file only: `measure()` never imports them;
  * 6. **purity** — a frozen scan is measurable, the result is deterministic, and `src/budget/` reads
  *    no clock, environment, filesystem or heap figure;
- * 7. **range contract** — every numeric input and every published number is a non-negative safe
- *    integer; a violation throws `ResourceMeasureError` naming the field, and the product/sum
- *    boundaries are checked against exact `BigInt` arithmetic around `2^53`.
+ * 7. **range and value-type contract** — every declared numeric input and every published number is
+ *    a non-negative safe integer, every section kind and `Fields1`/`Fields2` value is checked
+ *    before it is counted, and a violation throws `ResourceMeasureError` naming the field but never
+ *    echoing the value; the product/sum boundaries are checked against exact `BigInt` arithmetic
+ *    around `2^53`.
  */
 
 import { readFileSync, readdirSync } from 'node:fs';
@@ -808,9 +810,10 @@ describe('measure — a numeric input outside the range is rejected, never round
 });
 
 describe('measure — a result it cannot prove is rejected, never published', () => {
-  it('rejects an aggregate that a non-string value would turn into NaN', () => {
-    // A hand-built `Fields1` entry whose value is not a string makes the code-unit sum NaN. The
-    // aggregate check is what catches it, so no NaN can be published as a bound component.
+  it('rejects a non-string Fields1 value before the code-unit sum can see it', () => {
+    // A hand-built `Fields1` entry whose value is not a string would make the code-unit sum NaN and
+    // the slot bound unprovable. The value check runs first, so the rejection names the counter that
+    // was about to take the length rather than the aggregate further down.
     const scan = scanOf(ACCOUNTING_TEXT);
     const broken = {
       ...scan,
@@ -825,13 +828,13 @@ describe('measure — a result it cannot prove is rejected, never published', ()
     };
 
     expect(() => measure(broken as unknown as SyntaxScan)).toThrow(
-      'measure(): bounds.relationColumnSlotsUpperBound is not a non-negative safe integer',
+      'measure(): counters.fields1ValueCodeUnits has a non-string value',
     );
   });
 
-  it('rejects a section kind the counter map does not declare', () => {
-    // The result gate walks whatever the object carries, so an invented kind cannot leave an
-    // unproven number inside `sectionsByKind`.
+  it('rejects a section kind the counter map does not declare before it is written', () => {
+    // An invented kind appended to a real document is refused on the way into the counters, so it
+    // cannot leave an unproven number — or a key — inside `sectionsByKind`.
     const scan = scanOf(ACCOUNTING_TEXT);
     const first = scan.sections[0];
     const broken = {
@@ -840,7 +843,7 @@ describe('measure — a result it cannot prove is rejected, never published', ()
     };
 
     expect(() => measure(broken as unknown as SyntaxScan)).toThrow(
-      'measure(): counters.sectionsByKind.Nope is not a non-negative safe integer',
+      'measure(): counters.sectionsByKind has an unrecognised section kind',
     );
   });
 });
@@ -886,6 +889,233 @@ describe('measure — unknown-section keys stay inside §13’s one counter', ()
         'totalSections',
         'unknownSectionKeyOccurrences',
       ].sort(),
+    );
+  });
+});
+
+// ── value types: Fields1/Fields2 strings and the nine section kinds ────────
+
+/** Run `measure` on `scan`; the thrown value when it refused, `null` when it returned. */
+function measureError(scan: SyntaxScan): unknown {
+  try {
+    measure(scan);
+    return null;
+  } catch (error) {
+    return error;
+  }
+}
+
+/** The nine declared section kinds, written out from §5 rather than read from the module. */
+const DECLARED_KINDS = [
+  'Manager',
+  'Entity',
+  'Relation',
+  'View',
+  'Subtype',
+  'Shape',
+  'Line',
+  'Comment',
+  'unknown',
+] as const;
+
+/** The code-unit counter each relation key feeds. */
+const VALUE_COUNTER = {
+  Fields1: 'counters.fields1ValueCodeUnits',
+  Fields2: 'counters.fields2ValueCodeUnits',
+} as const;
+
+/** The scan of `ACCOUNTING_TEXT` with its relation entries replaced by `entries`. */
+function scanWithRelationEntries(
+  entries: readonly { readonly key: string; readonly value: unknown }[],
+): SyntaxScan {
+  const scan = scanOf(ACCOUNTING_TEXT);
+  const relation = scan.sections.find((section) => section.kind === 'Relation');
+  if (relation === undefined) throw new Error('the base document has no relation section');
+
+  return {
+    ...scan,
+    sections: scan.sections.map((section) =>
+      section === relation
+        ? ({
+            ...section,
+            entries: entries.map((entry) => ({ kind: 'key', key: entry.key, value: entry.value })),
+          } as unknown as typeof section)
+        : section,
+    ),
+  };
+}
+
+/** The scan of an empty document, with `kinds` as its whole section list. */
+function scanWithKinds(kinds: readonly unknown[]): SyntaxScan {
+  return {
+    ...scanOf(''),
+    sections: kinds.map((kind) => ({
+      kind,
+      name: 'X',
+      entries: [],
+    })) as unknown as SyntaxScan['sections'],
+  };
+}
+
+describe('measure — a Fields1/Fields2 value is measured only as a string', () => {
+  /** Every shape that must be refused before any `length` is added to the counter. */
+  const REFUSED: readonly (readonly [label: string, value: unknown])[] = [
+    ['an object whose length is −1', { length: -1 }],
+    ['an object whose length is NaN', { length: Number.NaN }],
+    ['null', null],
+    ['undefined', undefined],
+    ['a number', 42],
+  ];
+
+  for (const key of ['Fields1', 'Fields2'] as const) {
+    const field = VALUE_COUNTER[key];
+
+    it(`refuses a non-string ${key} value, naming the counter and not the value`, () => {
+      for (const [label, value] of REFUSED) {
+        const error = measureError(scanWithRelationEntries([{ key, value }]));
+
+        expect(error, `${key}: ${label}`).toBeInstanceOf(ResourceMeasureError);
+        expect((error as Error).message, `${key}: ${label}`).toBe(
+          `measure(): ${field} has a non-string value`,
+        );
+      }
+
+      // No part of the value reaches the message, not even as a coercion.
+      const marker = 'Marker_9f3b<&>"';
+      const error = measureError(scanWithRelationEntries([{ key, value: { marker } }]));
+      expect((error as Error).message).not.toContain(marker);
+    });
+
+    it(`refuses a negative ${key} length that would cancel a real one`, () => {
+      // The bug this pins: −1 + 2 = 1 would leave the slot bound healthy, so the value has to be
+      // refused before its length is added, not left to the aggregate check.
+      const error = measureError(
+        scanWithRelationEntries([
+          { key, value: { length: -1 } },
+          { key, value: 'ab' },
+        ]),
+      );
+
+      expect(error).toBeInstanceOf(ResourceMeasureError);
+      expect((error as Error).message).toBe(`measure(): ${field} has a non-string value`);
+    });
+
+    it(`counts normal, empty and long ${key} strings exactly as before`, () => {
+      const counter = (result: ResourceMeasure): number =>
+        key === 'Fields1'
+          ? result.counters.fields1ValueCodeUnits
+          : result.counters.fields2ValueCodeUnits;
+      const occurrences = (result: ResourceMeasure): number =>
+        key === 'Fields1'
+          ? result.counters.relationFields1Occurrences
+          : result.counters.relationFields2Occurrences;
+
+      const normal = measure(scanWithRelationEntries([{ key, value: 'abc' }]));
+      const empty = measure(scanWithRelationEntries([{ key, value: '' }]));
+      const longResult = measure(scanWithRelationEntries([{ key, value: 'x'.repeat(20_000) }]));
+
+      expect(counter(normal)).toBe(3);
+      expect(occurrences(normal)).toBe(1);
+      expect(empty.bounds.relationColumnSlotsUpperBound).toBe(1);
+      expect(counter(empty)).toBe(0);
+      expect(counter(longResult)).toBe(20_000);
+      expect(occurrences(longResult)).toBe(1);
+      expect(longResult.bounds.relationColumnSlotsUpperBound).toBe(20_001);
+    });
+  }
+});
+
+describe('measure — a section kind must be one of the nine declared kinds', () => {
+  it('accepts all nine declared kinds and publishes no other key', () => {
+    const result = measure(scanWithKinds(DECLARED_KINDS));
+
+    expect(Object.keys(result.counters.sectionsByKind).sort()).toEqual([...DECLARED_KINDS].sort());
+    for (const kind of DECLARED_KINDS) {
+      expect(result.counters.sectionsByKind[kind], kind).toBe(1);
+    }
+    // A symbol key would be invisible to `Object.keys`, so it needs its own assertion.
+    expect(Object.getOwnPropertySymbols(result.counters.sectionsByKind)).toEqual([]);
+    expect(Object.getPrototypeOf(result.counters.sectionsByKind)).toBe(Object.prototype);
+  });
+
+  it('refuses an undeclared kind before it reaches the counters', () => {
+    const refused: readonly unknown[] = [
+      'Nope',
+      '',
+      '__proto__',
+      'constructor',
+      'toString',
+      'hasOwnProperty',
+      'valueOf',
+      'ENTITY',
+      Symbol('MarkerSymbol'),
+      0,
+      1,
+      null,
+      undefined,
+      {},
+      ['Entity'],
+    ];
+
+    for (const kind of refused) {
+      const label = typeof kind === 'symbol' ? 'a symbol' : String(kind);
+      const error = measureError(scanWithKinds([kind]));
+
+      expect(error, label).toBeInstanceOf(ResourceMeasureError);
+      expect((error as Error).message, label).toBe(
+        'measure(): counters.sectionsByKind has an unrecognised section kind',
+      );
+    }
+  });
+
+  it('never puts the refused kind in the message, whatever it contains', () => {
+    // A marker plus characters that would break a path-like message: quotes, a backslash and a
+    // line separator. The message must not move with the kind.
+    const marker = 'Marker_9f3b<&>"\\\u2028';
+    const first = measureError(scanWithKinds([marker]));
+    const second = measureError(scanWithKinds([marker]));
+
+    expect(first).toBeInstanceOf(ResourceMeasureError);
+    expect((first as Error).message).toBe(
+      'measure(): counters.sectionsByKind has an unrecognised section kind',
+    );
+    expect((first as Error).message).not.toContain('Marker_9f3b');
+    expect((first as Error).message).not.toContain('\u2028');
+    expect((second as Error).message).toBe((first as Error).message);
+  });
+});
+
+describe('measure — the accounting guarantee is the 14 declared fields', () => {
+  it('tolerates extra accounting properties and guarantees only the declared fields', () => {
+    const scan = scanOf(ACCOUNTING_TEXT);
+    const accounting = {
+      ...scan.accounting,
+      extraCount: Number.NaN,
+      lines: { ...scan.accounting.lines, extraLine: Number.NaN },
+    };
+
+    const result = measure({ ...scan, accounting });
+
+    // Extras are outside the contract: neither checked nor removed, and the reference is kept.
+    expect(result.accounting).toBe(accounting);
+    expect((result.accounting as unknown as Record<string, unknown>)['extraCount']).toBeNaN();
+    expect((result.accounting.lines as unknown as Record<string, unknown>)['extraLine']).toBeNaN();
+    // The declared numbers — counters and bounds — are all clean.
+    for (const [path, value] of numericLeaves(result)) {
+      expect(Number.isSafeInteger(value), path).toBe(true);
+      expect(value, path).toBeGreaterThanOrEqual(0);
+    }
+    expect(result.counters.totalLines).toBe(scan.accounting.lines.total);
+    expect(result.counters.totalKeys).toBe(scan.accounting.keys.total);
+  });
+
+  it('still refuses a declared accounting field outside the range', () => {
+    // The extra-property tolerance does not weaken the 14 declared fields.
+    const error = measureError(scanWithAccounting(accountingWith('dropped', Number.NaN)));
+
+    expect(error).toBeInstanceOf(ResourceMeasureError);
+    expect((error as Error).message).toBe(
+      'measure(): accounting.dropped is not a non-negative safe integer',
     );
   });
 });

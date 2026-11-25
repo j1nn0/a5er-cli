@@ -24,12 +24,15 @@
  *    relation section and its `Fields1`/`Fields2` lines count like any other; `[entity]` is
  *    `unknown`, so its keys count as unknown-section keys. Counting by header name would miss the
  *    alias and invent a second kind (`txt-02`, `txt-07`).
- * 4. **Ranges are checked, not assumed.** Every numeric field read from `scan.accounting` and every
- *    numeric field published must be a non-negative safe integer, and the two aggregates are
- *    computed with checked arithmetic. A value outside that range is never clamped, rounded or
- *    substituted into a plausible-looking figure: it throws `ResourceMeasureError`, naming the
- *    field or the operation that failed. The check covers ranges only — what it cannot establish is
- *    listed in `ResourceCounters`.
+ * 4. **Ranges and value types are checked, not assumed.** Every declared numeric field read from
+ *    `scan.accounting`, every published counter and bound, every section kind and every
+ *    `Fields1`/`Fields2` value is checked at runtime: a number must be a non-negative safe integer,
+ *    a kind must be one of the nine declared kinds, and a relation value must be a string. A
+ *    violation is never clamped, rounded or substituted into a plausible-looking figure — it throws
+ *    `ResourceMeasureError`, naming the field or the operation at fault and never the offending
+ *    value. The check covers ranges and value types only: an extra `accounting` property, a
+ *    logically inconsistent scan and a getter's side effects are outside it (see
+ *    `ResourceCounters`).
  *
  * Purity: the scan is read, never modified; the result is new and flat. No filesystem, process,
  * clock, environment or V8 heap figure is consulted, no parser or decoder is re-implemented, and
@@ -49,7 +52,9 @@ import type { SectionKind } from '../syntax/sections.js';
  * The internal-contract violation `measure()` reports.
  *
  * `measure()` throws this, and only this, when a figure it would publish cannot be proven to be a
- * non-negative safe integer: a numeric input outside that range, or a product or sum that leaves it.
+ * non-negative safe integer — a numeric input outside that range, a product or sum that leaves it,
+ * or a value whose type makes it unmeasurable (a section kind outside the nine declared ones, a
+ * `Fields1`/`Fields2` value that is not a string).
  * It is not a finding about the document — under the default read limits no `.a5er` input reaches
  * it — and nothing here turns it into a CLI refusal, a diagnostic or an exit code; admission is a
  * separate decision that has not been made.
@@ -127,33 +132,99 @@ export function checkedSum(terms: readonly number[], field: string): number {
 }
 
 /**
+ * The nine declared section kinds, as an own-property table for the runtime input check.
+ *
+ * A null prototype and `Object.hasOwn()` are the point: `__proto__`, `constructor`, `toString` and
+ * every other name a prototype could offer are *inherited*, not own, so they are rejected instead of
+ * being counted — or coerced into a property name, or (for a symbol) added as a key that
+ * `Object.entries` would never see. `Record<SectionKind, true>` makes the compiler reject a table
+ * that misses or invents a kind, so it cannot drift from the type. Built once, frozen.
+ */
+const DECLARED_SECTION_KINDS: Readonly<Record<SectionKind, true>> = Object.freeze(
+  Object.assign(Object.create(null) as Record<SectionKind, true>, {
+    Manager: true,
+    Entity: true,
+    Relation: true,
+    View: true,
+    Subtype: true,
+    Shape: true,
+    Line: true,
+    Comment: true,
+    unknown: true,
+  }),
+);
+
+/**
+ * `kind` when it is one of the nine declared section kinds, else a `ResourceMeasureError`.
+ *
+ * The test is `typeof kind === 'string'` plus own-property membership, so a symbol, a number, `null`
+ * and an object are refused without being coerced, and a prototype name is not mistaken for a
+ * declared kind. The message is fixed: the kind is never echoed, because a hand-built scan can put
+ * anything there and it may be file-derived text.
+ */
+function assertSectionKind(kind: unknown): SectionKind {
+  if (typeof kind !== 'string' || !Object.hasOwn(DECLARED_SECTION_KINDS, kind)) {
+    throw new ResourceMeasureError('counters.sectionsByKind has an unrecognised section kind');
+  }
+  return kind as SectionKind;
+}
+
+/**
+ * The code-unit length of a `Fields1`/`Fields2` value, else a `ResourceMeasureError` naming `field`.
+ *
+ * A hand-built scan can put anything under `value`, and reading `.length` off it is not safe: a
+ * negative or fractional `length` could cancel a real one and leave a healthy-looking bound. Only a
+ * real string is measured, and no part of the value is echoed — it can be file text.
+ */
+function checkedValueLength(value: unknown, field: string): number {
+  if (typeof value !== 'string') {
+    throw new ResourceMeasureError(`${field} has a non-string value`);
+  }
+  return value.length;
+}
+
+/**
  * §13's totals plus the structural occurrences a line scan settles exactly.
  *
- * Every numeric member is a non-negative integer produced by a length or a count, and `measure()`
- * checks that at runtime: on a clean return every numeric field is a non-negative safe integer, and
- * a value outside that range is rejected before a result is published.
+ * Every numeric member is a non-negative integer produced by a length or a count.
  *
- * **What the range check guarantees.** Every numeric field read from `scan.accounting`, every
- * count derived from the sections, and the two aggregates are non-negative safe integers; the
- * product and the sum behind the bounds use checked arithmetic, so an over-range aggregate throws
- * instead of being returned rounded. **What it does not guarantee:**
+ * **What the range check guarantees.** On a clean return these four populations are non-negative
+ * safe integers:
  *
- * - **Logical correctness.** Reconciliation, the line partition and `dropped` are the scanner's
- *   contract (§13); `measure()` reuses `accounting` and never produces a second opinion.
- * - **Provenance.** The check is about numbers, not about who produced them: a hand-built scan, a
- *   scan from a larger custom limit, or an internally inconsistent `accounting` with in-range
- *   numbers is measured like any other.
- * - **Safety after the call.** `accounting` is returned **by reference**, so a caller that mutates
- *   the scan or its `accounting` during or after measuring leaves this contract behind. No copy or
- *   deep freeze is added, and no post-return mutation safety is promised.
+ * 1. every declared `ResourceCounters` number below;
+ * 2. every declared `ResourceBounds` number (see that type);
+ * 3. the 14 declared numeric fields of `SyntaxAccounting`, as they were when `measure()` read them;
+ * 4. every length taken from a normal string value — a `Fields1`/`Fields2` value that is not a
+ *    string, and a section kind outside the nine declared ones, are refused before they are
+ *    counted — plus both aggregates, which use checked arithmetic.
+ *
+ * **What it does not guarantee:**
+ *
+ * - **Extra accounting properties.** Only the 14 declared fields are read and checked. An extra
+ *   property — top-level or nested, even one holding `NaN` — is carried through untouched and sits
+ *   outside this contract: `measure()` neither validates it nor rejects it.
+ * - **Logical consistency.** Reconciliation, the line partition and `dropped` are the scanner's
+ *   contract (§13). A **range violation is detected** and throws `ResourceMeasureError`; a
+ *   range-valid but internally **inconsistent** `accounting` is not inspected here, produces no
+ *   error, and is measured as it stands.
+ * - **Provenance.** The check is about numbers and value types, not about who produced them: a
+ *   hand-built scan or a scan from a larger custom limit with in-range numbers is measured like
+ *   any other.
+ * - **Getter side effects.** Each declared field is read once, in a fixed order; a property
+ *   implemented as a getter runs its own code during that read, and `measure()` neither forbids nor
+ *   analyses that.
+ * - **Mutation during or after the call.** `accounting` is returned **by reference**, so a caller
+ *   that mutates the scan or its `accounting` while the call runs (through a getter or a proxy) or
+ *   after it returns leaves this contract behind. No copy or deep freeze is added, and no
+ *   post-return mutation safety is promised.
  * - **Load and size.** Nothing here estimates the unknown-key-heavy load, the diagnostics or JSON
  *   size, the heap or the RSS, and nothing here prevents an out-of-memory abort (F-4).
  *
- * A consistent scan from the default read limits (`maxLines` 2,000,000, `maxLineLength` 4 MiB,
- * §10.2) keeps every counter and both bounds far below `Number.MAX_SAFE_INTEGER` (see the bound
- * docs for the figures); the runtime check exists so that an inconsistent one is not silently
- * measured as if it were. Figures derived from the runtime's own string-length limits are
- * environment-specific and are not treated as a universal guarantee.
+ * A normal scan from the default read limits (`maxLines` 2,000,000, `maxLineLength` 4 MiB, §10.2)
+ * keeps every counter and both bounds far below `Number.MAX_SAFE_INTEGER` (see the bound docs for
+ * the figures); the runtime check exists so that an anomalous one is not silently measured as if it
+ * were normal. Figures derived from the runtime's own string-length limits are environment-specific
+ * and are not treated as a universal guarantee.
  */
 export interface ResourceCounters {
   /** §13 `lines.total`: every physical line. Taken from `scan.accounting`, never recomputed. */
@@ -267,11 +338,12 @@ export interface ResourceMeasure {
 /**
  * Check every number the result publishes, naming the field that failed.
  *
- * The walk covers whatever the returned object actually carries, including a `sectionsByKind` key a
- * hand-built scan invented, and every leaf must be a number: a missing field or a substituted
- * string is a contract violation too. The aggregates were already checked where they were computed;
- * this is the gate that makes "the returned object carries only non-negative safe integers" true of
- * the object that is returned, not only of the parts validated on the way in.
+ * The walk covers every declared counter and bound, and every leaf must be a number: a missing field
+ * or a substituted string is a contract violation too. The aggregates were already checked where
+ * they were computed; this is the gate that makes "the counters and bounds carry only non-negative
+ * safe integers" true of the object that is returned, not only of the parts validated on the way in.
+ * It says nothing about `accounting`: that object is returned by reference and is not walked, so its
+ * extra properties are outside the contract (see `ResourceCounters`).
  */
 function assertPublishedNumbers(value: unknown, path: string): void {
   if (typeof value === 'number') {
@@ -292,16 +364,20 @@ function assertPublishedNumbers(value: unknown, path: string): void {
  * Returns a new record; the scan, its sections and its entries are only read. See the module
  * comment for why every figure here is a structural fact or a documented upper bound.
  *
- * The numbers that come in and the numbers that go out are range-checked: every numeric field of
- * `scan.accounting` is read through `checkedCount()`, the two aggregates use `checkedProduct()` and
- * `checkedSum()`, and the finished counters and bounds are checked once more before they are
- * returned. A value that is not a non-negative safe integer throws `ResourceMeasureError` — there
- * is no clamp, no rounding and no fail-open path, because a bound that lost precision is not a
- * bound. Normal scans are unaffected: the check is a handful of comparisons per call.
+ * The numbers and value types that come in and the numbers that go out are checked: every declared
+ * numeric field of `scan.accounting` is read through `checkedCount()`, every section kind and every
+ * `Fields1`/`Fields2` value is checked before it is counted, the two aggregates use
+ * `checkedProduct()` and `checkedSum()`, and the finished counters and bounds are checked once more
+ * before they are returned. A value that is not a non-negative safe integer — or that has the wrong
+ * type for the field it feeds — throws `ResourceMeasureError`; there is no clamp, no rounding and no
+ * fail-open path, because a bound that lost precision is not a bound. Normal scans are unaffected:
+ * the check is a handful of comparisons per call, and extra `accounting` properties are neither read
+ * nor rejected.
  */
 export function measure(scan: SyntaxScan): ResourceMeasure {
-  // §13's numbers are checked on the way in — every numeric field, not only the seven this
-  // measurement publishes — and the published counters are the checked values, never a second read.
+  // §13's declared numbers are checked on the way in — all 14, not only the seven this measurement
+  // publishes — and the published counters are the checked values, never a second read. Extra
+  // properties are not read at all, so they can neither fail the check nor change its result.
   const accounting = scan.accounting;
   checkedCount(accounting.lines.sectionHeaders, 'accounting.lines.sectionHeaders');
   checkedCount(accounting.lines.keys, 'accounting.lines.keys');
@@ -343,9 +419,13 @@ export function measure(scan: SyntaxScan): ResourceMeasure {
   let fields2ValueCodeUnits = 0;
 
   for (const section of scan.sections) {
-    sectionsByKind[section.kind] += 1;
+    // The kind is checked before it is written: an undeclared one would otherwise create a NaN
+    // entry under a name the counters do not declare — invisible to `Object.entries` when it is a
+    // symbol, or coerced out of a prototype when it is `__proto__`.
+    const kind = assertSectionKind(section.kind);
+    sectionsByKind[kind] += 1;
 
-    if (section.kind === 'Entity') {
+    if (kind === 'Entity') {
       for (const entry of section.entries) {
         if (entry.kind !== 'key') continue;
         // Exact key text: a ` Field` or `Field ` line is a different key, exactly as the registry
@@ -353,19 +433,27 @@ export function measure(scan: SyntaxScan): ResourceMeasure {
         if (entry.key === 'Field') entityFieldOccurrences += 1;
         else if (entry.key === 'UsingCommonColumns') entityUsingCommonColumnsOccurrences += 1;
       }
-    } else if (section.kind === 'Manager') {
+    } else if (kind === 'Manager') {
       for (const entry of section.entries) {
         if (entry.kind === 'key' && entry.key === 'CommonField') managerCommonFieldOccurrences += 1;
       }
-    } else if (section.kind === 'Relation') {
+    } else if (kind === 'Relation') {
       for (const entry of section.entries) {
         if (entry.kind !== 'key') continue;
         if (entry.key === 'Fields1') {
+          // The length is added only after the value is proven to be a string: a hand-built
+          // `{ length: -1 }` would otherwise cancel a real length into a healthy-looking bound.
+          fields1ValueCodeUnits += checkedValueLength(
+            entry.value,
+            'counters.fields1ValueCodeUnits',
+          );
           relationFields1Occurrences += 1;
-          fields1ValueCodeUnits += entry.value.length;
         } else if (entry.key === 'Fields2') {
+          fields2ValueCodeUnits += checkedValueLength(
+            entry.value,
+            'counters.fields2ValueCodeUnits',
+          );
           relationFields2Occurrences += 1;
-          fields2ValueCodeUnits += entry.value.length;
         }
       }
     }
