@@ -122,13 +122,31 @@ export function checkedProduct(left: number, right: number, field: string): numb
  */
 export function checkedSum(terms: readonly number[], field: string): number {
   let total = 0;
-  for (const term of terms) {
-    total += checkedCount(term, field);
-    if (!Number.isSafeInteger(total)) {
-      throw new ResourceMeasureError(`${field} exceeds the safe-integer range`);
-    }
-  }
+  for (const term of terms) total = checkedAdded(total, term, field);
   return total;
+}
+
+/**
+ * `total + addend` when both are non-negative safe integers and the sum is one too, else a
+ * `ResourceMeasureError` naming `field`.
+ *
+ * The running form of `checkedSum()`'s rule, for an accumulator that receives its terms one at a
+ * time: collecting them in an array first would make the extra memory grow with the input, which
+ * the Σ`L²` counter (one term per relation value) must not do. Both forms share this check, so a
+ * running total cannot be validated more weakly than a batch sum.
+ */
+function checkedAdded(total: number, addend: number, field: string): number {
+  const sum = checkedCount(total, field) + checkedCount(addend, field);
+  if (!Number.isSafeInteger(sum)) {
+    throw new ResourceMeasureError(`${field} exceeds the safe-integer range`);
+  }
+  return sum;
+}
+
+/** `total + length²`, with the factor, the product, the addend and the running total all checked. */
+function addValueSquare(total: number, length: number): number {
+  const field = 'counters.relationValueLengthSquares';
+  return checkedAdded(total, checkedProduct(length, length, field), field);
 }
 
 /**
@@ -278,6 +296,24 @@ export interface ResourceCounters {
   readonly fields1ValueCodeUnits: number;
   /** UTF-16 code units of the raw `Fields2` value text, quoting and escapes included. */
   readonly fields2ValueCodeUnits: number;
+  /**
+   * Σ `L²` over every `Fields1`/`Fields2` key occurrence in relation sections, `L` being the raw
+   * value text's UTF-16 code-unit length — the same text `fields1ValueCodeUnits` and
+   * `fields2ValueCodeUnits` sum, quoting and escapes included.
+   *
+   * `[Relationship]` counts as `Relation`, every duplicate key counts once per occurrence, a value
+   * with no text at all (`Fields1=`) adds `0`, and a `Fields1`/`Fields2` line in any other section
+   * — a recognised one or an unknown one — adds nothing.
+   *
+   * **A proxy, not a bound.** It exists to expose one quadratic amplification observed in
+   * `inspect`/`validate`: a single value can describe a list whose work grows with its length, so
+   * the work one value can provoke grows with `L²`, while the code-unit counters above only sum
+   * `L`. It is deliberately **not** an upper bound on the bytes, the heap or the RSS that any output
+   * can cost — a large Σ`L²` with small real amplification is possible, and a small Σ`L²` says
+   * nothing about the rest of the document. Admission, weights and thresholds are separate
+   * decisions that have not been made.
+   */
+  readonly relationValueLengthSquares: number;
 }
 
 /**
@@ -417,6 +453,7 @@ export function measure(scan: SyntaxScan): ResourceMeasure {
   let entityUsingCommonColumnsOccurrences = 0;
   let fields1ValueCodeUnits = 0;
   let fields2ValueCodeUnits = 0;
+  let relationValueLengthSquares = 0;
 
   for (const section of scan.sections) {
     // The kind is checked before it is written: an undeclared one would otherwise create a NaN
@@ -443,17 +480,17 @@ export function measure(scan: SyntaxScan): ResourceMeasure {
         if (entry.key === 'Fields1') {
           // The length is added only after the value is proven to be a string: a hand-built
           // `{ length: -1 }` would otherwise cancel a real length into a healthy-looking bound.
-          fields1ValueCodeUnits += checkedValueLength(
-            entry.value,
-            'counters.fields1ValueCodeUnits',
-          );
+          const length = checkedValueLength(entry.value, 'counters.fields1ValueCodeUnits');
+          fields1ValueCodeUnits += length;
           relationFields1Occurrences += 1;
+          // ΣL² is accumulated one value at a time: no list of squares is built, so the extra
+          // memory stays constant however many relation values the scan holds.
+          relationValueLengthSquares = addValueSquare(relationValueLengthSquares, length);
         } else if (entry.key === 'Fields2') {
-          fields2ValueCodeUnits += checkedValueLength(
-            entry.value,
-            'counters.fields2ValueCodeUnits',
-          );
+          const length = checkedValueLength(entry.value, 'counters.fields2ValueCodeUnits');
+          fields2ValueCodeUnits += length;
           relationFields2Occurrences += 1;
+          relationValueLengthSquares = addValueSquare(relationValueLengthSquares, length);
         }
       }
     }
@@ -501,6 +538,7 @@ export function measure(scan: SyntaxScan): ResourceMeasure {
       entityUsingCommonColumnsOccurrences,
       fields1ValueCodeUnits,
       fields2ValueCodeUnits,
+      relationValueLengthSquares,
     },
     bounds: { composedColumnsUpperBound, relationColumnSlotsUpperBound },
     accounting,

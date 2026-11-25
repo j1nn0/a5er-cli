@@ -21,7 +21,10 @@
  *    a non-negative safe integer, every section kind and `Fields1`/`Fields2` value is checked
  *    before it is counted, and a violation throws `ResourceMeasureError` naming the field but never
  *    echoing the value; the product/sum boundaries are checked against exact `BigInt` arithmetic
- *    around `2^53`.
+ *    around `2^53`;
+ * 8. **quadratic proxy** — `relationValueLengthSquares` is Σ`L²` over the raw relation values, one
+ *    checked product and one checked running sum per occurrence, and it is a proxy for the
+ *    relation-column amplification, never an output-size bound.
  */
 
 import { readFileSync, readdirSync } from 'node:fs';
@@ -87,6 +90,20 @@ function listedColumnSlots(scan: SyntaxScan): number {
       (relation.toColumns?.columns.length ?? 0),
     0,
   );
+}
+
+/** Σ `L²` over one scan's relation values, summed here rather than by the module under test. */
+function squaresOfScan(scan: SyntaxScan): number {
+  let total = 0;
+  for (const section of scan.sections) {
+    if (section.kind !== 'Relation') continue;
+    for (const entry of section.entries) {
+      if (entry.kind !== 'key') continue;
+      if (entry.key !== 'Fields1' && entry.key !== 'Fields2') continue;
+      total += entry.value.length * entry.value.length;
+    }
+  }
+  return total;
 }
 
 /** Recursively freeze an input so any mutation attempt becomes a TypeError in strict mode. */
@@ -517,6 +534,161 @@ describe('measure — the relation-slot bound covers what the relation stage lis
   });
 });
 
+// ── the quadratic relation-value proxy ──────────────────────────────────────
+
+/** The raw value text a `Fields1="…"` line carries: the two quotes are part of the measured text. */
+const rawValue = (value: string): string => `"${value}"`;
+
+/** `L²` for one relation value, computed from the value's own code units. */
+const squareOf = (value: string): number => rawValue(value).length * rawValue(value).length;
+
+/** A document whose only section is a `[Relation]` carrying `lines`. */
+function relationDocument(lines: readonly string[]): string {
+  return `[Relation]\nEntity1="a"\nEntity2="a"\n${lines.join('\n')}\n`;
+}
+
+describe('measure — ΣL² over the relation values', () => {
+  it('counts a Fields1 and a Fields2 value with their own squares', () => {
+    const result = measureOf(relationDocument(['Fields1="ab"', 'Fields2="abc"']));
+
+    // `"ab"` is four code units, `"abc"` five: 16 + 25. The code-unit counters still sum L, not L².
+    expect(result.counters.relationValueLengthSquares).toBe(16 + 25);
+    expect(result.counters.relationValueLengthSquares).toBe(squareOf('ab') + squareOf('abc'));
+    expect(result.counters.fields1ValueCodeUnits).toBe(rawValue('ab').length);
+    expect(result.counters.fields2ValueCodeUnits).toBe(rawValue('abc').length);
+  });
+
+  it('counts one side alone without inventing the other', () => {
+    const fields1Only = measureOf(relationDocument(['Fields1="c1,c2,c3"']));
+    const fields2Only = measureOf(relationDocument(['Fields2="id"']));
+
+    expect(fields1Only.counters.relationValueLengthSquares).toBe(squareOf('c1,c2,c3'));
+    expect(fields1Only.counters.relationValueLengthSquares).toBe(100);
+    expect(fields1Only.counters.fields2ValueCodeUnits).toBe(0);
+    expect(fields2Only.counters.relationValueLengthSquares).toBe(squareOf('id'));
+    expect(fields2Only.counters.relationValueLengthSquares).toBe(16);
+    expect(fields2Only.counters.fields1ValueCodeUnits).toBe(0);
+  });
+
+  it('sums every relation section, alias and duplicate occurrence', () => {
+    const text =
+      relationDocument(['Fields1="ab"']) +
+      '\n' +
+      // The alias is the same canonical kind (§5), so its values count the same way.
+      `[Relationship]\nEntity1="a"\nEntity2="a"\nFields1="ab"\nFields2="abc"\n`;
+    const result = measureOf(text);
+
+    expect(result.counters.sectionsByKind.Relation).toBe(2);
+    expect(result.counters.relationValueLengthSquares).toBe(
+      squareOf('ab') + squareOf('ab') + squareOf('abc'),
+    );
+    expect(result.counters.relationValueLengthSquares).toBe(16 + 16 + 25);
+  });
+
+  it('counts a duplicate key once per occurrence', () => {
+    const result = measureOf(relationDocument(['Fields1="a"', 'Fields1="a"']));
+
+    expect(result.counters.relationFields1Occurrences).toBe(2);
+    expect(result.counters.fields1ValueCodeUnits).toBe(2 * rawValue('a').length);
+    expect(result.counters.relationValueLengthSquares).toBe(2 * squareOf('a'));
+    expect(result.counters.relationValueLengthSquares).toBe(18);
+  });
+
+  it('adds 0 for a value with no text, and 4 for an empty quoted value', () => {
+    // `Fields1=` carries no value text at all: L is 0. `Fields1=""` carries two quote characters,
+    // which is what the scan measures everywhere else too.
+    expect(measureOf(relationDocument(['Fields1='])).counters.relationValueLengthSquares).toBe(0);
+    expect(measureOf(relationDocument(['Fields1=""'])).counters.relationValueLengthSquares).toBe(4);
+  });
+
+  it('ignores the same key in every other section', () => {
+    const text =
+      `[Manager]\nFields1="m"\n` +
+      entitySection('a', `Fields1="e"\n${POSITION(1, 1)}`) +
+      '[View]\nFields1="v"\n' +
+      '[Mystery]\nFields1="u"\n' +
+      '[Shape]\nFields2="s"\n';
+    const result = measureOf(text);
+
+    // 1 Manager + 3 in the entity (`PName`, `Fields1`, `Position`) + 1 View + 1 Mystery + 1 Shape.
+    expect(result.counters.totalKeys).toBe(7);
+    expect(result.counters.relationValueLengthSquares).toBe(0);
+    // The same-named keys are still occurrences elsewhere, which is why the proxy is section-scoped.
+    expect(result.counters.relationFields1Occurrences).toBe(0);
+    expect(result.counters.relationFields2Occurrences).toBe(0);
+  });
+
+  it('measures the raw text of a quoted value, escapes included', () => {
+    const scan = scanOf(relationDocument(['Fields1="a\\"b"']));
+    const relation = scan.sections[0];
+    const entry = relation?.entries.find(
+      (candidate) => candidate.kind === 'key' && candidate.key === 'Fields1',
+    );
+
+    expect(entry?.kind === 'key' ? entry.value : null).toBe('"a\\"b"');
+    expect((entry?.kind === 'key' ? entry.value : '').length).toBe(6);
+    expect(measure(scan).counters.relationValueLengthSquares).toBe(36);
+  });
+
+  it('measures UTF-16 code units, so a surrogate pair counts twice', () => {
+    const value = '\u{1f600}\u{1f600}\u{1f600}';
+    const result = measureOf(relationDocument([`Fields1="${value}"`]));
+
+    // Six code units inside the quotes: `"` + 6 + `"` = 8, squared.
+    expect(result.counters.fields1ValueCodeUnits).toBe(8);
+    expect(result.counters.relationValueLengthSquares).toBe(64);
+    expect(result.counters.relationValueLengthSquares).toBe(squareOf(value));
+  });
+});
+
+describe('measure — the squares counter obeys the safe-integer rule', () => {
+  it('bounds one square with the same product rule as the other bounds', () => {
+    // One value's square is `checkedProduct(L, L, …)`: the largest safe square is
+    // floor(sqrt(2^53 − 1))² and the next length is rejected, so an inexact square cannot appear.
+    expect(9_007_199_136_250_225).toBe(94_906_265 ** 2);
+    expect(Number.isSafeInteger(94_906_265 ** 2)).toBe(true);
+    expect(Number.isSafeInteger(94_906_266 ** 2)).toBe(false);
+
+    expect(checkedProduct(94_906_265, 94_906_265, 'squares')).toBe(94_906_265 ** 2);
+    expect(() => checkedProduct(94_906_266, 94_906_266, 'squares')).toThrow(ResourceMeasureError);
+  });
+
+  it('rejects a sum of safe squares that leaves the range', () => {
+    // Two individually safe squares can still overflow when added, which is why the running total
+    // is checked as well as each product.
+    expect(() => checkedSum([Number.MAX_SAFE_INTEGER - 1, 4], 'squares')).toThrow(
+      ResourceMeasureError,
+    );
+    expect(checkedSum([Number.MAX_SAFE_INTEGER - 4, 4], 'squares')).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
+  it('refuses a non-string value before any square is added', () => {
+    // Two healthy values around a bad one: if the bad entry were skipped or coerced, the counter
+    // would return a smaller — underestimated — total instead of refusing the scan.
+    const scan = scanWithRelationEntries([
+      { key: 'Fields1', value: '"ab"' },
+      { key: 'Fields1', value: { length: -1 } },
+      { key: 'Fields1', value: '"cd"' },
+    ]);
+
+    expect(() => measure(scan)).toThrow(
+      'measure(): counters.fields1ValueCodeUnits has a non-string value',
+    );
+  });
+
+  it('keeps the field out of reach of a hand-built length', () => {
+    // The same cancellation case the code-unit counter refuses: it cannot leave a healthy total.
+    const scan = scanWithRelationEntries([
+      { key: 'Fields2', value: { length: -1 } },
+      { key: 'Fields2', value: '"ab"' },
+    ]);
+
+    expect(() => measure(scan)).toThrow(
+      'measure(): counters.fields2ValueCodeUnits has a non-string value',
+    );
+  });
+});
+
 // ── every committed synthetic fixture ──────────────────────────────────────
 
 describe('measure — the committed synthetic fixtures', () => {
@@ -566,6 +738,28 @@ describe('measure — the committed synthetic fixtures', () => {
     }
 
     expect(violations).toEqual([]);
+  });
+
+  it('derives ΣL² from every fixture’s own relation values', () => {
+    for (const spec of SYNTHETIC) {
+      const scan = scanOfFixture(spec.id);
+
+      expect(measure(scan).counters.relationValueLengthSquares, spec.id).toBe(squaresOfScan(scan));
+    }
+  });
+
+  it('adds exactly one numeric leaf to a measurement', () => {
+    // 16 counters (with the nine `sectionsByKind` numbers) plus 4 bound numbers: the quadratic
+    // proxy is the only leaf this unit adds, and no existing leaf disappears.
+    for (const spec of SYNTHETIC) {
+      const leaves = numericLeaves(measure(scanOfFixture(spec.id))).map(([path]) => path);
+
+      expect(leaves, spec.id).toHaveLength(28);
+      expect(
+        leaves.filter((path) => path === 'counters.relationValueLengthSquares'),
+        spec.id,
+      ).toHaveLength(1);
+    }
   });
 
   it('bounds the relation column slots, on every fixture', () => {
@@ -870,7 +1064,8 @@ describe('measure — unknown-section keys stay inside §13’s one counter', ()
     );
   });
 
-  it('adds no counter: the published field set is unchanged', () => {
+  it('publishes exactly the sixteen declared counters', () => {
+    // The quadratic proxy is the one approved addition; nothing else appears or disappears.
     expect(Object.keys(measureOf('').counters).sort()).toEqual(
       [
         'entityFieldOccurrences',
@@ -880,6 +1075,7 @@ describe('measure — unknown-section keys stay inside §13’s one counter', ()
         'managerCommonFieldOccurrences',
         'relationFields1Occurrences',
         'relationFields2Occurrences',
+        'relationValueLengthSquares',
         'sectionsByKind',
         'totalBlankLines',
         'totalComments',
