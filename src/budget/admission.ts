@@ -16,6 +16,13 @@
  *   amplification), then `composedColumnsUpperBound.upperBound` (the common-column composition).
  * - **`tables`**: `composedColumnsUpperBound.upperBound` only.
  *
+ * **Two entry points, one rule.** `admit()` decides a finished `measure()`; `admitShape()` decides
+ * the pre-scan figures `measureSourceShape()` counts, so a Field- or content-heavy document can be
+ * refused before the scan allocates its records (U5-ADMIT2). Both compare `observed <= ceiling`,
+ * both prove every figure they read before they compare any of them, and both resolve the budget
+ * through `withResourceBudget()`, so there is one validation path and one comparison rule. The two
+ * pre-scan figures are members of *both* profiles: the scan they protect runs for every command.
+ *
  * **The rule is a comparison, not a policy.** `observed <= ceiling` admits; `observed > ceiling`
  * refuses. A figure *at* the ceiling is accepted, because the ceilings below were chosen as values
  * the tool is expected to finish under, not as an off-by-one on a measured cost. Nothing is clamped,
@@ -33,6 +40,7 @@
  * enforces, not an estimate of downstream work.
  */
 
+import type { SourceShape } from '../syntax/shape.js';
 import type { ResourceMeasure } from './measure.js';
 
 /** The two compositions that read a document, each with its own ceilings. */
@@ -41,37 +49,52 @@ export type BudgetProfile = 'envelope' | 'tables';
 /**
  * The counters a budget can cap.
  *
- * Exactly the two figures `measure()` publishes as an amplification proxy or as an upper bound:
- * `relationValueLengthSquares` (Σ`L²` over relation values) and `composedColumnsUpperBound`
- * (`[Entity]` sections × decoded `CommonField` declarations). Byte and line counts are already
- * refused by `io/`/`decode/` and never appear here.
+ * Two of them are the figures `measure()` publishes after the scan — `relationValueLengthSquares`
+ * (Σ`L²` over relation values) and `composedColumnsUpperBound` (`[Entity]` sections × decoded
+ * `CommonField` declarations) — and two are the pre-scan figures `measureSourceShape()` counts
+ * before the scan exists: `entityFieldOccurrences` (`Field=` lines in `[Entity]` sections) and
+ * `contentLineOccurrences` (section headers, keys and raw lines together).
+ *
+ * Byte counts are already refused by `io/`/`decode/` and never appear here. Neither do total lines,
+ * comments or blank lines: the read limits bound the input, and the pre-scan ceilings cap the two
+ * figures a refused document is expensive *through*, not every line it happens to have.
  */
-export type BudgetCounter = 'relationValueLengthSquares' | 'composedColumnsUpperBound';
+export type BudgetCounter =
+  | 'relationValueLengthSquares'
+  | 'composedColumnsUpperBound'
+  | 'entityFieldOccurrences'
+  | 'contentLineOccurrences';
 
 /**
  * The ceilings `inspect` and `validate` apply: one envelope string is built from all four stages.
  *
- * Both figures are capped, in this order: Σ`L²` first, because it is the proxy for the relation
- * stage's amplification, then the composed-column bound, because a document can hold the first far
- * below its ceiling and still adopt an unreasonable number of common columns.
+ * All four figures are capped, in this order: Σ`L²` first, because it is the proxy for the relation
+ * stage's amplification; then the composed-column bound, because a document can hold the first far
+ * below its ceiling and still adopt an unreasonable number of common columns; then the two
+ * pre-scan figures, which admission can read before the scan has built a single record.
  */
 export interface EnvelopeResourceBudget {
   readonly profile: 'envelope';
   readonly relationValueLengthSquares: number;
   readonly composedColumnsUpperBound: number;
+  readonly entityFieldOccurrences: number;
+  readonly contentLineOccurrences: number;
 }
 
 /**
- * The ceiling `tables` applies: the common-column composition only.
+ * The ceilings `tables` applies: the common-column composition and the two pre-scan figures.
  *
  * Σ`L²` has no member here on purpose. `tables` renders a projection of the same record; the
  * relation-column amplification observed in `inspect`/`validate` is not part of its work, so capping
  * it would refuse documents this command can answer. That absence is structural: the type has no
- * such member, and `withResourceBudget()` never copies one in.
+ * such member, and `withResourceBudget()` never copies one in. The pre-scan figures *are* capped
+ * here, at this profile's own values: the scan they protect runs for `tables` too.
  */
 export interface TablesResourceBudget {
   readonly profile: 'tables';
   readonly composedColumnsUpperBound: number;
+  readonly entityFieldOccurrences: number;
+  readonly contentLineOccurrences: number;
 }
 
 /** One complete, profile-specific set of ceilings. */
@@ -80,14 +103,19 @@ export type ResourceBudget = EnvelopeResourceBudget | TablesResourceBudget;
 /**
  * The ceilings this build applies, per profile.
  *
- * `134_217_728` (2²⁷) for Σ`L²` on the envelope profiles: a document whose relation values average
+ * `134_217_728` (2²⁷) for Σ`L²` on the envelope profile: a document whose relation values average
  * one code unit each would need about 1.3·10⁸ of them, far past what `maxLines` allows, so reaching
  * it takes a handful of very long values. `524_288` (2¹⁹) composed columns for the envelope
- * profiles, and `4_194_304` (2²²) for `tables`, which holds no relation text and therefore has the
+ * profile, and `4_194_304` (2²²) for `tables`, which holds no relation text and therefore has the
  * stricter of its two costs removed.
  *
- * These are **tentative operational values**: not RSS, not a heap limit, not a bound on the envelope
- * string, and not a guarantee that a document below them is cheap. See the module comment.
+ * The two pre-scan ceilings are counts of lines a linear walk visits, so they are round numbers
+ * rather than powers of two: `200_000` `Field=` occurrences and `400_000` content lines for the
+ * envelope profile, `500_000` and `1_000_000` for `tables`. These four are the U5-ADMIT2
+ * specification's approved values, recorded here as given — this module does not calibrate them.
+ *
+ * Every figure is a **tentative operational value**: not RSS, not a heap limit, not a bound on the
+ * envelope string, and not a guarantee that a document below it is cheap. See the module comment.
  *
  * **Frozen at runtime, and frozen per profile.** `as const` is a compile-time claim about this
  * build's own literal; it does not stop the published object from being written to once the module
@@ -100,10 +128,14 @@ export const DEFAULT_RESOURCE_BUDGETS = Object.freeze({
     profile: 'envelope',
     relationValueLengthSquares: 134_217_728,
     composedColumnsUpperBound: 524_288,
+    entityFieldOccurrences: 200_000,
+    contentLineOccurrences: 400_000,
   }),
   tables: Object.freeze<TablesResourceBudget>({
     profile: 'tables',
     composedColumnsUpperBound: 4_194_304,
+    entityFieldOccurrences: 500_000,
+    contentLineOccurrences: 1_000_000,
   }),
 }) satisfies Readonly<Record<BudgetProfile, ResourceBudget>>;
 
@@ -188,6 +220,14 @@ export function withResourceBudget(budget: ResourceBudget): ResourceBudget {
         budget.composedColumnsUpperBound,
         'composedColumnsUpperBound',
       ),
+      entityFieldOccurrences: checkedCeiling(
+        budget.entityFieldOccurrences,
+        'entityFieldOccurrences',
+      ),
+      contentLineOccurrences: checkedCeiling(
+        budget.contentLineOccurrences,
+        'contentLineOccurrences',
+      ),
     };
   }
 
@@ -199,6 +239,14 @@ export function withResourceBudget(budget: ResourceBudget): ResourceBudget {
       composedColumnsUpperBound: checkedCeiling(
         budget.composedColumnsUpperBound,
         'composedColumnsUpperBound',
+      ),
+      entityFieldOccurrences: checkedCeiling(
+        budget.entityFieldOccurrences,
+        'entityFieldOccurrences',
+      ),
+      contentLineOccurrences: checkedCeiling(
+        budget.contentLineOccurrences,
+        'contentLineOccurrences',
       ),
     };
   }
@@ -290,5 +338,34 @@ export function admit(measurement: ResourceMeasure, budget: ResourceBudget): Adm
       applied.composedColumnsUpperBound,
       'composedColumnsUpperBound',
     ) ?? { admitted: true }
+  );
+}
+
+/**
+ * Decide whether one pre-scan shape is within one budget (U5-ADMIT2).
+ *
+ * The same rule and the same budget validation as `admit()`, on the two figures that exist before
+ * the scan does: `entityFieldOccurrences` is compared first, so a document over both ceilings
+ * reports the `Field=` occurrences, and `contentLineOccurrences` second.
+ *
+ * **Both observations are proved comparable before either is compared**, for the reason `admit()`
+ * gives: a shape whose content figure is `NaN` is a defect in this tool's own walk, not a refusal
+ * about that document, so it throws instead of reporting a refusal the figures do not support.
+ *
+ * Only these two members are read. `shape.lines` is the pre-scan accounting, and the read limits
+ * already bound total lines, comments and blanks; nothing about the shape is written to, and the
+ * answer depends on the two arguments alone.
+ */
+export function admitShape(shape: SourceShape, budget: ResourceBudget): Admission {
+  const applied = withResourceBudget(budget);
+
+  const entityFields = checkedObserved(shape.entityFieldOccurrences, 'entityFieldOccurrences');
+  const contentLines = checkedObserved(shape.contentLineOccurrences, 'contentLineOccurrences');
+
+  return (
+    refuseIfOver(entityFields, applied.entityFieldOccurrences, 'entityFieldOccurrences') ??
+    refuseIfOver(contentLines, applied.contentLineOccurrences, 'contentLineOccurrences') ?? {
+      admitted: true,
+    }
   );
 }

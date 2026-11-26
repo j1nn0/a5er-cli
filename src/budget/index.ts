@@ -3,9 +3,10 @@
  *
  * `measure.ts` owns the structural counters, the two conservative upper bounds and the runtime
  * range check behind them. `admission.ts` owns the one decision this directory makes: whether one
- * measurement is within one profile's ceilings (`inspect`/`validate` versus `tables`). The ceilings
- * themselves are tentative operational values published there; nothing here reads the environment,
- * a clock or a heap figure, and no diagnostic or CLI output is produced in this directory.
+ * measurement — or one pre-scan shape, before the scan exists — is within one profile's ceilings
+ * (`inspect`/`validate` versus `tables`). The ceilings themselves are tentative operational values
+ * published there; nothing here reads the environment, a clock or a heap figure, and no diagnostic
+ * or CLI output is produced in this directory.
  *
  * `ResourceMeasureError` and `ResourceAdmissionError` are the module's own contract violations — a
  * number it cannot prove to be a safe integer, or a ceiling it cannot compare. They are exported so
@@ -14,6 +15,7 @@
 
 export {
   admit,
+  admitShape,
   DEFAULT_RESOURCE_BUDGETS,
   ResourceAdmissionError,
   withResourceBudget,

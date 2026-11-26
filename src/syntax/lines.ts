@@ -29,14 +29,14 @@ export interface SourceLine {
 }
 
 /**
- * Split `text` into physical lines, recording each terminator (§4.1, U4).
+ * Walk `text` as physical lines, calling `visit` once per line in source order (§4.1, U4).
  *
- * A one-pass scan, not a regex split: `\r\n` must stay one ending rather than becoming an
- * empty line between two, and the result must not allocate a phantom line for the trailing
- * newline that most editors add.
+ * Same breaks, same numbering and the same verbatim text and ending as `splitLines`, but nothing
+ * is collected: the walk holds a line start and a line number, so a caller that only measures,
+ * counts or rejects can read a large document without materialising a second array of it.
+ * `splitLines` is the collector on top of this walk, so the two cannot drift apart.
  */
-export function splitLines(text: string): SourceLine[] {
-  const lines: SourceLine[] = [];
+export function forEachLine(text: string, visit: (line: SourceLine) => void): void {
   let start = 0;
   let number = 1;
 
@@ -46,13 +46,27 @@ export function splitLines(text: string): SourceLine[] {
 
     const ending: LineEnding =
       char === '\r' && text[index + 1] === '\n' ? '\r\n' : char === '\r' ? '\r' : '\n';
-    lines.push({ number, text: text.slice(start, index), ending });
+    visit({ number, text: text.slice(start, index), ending });
     number += 1;
     if (ending === '\r\n') index += 1;
     start = index + 1;
   }
 
   // A final line without a terminator is still a line; a file that ended with one is complete.
-  if (start < text.length) lines.push({ number, text: text.slice(start), ending: '' });
+  if (start < text.length) visit({ number, text: text.slice(start), ending: '' });
+}
+
+/**
+ * Split `text` into physical lines, recording each terminator (§4.1, U4).
+ *
+ * A one-pass scan, not a regex split: `\r\n` must stay one ending rather than becoming an
+ * empty line between two, and the result must not allocate a phantom line for the trailing
+ * newline that most editors add. The scan itself is `forEachLine`; this is only the collector.
+ */
+export function splitLines(text: string): SourceLine[] {
+  const lines: SourceLine[] = [];
+  forEachLine(text, (line) => {
+    lines.push(line);
+  });
   return lines;
 }

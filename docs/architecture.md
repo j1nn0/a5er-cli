@@ -823,35 +823,64 @@ file as an empty-but-healthy ER diagram. An empty file is `E_EMPTY_INPUT`; a bin
 ### 10.5 Processing budget (admission gate)
 
 The read limits bound the **input**; they say nothing about the **work** one accepted document asks
-for. Two stages amplify, so each gets one counter: the relation stage turns one `Fields1`/`Fields2`
-value into a column list whose work grows with the value's length, and common columns give every
-entity that adopts them the document's whole `CommonField` list, so that work grows with `[Entity]`
-sections × declarations. `relationValueLengthSquares` therefore targets the relation stage's
-quadratic amplification and `composedColumnsUpperBound` the entity × common-column composition —
-two proxies for downstream work, not a measurement of memory (§10.3).
+for. Admission therefore runs twice: a cheap walk over the decoded text before the scan, and a
+measurement of the finished scan before classification. Each gate compares the figures that are
+visible at its own point, and nothing else.
 
-Every command therefore measures the document right after the scan and refuses the ones that would
-cost more than a documented budget. The order is the point: both figures are cheap to compute from
-the scan, and the stage they protect — classification — has not run yet.
+**The pre-scan gate (U5-ADMIT2) runs before the scan exists.** `measureSourceShape()` walks the
+decoded text once — `\r\n` as one break, a bare `\r` or `\n` as one, no line records kept, O(1)
+retained state — and counts two figures that need no scan. `admitShape()` compares them against the
+same budget, and `src/pipeline.ts` calls both immediately after `loadSource()` succeeds and
+**before** `scanSource()`, so a Field- or content-heavy document is refused before a single line
+record is allocated. The scan is not cheap on those documents: the recorded 1,155,516-`Field` run
+already held 594 MiB at the end of it (§10.3). What the two figures count, exactly:
 
-| Counter | How it is measured (§13) | Profiles |
-|---|---|---|
-| `relationValueLengthSquares` | Σ`L²` over every `Fields1`/`Fields2` value in a relation section, `L` the raw value's UTF-16 code-unit length — quoting and escapes included, the same unit as `String.length` | `inspect`, `validate` |
-| `composedColumnsUpperBound` | `[Entity]` section count × `CommonField=` line count — an upper bound, since a declaration that fails to decode can only shrink the real count | `inspect`, `validate`, `tables` |
+- `entityFieldOccurrences` — `Field=` lines inside `[Entity]` sections. The key text is compared as
+  written, the way the registry reads it: ` Field=`, `Field =` and `field=` are different keys and
+  are not counted, a `#Field=` line is a comment, `[entity]` is an unknown section (§5 is
+  case-sensitive), `[Manager]` is not an entity, and a line before the first header belongs to no
+  section at all.
+- `contentLineOccurrences` — section headers, `key=value` lines and raw lines together. Comments and
+  blank lines are §7.4's non-data and are excluded; every other physical line is counted, including
+  unknown keys and malformed lines.
+
+**The post-scan gate (U5-ADMIT1) then decides what only the scan can see.** Two stages amplify, so
+each gets one counter: the relation stage turns one `Fields1`/`Fields2` value into a column list
+whose work grows with the value's length, and common columns give every entity that adopts them the
+document's whole `CommonField` list, so that work grows with `[Entity]` sections × declarations.
+`relationValueLengthSquares` therefore targets the relation stage's quadratic amplification and
+`composedColumnsUpperBound` the entity × common-column composition — two proxies for downstream
+work, not a measurement of memory (§10.3).
+
+| Counter | Gate | How it is measured (§13) | Profiles |
+|---|---|---|---|
+| `entityFieldOccurrences` | pre-scan | `Field=` lines inside `[Entity]` sections, key text as written | `inspect`, `validate`, `tables` |
+| `contentLineOccurrences` | pre-scan | section headers + `key=value` lines + raw lines; comments and blanks excluded | `inspect`, `validate`, `tables` |
+| `relationValueLengthSquares` | post-scan | Σ`L²` over every `Fields1`/`Fields2` value in a relation section, `L` the raw value's UTF-16 code-unit length — quoting and escapes included, the same unit as `String.length` | `inspect`, `validate` |
+| `composedColumnsUpperBound` | post-scan | `[Entity]` section count × `CommonField=` line count — an upper bound, since a declaration that fails to decode can only shrink the real count | `inspect`, `validate`, `tables` |
 
 **Two profiles, and the absence of Σ`L²` for `tables` is structural.** `tables` renders a projection
 of the same record and holds no relation text, so it has no Σ`L²` ceiling at all: the member does not
 exist on its budget type, rather than being set to a value large enough to never fire. `inspect` and
-`validate` build one envelope string from all four stages and cap both figures.
+`validate` build one envelope string from all four stages and cap all four figures. `tables` caps the
+composed bound and both pre-scan figures, because the scan the pre-scan gate protects runs for
+`tables` too.
 
-| Ceiling | Value | Profiles |
+| Figure | Ceiling | Profiles |
 |---|---|---|
-| Σ`L²` | 134,217,728 (2²⁷) | `inspect`, `validate` |
-| composed columns | 524,288 (2¹⁹) | `inspect`, `validate` |
-| composed columns | 4,194,304 (2²²) | `tables` |
+| `Field=` occurrences (`entityFieldOccurrences`) | 200,000 | `inspect`, `validate` |
+| `Field=` occurrences (`entityFieldOccurrences`) | 500,000 | `tables` |
+| content lines (`contentLineOccurrences`) | 400,000 | `inspect`, `validate` |
+| content lines (`contentLineOccurrences`) | 1,000,000 | `tables` |
+| Σ`L²` (`relationValueLengthSquares`) | 134,217,728 (2²⁷) | `inspect`, `validate` |
+| composed columns (`composedColumnsUpperBound`) | 524,288 (2¹⁹) | `inspect`, `validate` |
+| composed columns (`composedColumnsUpperBound`) | 4,194,304 (2²²) | `tables` |
 
 The comparison is `observed <= ceiling`: a document exactly at a ceiling is admitted, one past it is
-refused. Nothing is clamped, rounded or saturated — an observation that cannot be read as a
+refused. The pre-scan gate compares `entityFieldOccurrences` first, so a document over both reports
+the `Field` count; the post-scan gate compares Σ`L²` first, so a document over both reports the
+relation value proxy. In both gates, every figure the profile reads is proved comparable before the
+first comparison. Nothing is clamped, rounded or saturated — an observation that cannot be read as a
 non-negative safe integer, or a ceiling that cannot be read as a positive safe integer, is an
 internal defect (`ResourceMeasureError`, `ResourceAdmissionError`) and never a refusal, because a
 refusal is a statement about a document and a caller defect is not. There are no environment
@@ -862,8 +891,8 @@ the ceilings that profile caps, and `createPipeline(budget)` takes that one argu
 be paired with ceilings that decide against something else, because there is no second value to pass.
 Construction resolves the budget through `withResourceBudget()`, which accepts exactly the two profile
 values at runtime — an unknown, empty, mistyped or missing `profile` throws `ResourceAdmissionError`
-rather than falling into the `tables` branch — and re-checks every ceiling. A bad configuration is
-therefore a defect that stops the pipeline **before any file is opened**, while a document over a
+rather than falling into the `tables` branch — and re-checks all seven ceilings. A bad configuration
+is therefore a defect that stops the pipeline **before any file is opened**, while a document over a
 ceiling is a refusal; the two are never the same answer. `src/cli.ts` passes
 `DEFAULT_RESOURCE_BUDGETS.envelope` and `src/tables-command.ts` `DEFAULT_RESOURCE_BUDGETS.tables`, and
 those defaults are frozen at runtime (the table and each profile object), so a running process cannot
@@ -871,20 +900,23 @@ be judged against ceilings the source does not state.
 
 **A refusal is the fatal family's** (`E_LIMIT_BUDGET`, §11): `status: "failed"`, `source` and
 `completeness` `null`, `unsupported` empty, `limits.truncated` `false`, exit `1` for every command,
-and the one fatal line on stderr. What stdout carries follows the command's **format**, and only two
-of the three forms are an envelope: `inspect` and `validate` emit their JSON envelope with `schema`
-`null`; `tables --format json` emits the tables document with `result` `null`; `tables` text emits
-the text failure framing — the status note, `# objects: none (status failed)` and
-`# completeness: none (status failed)`, with no table header and no envelope at all
-(`docs/proposals/human-cli.md` §3.8, §5.6). A refusal is therefore never described as "three
+and the one fatal line on stderr. Both gates return through the same refusal arm, so the `counter`
+names which one fired and nothing else in the shape differs. What stdout carries follows the
+command's **format**, and only two of the three forms are an envelope: `inspect` and `validate` emit
+their JSON envelope with `schema` `null`; `tables --format json` emits the tables document with
+`result` `null`; `tables` text emits the text failure framing — the status note, `# objects: none
+(status failed)` and `# completeness: none (status failed)`, with no table header and no envelope at
+all (`docs/proposals/human-cli.md` §3.8, §5.6). A refusal is therefore never described as "three
 envelopes": two commands' envelopes and one command's text form.
 
-The refusal replaces the four stage results, so no scan, classification or semantics of a refused
-document is retained and no stage after admission runs.
+A post-scan refusal replaces the four stage results; a pre-scan refusal is returned before the scan
+exists. Either way no scan, classification or semantics of a refused document leaves the pipeline
+and no later stage runs.
 
 **Provenance and uncertainty: provisional operating values, partly extrapolated, not a measured safe
-limit.** Two kinds of evidence are mixed in this section, and they are kept apart below: what was
-**directly measured**, and what is **inferred** from it.
+limit.** Three kinds of evidence are mixed in this section, and they are kept apart below: what was
+**directly measured**, what is **inferred** from it, and what the pre-scan ceilings are **anchored**
+to.
 
 *Direct measurement.* The five recorded runs in `docs/proposals/human-cli.md` §7.1 — one Node build,
 one platform, synthetic documents — are: 616,068 bytes → a 17,032,749-byte envelope at 232 MB peak
@@ -894,34 +926,52 @@ entity → a 372,293,684-byte envelope at 1.78 GB peak RSS; 1,155,516 `Field` li
 bytes) → per-stage heap figures up to the end of `integrate()` (load 82, scan 594, classify 2,628,
 semantics 2,847 MiB), then OOM in `serialize()` (§10.3). Those runs report peak RSS or a heap figure
 at a named stage; none reports a heap breakdown inside the stage that aborted, and none isolates
-either counter as the cause of a failure. The other direct figures are the 39 committed
-synthetic fixtures, whose maxima are Σ`L²` **277** and composed columns **2**.
+any counter as the cause of a failure. The other direct figures are the 39 committed synthetic
+fixtures, whose maxima are Σ`L²` **277** and composed columns **2**.
 
-*Inference, and it is an extrapolation.* Where the ceilings sit, and what they might catch, is not
-measured. They are a refusal point placed above every fixture — and they are **not** demonstrably
-above the recorded failure shapes: those were single-entity `Field` lines, unknown keys and very long
-names, and by construction neither counter counts them (a `Field=` line is not a `CommonField=` line,
-and a long `PName` is not a relation value). A document shaped like the 67,108,851-byte run or the
-~2 M-unknown-key run can therefore sit **below** both ceilings and fail exactly as it did before.
-The ceilings carry **no proven relation to heap or RSS usage**, and they are expected to move once
-F-4 ([issue #27](https://github.com/j1nn0/a5er-cli/issues/27)) measures where the boundary really is.
+*Inference for the post-scan pair, and it is an extrapolation.* Where those two ceilings sit, and
+what they might catch, is not measured. They are a refusal point placed above every fixture, and
+they do not see a document that is expensive through the scan: neither counts a `Field=` line (a
+`Field=` line is not a `CommonField=` line) or a long `PName`. A document shaped like the
+67,108,851-byte run could sit **below** both of them, which is why the pre-scan pair exists.
+
+*Anchoring for the pre-scan pair, and it is a recorded shape rather than a measured boundary.* The
+envelope `Field=` ceiling is the count of the recorded 200,000-`Field` run: a document of exactly
+that size is admitted, one more `Field=` line is refused. The recorded 1,155,516-`Field` run is past
+it, so that shape — the one whose scan already held 594 MiB — is now refused before the scan. Unknown
+keys are `key=value` lines and therefore count as content lines: a document of B-6's
+1,999,000-unknown-key shape is far past the 400,000 content-line ceiling. The recorded
+20,878,001-byte unknown-key run is measured in bytes, not lines, so whether it would cross that
+ceiling is not stated here. None of the seven ceilings carries a proven relation to heap or RSS
+usage, and they are expected to move once F-4
+([issue #27](https://github.com/j1nn0/a5er-cli/issues/27)) measures where the boundary really is.
+
+**What the pre-scan pair cannot see.** Both figures count lines, not the size of any one line: a
+document with few lines and very long values passes the pre-scan gate and is decided by the
+post-scan ceilings, or by neither, exactly as before. A single line is bounded by `maxLineLength`
+(4 MiB) and the file by `maxBytes`, so the residual risk for a mixed document — many sections and a
+few very long values — is the one §10.3 describes: a document below all seven ceilings can still
+exhaust a small heap or reach the engine's string limit. A refusal is therefore a **cost bound, not
+a safety proof**.
 
 **False positives** are possible: a legitimate document with a handful of relation values long enough
-to pass Σ`L²`, or with more than 524,288 `CommonField=` lines — **one** `[Entity]` section suffices,
-since the bound is sections × declarations, and none of the recorded failures had that shape — is
-refused although it might have completed. **False negatives** are expected: a document under both
-ceilings can still exhaust the heap or reach the string limit below them, because the recorded
-failures were driven by line counts, envelope size and name length, which neither counter bounds. A
-refusal is therefore a **cost bound, not a safety proof**, and it never claims the file is invalid —
-the diagnostics before it are silent about correctness.
+to pass Σ`L²`, with more than 524,288 composed columns — the bound is `[Entity]` sections ×
+`CommonField=` declarations, so one section needs that many declarations and two need half of them —
+or with more than 200,000 `Field=` lines in its entity sections or more than 400,000 content lines
+(the envelope profile's values; `tables` sits higher), is refused although it might have completed.
+**False negatives** are expected: a document under all seven ceilings can still exhaust the heap or
+reach the string limit below them, because the recorded failures were driven by line counts,
+envelope size and name length, and only the line counts are bounded here. The gate never claims the
+file is invalid — the diagnostics before it are silent about correctness.
 
 Because every committed fixture is admitted, the gate is invisible in the fixture corpus: all 39
 synthetic fixtures × 4 command forms (`inspect`, `validate`, `tables`, `tables --format json`) are
 stdout-, stderr- and exit-code-identical to the pre-gate build, 156 of 156 (`test-strategy.md` §10
-G-10). The one behaviour change is intentional and new: a document above a ceiling that used to be
-processed — expensively — is now refused. A document **below** both ceilings behaves as it did, and
-that includes the cases where the heap runs out (§10.3): the gate was not built to catch those, and
-the recorded failures were not shapes it counts.
+G-10), and the same 156 of 156 holds against the build before the pre-scan gate was added. The one
+behaviour change is intentional and new: a document above a ceiling that used to be processed —
+expensively — is now refused, and a document past a pre-scan ceiling is now refused before its scan
+runs. A document **below all seven ceilings** behaves as it did, and that includes the cases where
+the heap runs out (§10.3): the gate was not built to catch those.
 
 ---
 
@@ -971,7 +1021,7 @@ Initial code list (frozen enough to test against, not a promise of completeness)
 | `E_IO`, `E_NOT_A_FILE`, `E_EMPTY_INPUT`, `E_BINARY_INPUT` | fatal | cannot treat input as text |
 | `E_TRUNCATED_INPUT` | fatal | the OS returned fewer bytes than the file declared — a partial read, refused |
 | `E_LIMIT_BYTES`, `E_LIMIT_LINES`, `E_LIMIT_LINE_LENGTH` | fatal | a documented limit refused the whole file — nothing was partially accepted |
-| `E_LIMIT_BUDGET` | fatal | the document would cost more downstream work than the processing budget allows — measured after the scan and before the classification (§10.5); `details` carry `counter`, `observed`, `ceiling` and no file text (§12) |
+| `E_LIMIT_BUDGET` | fatal | the document would cost more downstream work than the processing budget allows — measured from the decoded text before the scan (`Field=` and content-line counts) and from the scan before the classification (Σ`L²` and the composed bound, §10.5); `details` carry `counter`, `observed`, `ceiling` and no file text (§12) |
 | `E_UNDECODABLE`, `E_CODEC_UNAVAILABLE` | fatal | no strict decoder succeeded |
 | `E_UNRECOGNIZED_DOCUMENT`, `E_FILE_CHANGED_DURING_READ` | fatal | not an a5er, or unstable input |
 | `D_BOM_MISSING`, `D_ENCODING_ASSUMED` | info | spec-preferred form absent |
@@ -993,10 +1043,11 @@ Initial code list (frozen enough to test against, not a promise of completeness)
 | `V_VIEW_COLUMNS_UNKNOWN` | info | columns not stored in the file |
 
 `E_LIMIT_BUDGET` is the one fatal code no reader raises: `src/pipeline.ts` emits it, with
-`construct: "Source"`, after `measure()` and `admit()` have run (§10.5). It is on the same
-`LoadOutcome` rejection arm as the read failures, so every consumer that already handles a `fatal`
-handles it. What that means for an existing decoder, and what its `details` do and do not carry, are
-stated once in §12.
+`construct: "Source"`, after the pre-scan or the post-scan gate has refused (§10.5). It is on the
+same `LoadOutcome` rejection arm as the read failures, so every consumer that already handles a
+`fatal` handles it. What that means for an existing decoder, and what its `details` do and do not
+carry, are stated once in §12.
+
 Severity is assigned by consequence, not by family: a missing `RelationType1` / `RelationType2`
 is a `warning` (contradiction K6, U14), a missing `PName` is an `error`, and a duplicate scalar
 key is a `warning` (U6 defines no semantics).
@@ -1131,6 +1182,8 @@ Contract rules:
    The diagnostic set is extensible on the same terms: a new `diagnostics` code adds a member to a
    list the contract already declares open, keeps the ten envelope keys and their order, and leaves
    every existing member's meaning as it was, so it does not move `contractVersion` either (§11).
+   A new value of `E_LIMIT_BUDGET.details.counter` is the same kind of change — data inside a
+   `details` record, not a member of the envelope — and does not move it either.
 7. **One `diagnostics` list, not separate `warnings` and `errors` arrays.** Severity is a
    field, so ordering follows the file and a consumer never has to merge two streams to
    reconstruct causality. `unsupported` stays separate because it is evidence, not a
@@ -1142,24 +1195,37 @@ consumer of `(inspect, 0.1.0)` or `(validate, 0.1.0)` sees the same ten members 
 before, and the same is true of `tables`. What a consumer *can* observe is a code it has no branch
 for, and `E_LIMIT_BUDGET` (§10.5) is the first of those to arrive after `0.1.0` was published.
 
+**A new `counter` value is data too.** `E_LIMIT_BUDGET.details.counter` is a string inside the
+details record, and the set of values it can take grew when the pre-scan gate added
+`entityFieldOccurrences` and `contentLineOccurrences` (§10.5). Nothing about the envelope changes:
+the ten members, their order and the meaning of every existing value are as they were, so
+`contractVersion` stays `0.1.0` for the same reason a new diagnostic code does. A consumer that
+types `counter` as a string, or ignores it and decides from `severity`, needs no change. A
+**strict-enum** consumer whose `counter` type enumerates the previous two values must add the two
+new ones to compile against a pre-scan refusal — the same obligation the strict-enum `code` consumer
+below already has.
+
 **The intentional part is an outcome change, not a shape change.** A document above a ceiling that
 `0.1.0` used to process is now `failed` with exit `1`, so a consumer that recorded a success for
 such an input will now record a refusal at the same `(command, contractVersion)`. That is the gate's
 purpose, and it is the only behaviour `0.1.0` gains: no envelope key, key order or existing value
-meaning changed, and `DEFAULT_LIMITS` is untouched. The rule that keeps this safe is the one the exit
-table already relies on: **decide from `status` and `severity` first, not from a list of codes**. Any
-`fatal` is a failed document — `source` and `completeness` `null`, exit `1` — and the code tells a
-human why. A decoder that maps the codes it recognises to behaviour, and treats an unknown code as
-success, would mis-handle a refused document; one that decides from `severity` needs no branch at
-all. A **strict-enum** consumer, whose `code` type enumerates a fixed set, must add
-`E_LIMIT_BUDGET` to compile against a refusal; one that types `code` as a string or branches on
-`severity` is unaffected.
+meaning changed, and `DEFAULT_LIMITS` is untouched. The pre-scan gate widens the same outcome change
+rather than adding a second one: a Field- or content-heavy document that `0.1.0` processed is now
+refused *earlier*, on the same code, the same arm and the same exit `1`. The rule that keeps this
+safe is the one the exit table already relies on: **decide from `status` and `severity` first, not
+from a list of codes**. Any `fatal` is a failed document — `source` and `completeness` `null`, exit
+`1` — and the code tells a human why. A decoder that maps the codes it recognises to behaviour, and
+treats an unknown code as success, would mis-handle a refused document; one that decides from
+`severity` needs no branch at all. A **strict-enum** consumer, whose `code` type enumerates a fixed
+set, must add `E_LIMIT_BUDGET` to compile against a refusal; one that types `code` as a string or
+branches on `severity` is unaffected.
 
 **What `details` do and do not carry.** `E_LIMIT_BUDGET`'s `details` (`counter`, `observed`,
 `ceiling`) are this tool's own figures: they embed no file body, no key or column name and no path,
 so they are safe to print. They are not "information-free" either — `observed` is an aggregate
-computed from the document's structure (§13), so it describes the file without quoting it. The two
-amplification figures themselves are **not** envelope members: they appear only when they cause a
+computed from the document's structure (§13): a count of lines or of `Field=` occurrences for the
+pre-scan gate, Σ`L²` or sections × declarations for the post-scan one. It describes the file without
+quoting it. None of the four figures is an envelope member: they appear only when they cause a
 refusal.
 
 **`limits`.** Two facts, and the second is narrower than its name suggests:
@@ -1420,7 +1486,7 @@ not as spec behaviour. None of U1–U15 is presented as settled by these decisio
 | TBD-O2 | Streaming threshold for very large files | None; `maxBytes` only, and the threshold is **undecided**. **Where the cap is judged:** from the `fstat` size in `src/io/read.ts`, *before* the input-body read buffer is allocated — `readExactly()`'s `Buffer.allocUnsafe(sizeBytes)` is what an over-cap file never reaches, so its body is never read. The `open`, the `fstat`, the diagnostic record and the `close` still run, so this claims neither constant nor zero memory, and "one `stat`" would understate it; a file *at* the cap is still materialised whole. **What the tests exercise:** real reads above 4 KiB do happen, and they are `res-03`'s other two members — `res-03-max-lines.a5er` (2,000,001 bytes) and `res-03-max-line-length.a5er` (4,194,305 bytes), each written to a temp file, read whole under the default `Limits` and refused later, during decode, with `E_LIMIT_LINES` and `E_LIMIT_LINE_LENGTH` (`tests/decode.test.ts` "res-03: one limit per file, matched against the catalog"). They say nothing about the byte cap. `res-03-max-bytes.a5er` (67,108,865 bytes = 64 MiB + 1) is generation plus a length check only — built in memory, its length asserted, never written or read — so it is not a default-boundary rejection test. The **64 MiB default `maxBytes` boundary stays unverified**: no read at or above that size is executed, and a read existing above 4 KiB is not evidence that a large accepted input is memory-safe (§10.3, F-4) | Phase 2, stage 2 |
 | TBD-O3 | Final limit defaults (`maxBytes`, `maxLines`, `maxLineLength`), and the provenance of the envelope's `limits` | **Resolved — provenance.** `LoadOutcome` keeps the effective three numbers on both arms, the JSON reports that effective `maxBytes` (§12), and a `SerializeContext.limits` that disagrees with the read is detected at runtime instead of trusted, so the old caller-supplied gap is closed (`tests/json-contract.test.ts` "reports the maxBytes the read actually applied, with no context at all", "reports the cap the read applied, and refuses a context that states another", "throws for any single disagreeing field, on the success and the failure arm"). **What the boundary evidence is, without rounding up — three tests, three different shapes:** A — `tests/decode.test.ts` "res-01: a read stopped by the cap is E_LIMIT_BYTES": generated bytes written to a real file, a 4 KiB cap, `E_LIMIT_BYTES` from the `fstat` before the input-body read buffer is allocated, so the filesystem is real but the body is never read at that size. B — `tests/io.test.ts` "rejects above the cap without reading a single byte": a fake handle reporting 4 KiB under a 1 KiB cap, `E_LIMIT_BYTES` from that stat before any read, and `reads` stays empty. C — `tests/io.test.ts` "accepts exactly maxBytes and rejects maxBytes + 1": real 1024- and 1025-byte files under a 1024-byte cap, the first accepted and read, the second refused. All three cap low. **Still open:** the final judgement on the default caps (the §10.2 values stand); evidence at the 64 MiB default boundary itself — no read at or above that size is executed, so the 64 MiB boundary is **not** verified; and the resource-exhaustion risk, which is F-4 in [issue #27](https://github.com/j1nn0/a5er-cli/issues/27), still open | Phase 2, stage 2 |
 | TBD-O4 | Whether a JSON Schema file ships with the CLI | Not in v0.1.0 | Phase 2, stage 7 |
-| TBD-O5 | `contractVersion` bump policy and its relation to package semver | **Closed in §12 rule 6**: the version versions each command's envelope and moves when a field of an existing command's envelope changes or a value's meaning changes. A new command with its own shape, selected by `(command, contractVersion)`, that keeps the shared members verbatim and leaves every existing envelope byte-identical is additive — which is how `tables` arrives without moving `0.1.0`. A new `diagnostics` code is additive on the same terms (the set is extensible, the ten keys, their order and every existing meaning stay), so `E_LIMIT_BUDGET` arrives at `0.1.0`; its outcome change — some previously-processed inputs are now `failed` with exit `1` — is intentional and does not move the version, because consumers decide from `status` and `severity` (§12). Independent of the package version | Closed — Phase 2 stage 7 |
+| TBD-O5 | `contractVersion` bump policy and its relation to package semver | **Closed in §12 rule 6**: the version versions each command's envelope and moves when a field of an existing command's envelope changes or a value's meaning changes. A new command with its own shape, selected by `(command, contractVersion)`, that keeps the shared members verbatim and leaves every existing envelope byte-identical is additive — which is how `tables` arrives without moving `0.1.0`. A new `diagnostics` code is additive on the same terms (the set is extensible, the ten keys, their order and every existing meaning stay), so `E_LIMIT_BUDGET` arrives at `0.1.0`, and a new value of its `details.counter` — the two pre-scan counters of §10.5 — is data inside `details` on the same terms; its outcome change — some previously-processed inputs are now `failed` with exit `1` — is intentional and does not move the version, because consumers decide from `status` and `severity` (§12). Independent of the package version | Closed — Phase 2 stage 7 |
 | TBD-O6 | Whether the AST is exposed behind a flag (`--ast`) | Not exposed | Phase 2, stage 7 |
 | TBD-O7 | Exit code for non-`validate` commands when `error`-severity diagnostics exist | **Decided in §12's exit table**: `0` for `inspect` even when an `error`-severity finding is present, `3` only for `validate`, `1` for a fatal read in both, `2` for misuse. The mapping is `ExitPolicy` in `validate/`; command-line misuse is decided by `src/cli.ts` and is not part of it; neither appears in the envelope (§11, §12) | Closed — Phase 2 stage 7 |
 | TBD-O8 | Whether `export` exists as a command or `inspect --format` covers it | Not decided | Phase 3 |

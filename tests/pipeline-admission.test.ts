@@ -2,12 +2,13 @@
  * `tests/pipeline-admission.test.ts` — the admission gate wired into the one pipeline
  * (F4 U5-ADMIT1; `architecture.md` §10.5, §11, §12).
  *
- * `tests/budget-admission.test.ts` decides *what* `admit()` answers for hand-built numbers. This
- * file decides that the answer is **wired**: that the pipeline measures the document it just
- * scanned, refuses it on the refusal arm of `IntegrationInput`, and that the refusal reaches the
- * envelope, the exit policy and stderr unchanged.
+ * `tests/budget-admission.test.ts` decides *what* `admit()` and `admitShape()` answer for hand-built
+ * numbers. This file decides that the answers are **wired**: that the pipeline counts the document
+ * before it scans it and measures it after, refuses either gate on the refusal arm of
+ * `IntegrationInput`, and that the refusal reaches the envelope, the exit policy and stderr
+ * unchanged.
  *
- * Ten axes:
+ * Eleven axes:
  *
  * 1. **the refusal arm** — `{ load: { ok: false, … } }` and nothing else: one `E_LIMIT_BUDGET`,
  *    the limits the read applied, no `scan`, no `classification`, no `semantics`;
@@ -26,11 +27,17 @@
  *    stops it at construction rather than on the first document;
  * 7. **admitted documents are unchanged** — the envelope of a loaded fixture is identical to the
  *    composition the pipeline replaced, for every status this suite can produce.
- * 8. **order** — the one composition scans, measures, decides and only then classifies;
- * 9. **the three default ceilings** — pinned with pure `admit()` calls, at each ceiling and one past;
+ * 8. **order** — the one composition loads, gates on the pre-scan shape, scans, measures, decides
+ *    and only then classifies;
+ * 9. **the seven default ceilings** — pinned with pure `admit()`/`admitShape()` calls, at each
+ *    ceiling and one past;
  * 10. **the production wiring** — the built `dist/cli.js`, run on one over-budget document, refuses
  *    it on `inspect` and `validate` and admits it on `tables`, so each call site really builds its
- *    pipeline from its own profile instead of agreeing by convention.
+ *    pipeline from its own profile instead of agreeing by convention;
+ * 11. **the pre-scan gate** — `measureSourceShape`/`admitShape` run between the read and the scan,
+ *    so a Field- or content-heavy document is refused on the pre-scan counter before the scan
+ *    allocates its records, a decode fatal still wins, and the refusal reaches the same envelope,
+ *    fatal line, tables formats and exit `1` as a post-scan one.
  *
  * The ceilings this build ships sit far above every committed fixture (at most 277 and 2), so every
  * refusal below is produced by passing a **small budget to `createPipeline(budget)`** — the one
@@ -46,10 +53,11 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ResourceBudget, ResourceMeasure } from '../src/budget/index.js';
 import {
   admit,
+  admitShape,
   DEFAULT_RESOURCE_BUDGETS,
   ResourceAdmissionError,
   ResourceMeasureError,
@@ -63,11 +71,21 @@ import { createPipeline } from '../src/pipeline.js';
 import { classify } from '../src/schema/index.js';
 import { derivePartialSemantics } from '../src/semantic/index.js';
 import { scanSource } from '../src/syntax/index.js';
+import type { SourceShape } from '../src/syntax/index.js';
 import { runTablesCommand } from '../src/tables-command.js';
 import { tablesDiagnosticLines } from '../src/text/index.js';
 import type { IntegrationInput, RejectedInput } from '../src/validate/index.js';
 import { integrate } from '../src/validate/index.js';
 import { stage } from './helpers/stage.js';
+/**
+ * `scanSource` is **wrapped, not replaced**: the wrapper delegates to the real scan, and its call
+ * count is the runtime proof that a pre-scan refusal never reaches the scan. Every other export of
+ * the barrel — the shape walk included — is the real module.
+ */
+vi.mock('../src/syntax/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/syntax/index.js')>();
+  return { ...actual, scanSource: vi.fn(actual.scanSource) };
+});
 
 /** §11's message for the code, written out from the taxonomy, never read from the module. */
 const BUDGET_MESSAGE = 'The input would need more work than the processing budget allows';
@@ -87,11 +105,22 @@ const FMT01_SQUARES = 4 ** 2 + 9 ** 2;
  */
 const SEM07_COMPOSED = 2 * 1;
 
-/** One ceiling below `fmt-01`'s Σ`L²`, with the composed bound left permissive. */
+/**
+ * A pre-scan ceiling far above any document these tests build.
+ *
+ * Every budget below exists to make one *post-scan* counter refuse, so the pre-scan gate has to
+ * admit the document first: these two figures are that "let it through" setting, not the subject of
+ * any assertion here.
+ */
+const PERMISSIVE_SHAPE = 1_000_000;
+
+/** One ceiling below `fmt-01`'s Σ`L²`, with the composed bound and both pre-scan counts permissive. */
 const ENVELOPE_BELOW_FMT01: ResourceBudget = {
   profile: 'envelope',
   relationValueLengthSquares: FMT01_SQUARES - 1,
   composedColumnsUpperBound: 1,
+  entityFieldOccurrences: PERMISSIVE_SHAPE,
+  contentLineOccurrences: PERMISSIVE_SHAPE,
 };
 
 /** The same document's Σ`L²` fits; one ceiling below `sem-07`'s composed bound does not. */
@@ -99,18 +128,24 @@ const ENVELOPE_BELOW_SEM07: ResourceBudget = {
   profile: 'envelope',
   relationValueLengthSquares: 1_000,
   composedColumnsUpperBound: SEM07_COMPOSED - 1,
+  entityFieldOccurrences: PERMISSIVE_SHAPE,
+  contentLineOccurrences: PERMISSIVE_SHAPE,
 };
 
 /** `tables` has no Σ`L²` ceiling, so the same document is refused on the composed bound alone. */
 const TABLES_BELOW_SEM07: ResourceBudget = {
   profile: 'tables',
   composedColumnsUpperBound: SEM07_COMPOSED - 1,
+  entityFieldOccurrences: PERMISSIVE_SHAPE,
+  contentLineOccurrences: PERMISSIVE_SHAPE,
 };
 
 /** `tables` admits `fmt-01`: its composed bound is 0 and Σ`L²` is not a tables ceiling. */
 const TABLES_OVER_FMT01: ResourceBudget = {
   profile: 'tables',
   composedColumnsUpperBound: 1,
+  entityFieldOccurrences: PERMISSIVE_SHAPE,
+  contentLineOccurrences: PERMISSIVE_SHAPE,
 };
 
 /** The ten envelope members, in §12's order; the refusal adds none and reorders none. */
@@ -577,11 +612,14 @@ describe('pipeline admission — a failed read keeps precedence', () => {
     for (const [name, bytes, code] of cases) {
       withTempFile(name, bytes, (path) => {
         // A ceiling of 1 would refuse anything this pipeline measured, so a refusal here would
-        // mean the read failure had been measured first.
+        // mean the read failure had been measured first. The pre-scan ceilings are armed the same
+        // way: one content line is below anything that decodes.
         const budget: ResourceBudget = {
           profile: 'envelope',
           relationValueLengthSquares: 1,
           composedColumnsUpperBound: 1,
+          entityFieldOccurrences: 1,
+          contentLineOccurrences: 1,
         };
         const input = createPipeline(budget)(path);
 
@@ -609,10 +647,17 @@ describe('pipeline admission — internal errors stay internal', () => {
         profile: 'envelope',
         relationValueLengthSquares: 0,
         composedColumnsUpperBound: 1,
+        entityFieldOccurrences: 1,
+        contentLineOccurrences: 1,
       }),
     ).toThrow(ResourceAdmissionError);
     expect(() =>
-      createPipeline({ profile: 'tables', composedColumnsUpperBound: Number.NaN }),
+      createPipeline({
+        profile: 'tables',
+        composedColumnsUpperBound: Number.NaN,
+        entityFieldOccurrences: 1,
+        contentLineOccurrences: 1,
+      }),
     ).toThrow('admission: the composedColumnsUpperBound ceiling is not a positive safe integer');
   });
 
@@ -620,6 +665,7 @@ describe('pipeline admission — internal errors stay internal', () => {
     const errors = [
       new ResourceMeasureError('bounds.composedColumnsUpperBound.upperBound is not a safe integer'),
       new ResourceAdmissionError('relationValueLengthSquares is not a non-negative safe integer'),
+      new ResourceAdmissionError('entityFieldOccurrences is not a non-negative safe integer'),
     ];
 
     for (const error of errors) {
@@ -703,18 +749,25 @@ describe('pipeline admission — admitted documents are unchanged', () => {
 });
 
 describe('pipeline admission — order', () => {
-  it('scans, measures, decides, and only then classifies', () => {
-    // `classify()` is pure, so "it did not run" leaves no runtime trace: what can be asserted from
-    // outside is that the refusal retains no classification (above) and that the call sits after
-    // the deny return in the one composition. This pins that order, so a refactor that moved the
-    // expensive stage before the decision would fail here.
+  it('loads, gates on the shape, scans, measures, decides, and only then classifies', () => {
+    // The one composition is read as text: the gates are pure functions, so "it did not run" leaves
+    // no runtime trace on its own (the call counter below covers `scanSource`). What this pins is
+    // that the pre-scan deny sits before `scanSource()`, which is the property the gate exists for.
     const source = readFileSync(PIPELINE_SOURCE, 'utf8');
+    const load = source.indexOf('const load = loadSource(path)');
+    const shape = source.indexOf('measureSourceShape(load.source.text)');
+    const shapeAdmit = source.indexOf('admitShape(shape, applied)');
+    const shapeDeny = source.indexOf('if (!shapeAdmission.admitted)');
     const scan = source.indexOf('const scan = scanSource(');
     const measureAt = source.indexOf('admit(measure(scan)');
     const deny = source.indexOf('if (!admission.admitted)');
     const classifyAt = source.indexOf('const classification = classify(');
 
     for (const [label, index] of [
+      ['loadSource', load],
+      ['measureSourceShape', shape],
+      ['admitShape', shapeAdmit],
+      ['if (!shapeAdmission.admitted)', shapeDeny],
       ['scanSource', scan],
       ['admit(measure(scan)', measureAt],
       ['if (!admission.admitted)', deny],
@@ -722,24 +775,48 @@ describe('pipeline admission — order', () => {
     ] as const) {
       expect(index, label).toBeGreaterThan(-1);
     }
+    expect(load).toBeLessThan(shape);
+    expect(shape).toBeLessThan(shapeAdmit);
+    expect(shapeAdmit).toBeLessThan(shapeDeny);
+    expect(shapeDeny).toBeLessThan(scan);
     expect(scan).toBeLessThan(measureAt);
     expect(measureAt).toBeLessThan(deny);
     expect(deny).toBeLessThan(classifyAt);
   });
+
+  it('never scans a document the pre-scan gate refuses, and does scan one it admits', () => {
+    withTempFile('fields.a5er', Buffer.from(fieldHeavyDocument(3), 'utf8'), (path) => {
+      const scanned = vi.mocked(scanSource);
+
+      scanned.mockClear();
+      expect(createPipeline(envelopeWithShape(2, 100))(path).load.ok).toBe(false);
+      expect(scanned).not.toHaveBeenCalled();
+
+      // The same document and the same pipeline shape, one Field ceiling higher: the scan runs,
+      // exactly once, which is what makes the zero above a measurement rather than a dead spy.
+      scanned.mockClear();
+      expect(createPipeline(envelopeWithShape(3, 100))(path).load.ok).toBe(true);
+      expect(scanned).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
-describe('pipeline admission — the three default ceilings', () => {
-  it('pins 134217728, 524288 and 4194304 with pure admit() calls, at and one past each', () => {
+describe('pipeline admission — the seven default ceilings', () => {
+  it('pins all seven, at and one past each, with pure admit() and admitShape() calls', () => {
     // Explicit copies: the pipeline's defaults are these numbers, and a silent change to any of
     // them must fail here as well as in `tests/budget-admission.test.ts`.
     expect(DEFAULT_RESOURCE_BUDGETS.envelope).toEqual({
       profile: 'envelope',
       relationValueLengthSquares: 134_217_728,
       composedColumnsUpperBound: 524_288,
+      entityFieldOccurrences: 200_000,
+      contentLineOccurrences: 400_000,
     });
     expect(DEFAULT_RESOURCE_BUDGETS.tables).toEqual({
       profile: 'tables',
       composedColumnsUpperBound: 4_194_304,
+      entityFieldOccurrences: 500_000,
+      contentLineOccurrences: 1_000_000,
     });
 
     const envelope = DEFAULT_RESOURCE_BUDGETS.envelope;
@@ -773,6 +850,41 @@ describe('pipeline admission — the three default ceilings', () => {
       counter: 'composedColumnsUpperBound',
       observed: 4_194_304 + 1,
       ceiling: 4_194_304,
+    });
+
+    // The four pre-scan ceilings, decided by `admitShape()` on the shipped numbers.
+    expect(
+      admitShape(
+        shapeWith(envelope.entityFieldOccurrences, envelope.contentLineOccurrences),
+        envelope,
+      ),
+    ).toEqual({ admitted: true });
+    expect(admitShape(shapeWith(envelope.entityFieldOccurrences + 1, 0), envelope)).toEqual({
+      admitted: false,
+      counter: 'entityFieldOccurrences',
+      observed: 200_000 + 1,
+      ceiling: 200_000,
+    });
+    expect(admitShape(shapeWith(0, envelope.contentLineOccurrences + 1), envelope)).toEqual({
+      admitted: false,
+      counter: 'contentLineOccurrences',
+      observed: 400_000 + 1,
+      ceiling: 400_000,
+    });
+    expect(
+      admitShape(shapeWith(tables.entityFieldOccurrences, tables.contentLineOccurrences), tables),
+    ).toEqual({ admitted: true });
+    expect(admitShape(shapeWith(tables.entityFieldOccurrences + 1, 0), tables)).toEqual({
+      admitted: false,
+      counter: 'entityFieldOccurrences',
+      observed: 500_000 + 1,
+      ceiling: 500_000,
+    });
+    expect(admitShape(shapeWith(0, tables.contentLineOccurrences + 1), tables)).toEqual({
+      admitted: false,
+      counter: 'contentLineOccurrences',
+      observed: 1_000_000 + 1,
+      ceiling: 1_000_000,
     });
   });
 
@@ -906,5 +1018,268 @@ describe('pipeline admission — the production wiring', () => {
       const document = JSON.parse(result.stdout) as { readonly status: string };
       expect(document.status).not.toBe('failed');
     });
+  });
+});
+
+// ── the pre-scan gate (U5-ADMIT2) ────────────────────────────────────────
+
+/** `fields` `Field=` lines in one `[Entity]` section, under a header the reader recognises. */
+function fieldHeavyDocument(fields: number): string {
+  const lines = ['# A5:ER FORMAT:21', '[Entity]'];
+  for (let index = 0; index < fields; index += 1) lines.push(`Field="c${index}"`);
+  return `${lines.join('\n')}\n`;
+}
+
+/** The envelope profile with its shipped post-scan ceilings and the given pre-scan ones. */
+function envelopeWithShape(
+  entityFieldOccurrences: number,
+  contentLineOccurrences: number,
+): ResourceBudget {
+  return { ...DEFAULT_RESOURCE_BUDGETS.envelope, entityFieldOccurrences, contentLineOccurrences };
+}
+
+/** The tables profile with its shipped post-scan ceilings and the given pre-scan ones. */
+function tablesWithShape(
+  entityFieldOccurrences: number,
+  contentLineOccurrences: number,
+): ResourceBudget {
+  return { ...DEFAULT_RESOURCE_BUDGETS.tables, entityFieldOccurrences, contentLineOccurrences };
+}
+
+/**
+ * The smallest shape that answers the two figures `admitShape()` reads.
+ *
+ * `lines` is the pre-scan accounting and is not part of the decision, so it holds the empty
+ * partition rather than a cast.
+ */
+function shapeWith(entityFieldOccurrences: number, contentLineOccurrences: number): SourceShape {
+  return {
+    lines: { total: 0, sectionHeaders: 0, keys: 0, comments: 0, blank: 0, raw: 0 },
+    entityFieldOccurrences,
+    contentLineOccurrences,
+  };
+}
+
+/** The details of the one refusal a pipeline input carries, checked to be a budget refusal. */
+function refusalDetails(input: IntegrationInput): unknown {
+  if (input.load.ok) throw new Error('the document was admitted');
+  const diagnostic = input.load.diagnostics[0];
+  if (diagnostic === undefined) throw new Error('the refusal carried no diagnostic');
+  expect(diagnostic.code).toBe('E_LIMIT_BUDGET');
+  expect(diagnostic.severity).toBe('fatal');
+  expect(diagnostic.span).toBeNull();
+  expect(diagnostic.construct).toBe('Source');
+  return diagnostic.details;
+}
+
+describe('pipeline admission — the pre-scan gate', () => {
+  it('refuses on the Field count before any stage result exists', () => {
+    withTempFile('fields.a5er', Buffer.from(fieldHeavyDocument(3), 'utf8'), (path) => {
+      const input = createPipeline(envelopeWithShape(2, 100))(path);
+
+      expect(input.load.ok).toBe(false);
+      expect(Object.keys(input)).toEqual(['load']);
+      expect(refusalDetails(input)).toEqual({
+        counter: 'entityFieldOccurrences',
+        observed: 3,
+        ceiling: 2,
+      });
+
+      const load = input.load;
+      if (load.ok) throw new Error('the document was admitted');
+      // The limits the read applied, and one diagnostic: no scan, no classification, no semantics.
+      expect(load.limits).toEqual(DEFAULT_LIMITS);
+      expect(load.diagnostics).toHaveLength(1);
+    });
+  });
+
+  it('refuses on the content-line count when the Field count fits', () => {
+    // One header and three `Field=` lines: three Field occurrences and four content lines.
+    withTempFile('fields.a5er', Buffer.from(fieldHeavyDocument(3), 'utf8'), (path) => {
+      expect(refusalDetails(createPipeline(envelopeWithShape(3, 3))(path))).toEqual({
+        counter: 'contentLineOccurrences',
+        observed: 4,
+        ceiling: 3,
+      });
+    });
+  });
+
+  it('reports the Field count first when both pre-scan counts are past their ceilings', () => {
+    withTempFile('fields.a5er', Buffer.from(fieldHeavyDocument(3), 'utf8'), (path) => {
+      expect(refusalDetails(createPipeline(envelopeWithShape(2, 3))(path))).toEqual({
+        counter: 'entityFieldOccurrences',
+        observed: 3,
+        ceiling: 2,
+      });
+    });
+  });
+
+  it('precedes the post-scan gate, and leaves it deciding when the shape fits', () => {
+    const text = `${fieldHeavyDocument(3)}[Relation]\nFields1="abc"\n`;
+    withTempFile('both.a5er', Buffer.from(text, 'utf8'), (path) => {
+      // Σ`L²` is 5² = 25 over the one relation value; the composed bound is 0.
+      const overBoth = { ...envelopeWithShape(2, 100), relationValueLengthSquares: 24 };
+      expect(refusalDetails(createPipeline(overBoth)(path))).toEqual({
+        counter: 'entityFieldOccurrences',
+        observed: 3,
+        ceiling: 2,
+      });
+
+      // The same document with a shape ceiling that admits it: the post-scan gate still decides.
+      const shapeFits = { ...envelopeWithShape(3, 100), relationValueLengthSquares: 24 };
+      expect(refusalDetails(createPipeline(shapeFits)(path))).toEqual({
+        counter: 'relationValueLengthSquares',
+        observed: 25,
+        ceiling: 24,
+      });
+    });
+  });
+
+  it('admits the same document when both pre-scan ceilings are met', () => {
+    withTempFile('fields.a5er', Buffer.from(fieldHeavyDocument(3), 'utf8'), (path) => {
+      const input = createPipeline(envelopeWithShape(3, 4))(path);
+
+      expect(input.load.ok).toBe(true);
+      expect(integrate(input).status).not.toBe('failed');
+    });
+  });
+
+  it('keeps a decode fatal ahead of a shape refusal the same bytes would also earn', () => {
+    const cases: Array<[string, Uint8Array, string]> = [
+      ['unrecognised.a5er', Buffer.from('FORMAT: 21\nhello\n', 'utf8'), 'E_UNRECOGNIZED_DOCUMENT'],
+      ['binary.a5er', Buffer.from([0x00, 0x01, 0x00, 0x02, 0x00, 0x03]), 'E_BINARY_INPUT'],
+    ];
+
+    for (const [name, bytes, code] of cases) {
+      withTempFile(name, bytes, (path) => {
+        // One content line is the ceiling, so the gate would refuse anything the walk saw at all.
+        const input = createPipeline(envelopeWithShape(1, 1))(path);
+
+        expect(input.load.ok, name).toBe(false);
+        const load = input.load;
+        if (load.ok) throw new Error(`${name} was accepted`);
+        expect(
+          load.diagnostics.map((diagnostic) => diagnostic.code),
+          name,
+        ).toEqual([code]);
+        expect(JSON.stringify(load.diagnostics), name).not.toContain('E_LIMIT_BUDGET');
+      });
+    }
+
+    // The same ceilings do refuse a document that reads, so the gate was armed all along.
+    withTempFile('fields.a5er', Buffer.from(fieldHeavyDocument(2), 'utf8'), (path) => {
+      expect(refusalDetails(createPipeline(envelopeWithShape(1, 1))(path))).toEqual({
+        counter: 'entityFieldOccurrences',
+        observed: 2,
+        ceiling: 1,
+      });
+    });
+  });
+
+  it('integrates a shape refusal as failed with exit 1 and one machine-readable document', () => {
+    withTempFile('fields.a5er', Buffer.from(fieldHeavyDocument(3), 'utf8'), (path) => {
+      const input = createPipeline(envelopeWithShape(2, 100))(path);
+      const integration = integrate(input);
+
+      expect(integration.status).toBe('failed');
+      expect(integration.completeness).toBeNull();
+      expect(integration.unsupported).toEqual([]);
+      expect(integration.exitPolicy).toEqual({ inspect: 1, validate: 1 });
+      expect([...tablesDiagnosticLines(integration)].join('')).toBe(BUDGET_LINE);
+
+      for (const command of ['inspect', 'validate'] as const) {
+        const envelope = serialize(input, { command, path });
+
+        expect(Object.keys(envelope), command).toEqual(ENVELOPE_KEYS);
+        expect(envelope.status, command).toBe('failed');
+        expect(envelope.source, command).toBeNull();
+        expect(envelope.schema, command).toBeNull();
+        expect(envelope.completeness, command).toBeNull();
+        expect(envelope.unsupported, command).toEqual([]);
+        expect(envelope.limits, command).toEqual({
+          maxBytes: DEFAULT_LIMITS.maxBytes,
+          truncated: false,
+        });
+        expect(envelope.diagnostics, command).toEqual([
+          {
+            code: 'E_LIMIT_BUDGET',
+            severity: 'fatal',
+            message: BUDGET_MESSAGE,
+            details: { counter: 'entityFieldOccurrences', observed: 3, ceiling: 2 },
+            span: null,
+            construct: 'Source',
+          },
+        ]);
+        expect(toJsonString(envelope), command).not.toContain('\n');
+      }
+    });
+  });
+
+  it('refuses a shape-heavy document through runTablesCommand in both formats', async () => {
+    await inTempFile('fields.a5er', fieldHeavyDocument(3), async (path) => {
+      for (const format of ['json', 'text'] as const) {
+        const stdout = capture();
+        const stderr = capture();
+        const phases: (0 | 1 | 70)[] = [];
+
+        const code = await runTablesCommand({
+          path,
+          format,
+          stdout: stdout.stream,
+          stderr: stderr.stream,
+          pipeline: createPipeline(tablesWithShape(2, 100)),
+          onPhaseACode: (phaseCode): void => {
+            phases.push(phaseCode);
+          },
+        });
+
+        expect(code, format).toBe(1);
+        expect(phases, format).toEqual([1]);
+        expect(stderr.chunks.join(''), format).toBe(BUDGET_LINE);
+
+        const written = stdout.chunks.join('');
+        if (format === 'text') {
+          expect(written, format).toContain('# status: failed\n');
+          expect(written, format).toContain('# objects: none (status failed)\n');
+          continue;
+        }
+
+        const document = JSON.parse(written) as Record<string, unknown>;
+        expect(Object.keys(document), format).toEqual(TABLES_KEYS);
+        expect(document['status'], format).toBe('failed');
+        expect(document['result'], format).toBeNull();
+        expect(document['completeness'], format).toBeNull();
+        expect(document['unsupported'], format).toEqual([]);
+        expect(document['diagnostics'], format).toEqual([
+          {
+            code: 'E_LIMIT_BUDGET',
+            severity: 'fatal',
+            message: BUDGET_MESSAGE,
+            details: { counter: 'entityFieldOccurrences', observed: 3, ceiling: 2 },
+            span: null,
+            construct: 'Source',
+          },
+        ]);
+      }
+    });
+  });
+
+  it('throws at construction for a pre-scan ceiling it cannot compare', () => {
+    expect(() =>
+      createPipeline({ ...DEFAULT_RESOURCE_BUDGETS.envelope, entityFieldOccurrences: 0 }),
+    ).toThrow('admission: the entityFieldOccurrences ceiling is not a positive safe integer');
+    expect(() =>
+      createPipeline({ ...DEFAULT_RESOURCE_BUDGETS.envelope, contentLineOccurrences: Number.NaN }),
+    ).toThrow('admission: the contentLineOccurrences ceiling is not a positive safe integer');
+
+    // A budget that predates the pre-scan ceilings is a caller defect, not a refusal: the pipeline
+    // never starts, so no document is ever judged against the missing members.
+    expect(() =>
+      createPipeline({
+        profile: 'envelope',
+        relationValueLengthSquares: 1,
+        composedColumnsUpperBound: 1,
+      } as unknown as ResourceBudget),
+    ).toThrow(ResourceAdmissionError);
   });
 });

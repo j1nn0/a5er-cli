@@ -412,46 +412,65 @@ v1 — it is reported, because a percentage would let an untested branch hide be
 | G-8 | Fixture integrity: every catalog ID exists, is tracked, and is not ignored | `catalog.test.ts` runs `git ls-files` and `git check-ignore --no-index` |
 | G-9 | Policy: the tracked `.a5er` set equals the catalog's synthetic fixtures (exactly 39 today); any other tracked `.a5er` fails | `catalog.test.ts` compares `git ls-files '*.a5er'` with the registry and checks the `.gitignore` allowlist with `git check-ignore --no-index`; CI may run the same `ls-files` comparison |
 | G-10 | **`inspect` and `validate` stay byte-identical** to the baseline: 44 fixtures × 2 commands, stdout and stderr compared as raw UTF-8 bytes against expectations built from the committed goldens and the fixture's diagnostics — never from `serialize()` | `cli-byte-regression.test.ts` (88 runs); the goldens themselves are unchanged, and `git diff` shows nothing under `tests/fixtures/` |
-| G-11 | The **admission gate** is wired and its refusal is a contract: one `E_LIMIT_BUDGET` with exact `counter`/`observed`/`ceiling`, the limits the read applied, no `scan`/`classification`/`semantics`, `unsupported` `[]`, `limits.truncated` `false`, and exit `1` for `inspect`, `validate` and `tables`. What stdout carries follows the command's format, and only two of the three forms are JSON: `inspect`/`validate` emit their envelope with `schema` `null`, `tables --format json` the tables document with `result` `null`, and `tables` text the text failure framing with no table header (`architecture.md` §10.5). Also: a read that already failed keeps its own fatal and is never measured; `ResourceMeasureError`/`ResourceAdmissionError` stay internal (`tables` Phase A still `70`); a document exactly at a ceiling is admitted and one past it is refused | `pipeline-admission.test.ts` (the wiring, the per-profile decisions, the refusal per format, the fatal line, `tables` end to end through `runTablesCommand`, internal errors, admitted-document equality with the pre-gate composition); `budget-admission.test.ts` (the decision itself, over hand-built measures) |
+| G-11 | The **admission gate** is wired at both points and its refusal is a contract: one `E_LIMIT_BUDGET` with exact `counter`/`observed`/`ceiling`, the limits the read applied, no `scan`/`classification`/`semantics`, `unsupported` `[]`, `limits.truncated` `false`, and exit `1` for `inspect`, `validate` and `tables`. The pre-scan gate counts `entityFieldOccurrences` and `contentLineOccurrences` from the decoded text and refuses before `scanSource()` runs; the post-scan gate compares Σ`L²` and the composed bound as before. What stdout carries follows the command's format, and only two of the three forms are JSON: `inspect`/`validate` emit their envelope with `schema` `null`, `tables --format json` the tables document with `result` `null`, and `tables` text the text failure framing with no table header (`architecture.md` §10.5). Also: a read that already failed keeps its own fatal and is never measured; `ResourceMeasureError`/`ResourceAdmissionError` stay internal (`tables` Phase A still `70`); a document exactly at a ceiling is admitted and one past it is refused; the pre-scan gate reports the `Field` count before the content count | `pipeline-admission.test.ts` (the wiring of both gates, the per-profile decisions, the refusal per format, the fatal line, the pre-scan counters and their order, a delegating `scanSource` wrapper proving zero scan calls on a pre-scan refusal and one on an admitted document, `tables` end to end through `runTablesCommand`, internal errors, admitted-document equality with the pre-gate composition); `budget-admission.test.ts` (the decision itself, over hand-built measures and hand-built shapes) |
 
 G-4 and G-5 are guard tests, not lint rules, because no linter is decided in
 `architecture.md` §15. They are a stopgap: once a linter is chosen, both move to lint rules and
 the guard tests are deleted (TBD-T2).
 
-### 10.1 The admission gate (U5-ADMIT1)
+### 10.1 The admission gates (U5-ADMIT1, U5-ADMIT2)
 
-The ceilings (`architecture.md` §10.5) are far above every fixture — the 39 synthetic fixtures measure
-at most Σ`L²` **277** and composed columns **2** — so no committed document can reach one under the
-default limits, and none may be grown towards one. Reaching the envelope Σ`L²` ceiling (134,217,728)
-would take a single relation value of 11,586 UTF-16 code units — quoting and escapes included, the
-same unit as `String.length`, 11,586² being the first square above the ceiling. Reaching the
-composed-column ceiling takes more than 524,288 `CommonField=` lines, and **one** `[Entity]` section
-is enough, because the bound is sections × declarations; "thousands of entities" is not required.
-The gate is tested in three layers instead.
+The seven ceilings (`architecture.md` §10.5) are far above every fixture — the 39 synthetic fixtures
+measure at most Σ`L²` **277** and composed columns **2**, and none is refused — so no committed
+document can reach one under the default limits, and none may be grown towards one. Reaching the
+envelope Σ`L²` ceiling (134,217,728) would take a single relation value of 11,586 UTF-16 code units —
+quoting and escapes included, the same unit as `String.length`, 11,586² being the first square above
+the ceiling. The composed-column ceiling is `[Entity]` sections × `CommonField=` declarations above
+524,288: one section needs that many declarations and two need half of them, so "thousands of
+entities" is not required but a single section is not either. The pre-scan ceilings are counts of
+lines — 200,000 `Field=` occurrences and 400,000 content lines for the envelope profile, 500,000 and
+1,000,000 for `tables` — so reaching one takes a document with that many lines, not a large value.
 
 The numbers themselves are **provisional operating values, partly extrapolated** from small samples
-(`architecture.md` §10.5). The gates fix the mechanism — which counter is compared, in which order,
-against which ceiling, and what a refusal looks like — and pin the current three figures so a silent
-change fails a test. Neither is a claim about memory.
+(`architecture.md` §10.5). The gates fix the mechanism — which counter is compared, at which point, in
+which order, against which ceiling, and what a refusal looks like — and pin all seven figures so a
+silent change fails a test. Neither the mechanism nor the numbers is a claim about memory.
 
-1. **The decision** (`budget-admission.test.ts`) — hand-built `ResourceMeasure` records: every
-   boundary at and one past each ceiling, invalid observations and ceilings, immutability,
-   determinism, and a fixed exception message that repeats no input value.
+The gates are tested in three layers instead.
+
+1. **The decision** (`budget-admission.test.ts`) — hand-built `ResourceMeasure` and hand-built
+   `SourceShape` records: every boundary at and one past each of the seven ceilings, the
+   `Field`-before-content order, invalid observations and ceilings, immutability, determinism, and a
+   fixed exception message that repeats no input value.
 2. **The wiring** (`pipeline-admission.test.ts`) — committed synthetic fixtures staged as disposable
-   copies, and a **small budget passed as the one argument of `createPipeline(budget)`**. That
-   argument carries the profile and exactly the ceilings it caps, so there is no second value a test
-   could pair with it and no way for the profile and the ceilings to disagree; production passes
-   `DEFAULT_RESOURCE_BUDGETS.envelope` from `src/cli.ts` and `DEFAULT_RESOURCE_BUDGETS.tables` from
-   `src/tables-command.ts`, and a budget that is not one of the two profiles throws at construction.
-   It proves the refusal arm, the failed form of each command, the fatal line, exit `1`, the
-   load-failure precedence, and that an admitted document's envelope equals the composition the gate
-   replaced.
+   copies, hand-written small documents, and a **small budget passed as the one argument of
+   `createPipeline(budget)`**. That argument carries the profile and exactly the ceilings it caps, so
+   there is no second value a test could pair with it and no way for the profile and the ceilings to
+   disagree; production passes `DEFAULT_RESOURCE_BUDGETS.envelope` from `src/cli.ts` and
+   `DEFAULT_RESOURCE_BUDGETS.tables` from `src/tables-command.ts`, and a budget that is not one of
+   the two profiles throws at construction. It proves the refusal arm of both gates, the failed form
+   of each command, the fatal line, exit `1`, the decode-failure precedence over a pre-scan refusal,
+   the pre-scan refusal before a post-scan one, and that an admitted document's envelope equals the
+   composition the gate replaced.
+   **What the production wiring can and cannot show.** The profile wiring is observable from outside:
+   one spawned `dist/cli.js` run on a document past the shipped Σ`L²` ceiling is refused by `inspect`
+   and `validate` and admitted by `tables`. The pre-scan ceilings are not observable that way — no
+   spawned run may build a 200,000-line document — so their production wiring is pinned by the
+   defaults assertion (all seven numbers, per profile) plus pure `admitShape()` decisions at each
+   shipped value, not by a CLI refusal. **What the order pin can and cannot show.** It reads
+   `src/pipeline.ts` as text, so it proves where the calls sit, not what they do at run time; the
+   run-time half is a delegating wrapper around `scanSource`, which asserts zero calls on a pre-scan
+   refusal and exactly one on the same document with the ceiling raised. **What the fixture-maxima
+   pin can and cannot show.** The 277 / 2 pair is a recorded constant, not recomputed per run, so it
+   proves headroom against the recorded maxima only; the pre-scan ceilings' headroom on the corpus is
+   evidenced by the 156/156 comparison below, not by a maxima assertion.
 3. **The corpus** — the gate is invisible where it must be. G-10's in-repo fence covers the 88
-   `inspect`/`validate` runs; the recorded extension for this unit is 39 synthetic fixtures × 4
-   command forms (`inspect`, `validate`, `tables`, `tables --format json`), compared with the pre-gate
-   build at base commit `1c6a4320` on stdout bytes, stderr bytes and exit code — **156 of 156
-   identical**. That comparison is a recorded pre-merge run rather than a CI job: it needs the base
-   build as well as the head one.
+   `inspect`/`validate` runs. The recorded extension is 39 synthetic fixtures × 4 command forms
+   (`inspect`, `validate`, `tables`, `tables --format json`), compared with a base build on stdout
+   bytes, stderr bytes and exit code — **156 of 156 identical** against the pre-gate build at base
+   commit `1c6a4320` for U5-ADMIT1, and **156 of 156** again against base `251ec00` (which already
+   contains that gate) for the pre-scan gate. Those comparisons are recorded pre-merge runs rather
+   than CI jobs: each needs the base build as well as the head one.
 
 Consequences for the fixture policy and the gates:
 
@@ -461,12 +480,13 @@ Consequences for the fixture policy and the gates:
   fixture can reach needs no exemption, and layers 1–2 are its coverage.
 - **The 44 goldens are unchanged** and none carries the new code: no fixture is refused, so no
   expected envelope changed.
-- **The two amplification figures are not envelope members.** A refusal publishes them inside
+- **The four figures are not envelope members.** A refusal publishes one of them inside
   `E_LIMIT_BUDGET.details`; an admitted document publishes nothing about them.
-- **`observed` is an aggregate, not a quotation.** It is computed from the document's structure —
-  Σ`L²` over relation value lengths, sections × declarations — so a refusal's `details` embed no file
-  body, key, column or path, and a test asserting that nothing in them derives from the file would
-  assert the wrong thing (`architecture.md` §12).
+- **`observed` is an aggregate, not a quotation.** It is computed from the document's structure — a
+  count of lines or of `Field=` occurrences from the text, Σ`L²` over relation value lengths or
+  sections × declarations from the scan — so a refusal's `details` embed no file body, key, column
+  or path, and a test asserting that nothing in them derives from the file would assert the wrong
+  thing (`architecture.md` §12).
 
 ---
 
@@ -543,10 +563,14 @@ document through `--format json`) is a manual run: the recorded one needed a 4 G
 bounded size (B-3, B-5). The in-memory stage shared with `inspect` can exhaust the V8 heap on inputs
 within the read limits; that risk is tracked in
 [issue #27](https://github.com/j1nn0/a5er-cli/issues/27) and is not an acceptance condition of the
-`tables` implementation. **The admission gate does not change that**, and this document does not
-claim it does: a document of the B-6 shape has no relation values and one `[Entity]` section, so
-neither the Σ`L²` nor the composed-column ceiling counts it (`architecture.md` §10.5). The recorded
-single-entity `Field` and unknown-key failures are, as a rule, not shapes either counter captures.
+`tables` implementation. **The admission gate changes which documents reach that risk, not the risk
+itself**, and this document does not claim otherwise. The pre-scan gate counts lines, and a document
+of the B-6 shape is 1,999,000 `Unknown<i>=1` lines — `key=value` lines, so content lines — far past
+the 1,000,000 content-line ceiling for `tables` and the 400,000 for `inspect`/`validate`; a document
+of the recorded single-entity `Field` shape is counted by `entityFieldOccurrences`, at 200,000 for
+`inspect`/`validate` and 500,000 for `tables`. What the gate does not do is bound memory: a document
+below all seven ceilings can still exhaust the heap or reach the string limit, which is the risk
+[issue #27](https://github.com/j1nn0/a5er-cli/issues/27) tracks (`architecture.md` §10.5).
 
 **The B-6 run as recorded.** Node.js 24.22.3; a synthetic document of one entity carrying 1,999,000
 `Unknown<i>=1` keys (32,872,026 bytes); `tables --format json` with the V8 heap limit at 4 GiB and a

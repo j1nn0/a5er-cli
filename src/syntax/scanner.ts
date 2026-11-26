@@ -209,8 +209,13 @@ function lineSpan(sectionIndex: number, line: number): Span {
   return { sectionIndex, startLine: line, endLine: line, keyLine: line };
 }
 
-/** What a single line turned out to be. */
-type Classified =
+/**
+ * What a single line turned out to be.
+ *
+ * Exported so `shape.ts` can name what its pre-scan walk got back; the classification itself is
+ * this module's, and the pre-scan calls it rather than deciding again (§7.3, §7.4).
+ */
+export type Classified =
   | { readonly kind: 'header'; readonly name: string }
   | { readonly kind: 'blank' }
   | { readonly kind: 'comment' }
@@ -220,13 +225,16 @@ type Classified =
 /**
  * Classify one physical line.
  *
+ * Exported for `shape.ts`, the pre-scan walk: admission and the scan must classify a line the same
+ * way, so there is one definition of §7.3/§7.4's order and no second copy of it.
+ *
  * The order *is* the classification: header, blank, comment, key, raw. A header-shaped line is
  * checked first so `[a=b]` stays a header rather than becoming a key (§10.4's greedy outer
  * pair), and a `#` line is a comment even when it contains `=` (P1: `#` lines are comments
  * anywhere). A line whose first `=` is at position 0 has an empty key name and is not a
  * `key=value` line at all — it becomes a raw line.
  */
-function classify(line: SourceLine, sectionIndex: number): Classified {
+export function classify(line: SourceLine, sectionIndex: number): Classified {
   const name = headerNameOf(line.text);
   if (name !== null) return { kind: 'header', name };
   // Whitespace-only, using the same test `decode/load.ts` applies to the whole input. This is

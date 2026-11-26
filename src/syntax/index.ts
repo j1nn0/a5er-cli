@@ -17,7 +17,7 @@
 export type { ComplexPart, ComplexParts } from './complex.js';
 export { splitComplex } from './complex.js';
 export type { LineEnding, SourceLine } from './lines.js';
-export { splitLines } from './lines.js';
+export { forEachLine, splitLines } from './lines.js';
 export type {
   CommentRecord,
   FormatFact,
@@ -33,3 +33,5 @@ export type {
 export { scanSource } from './scanner.js';
 export type { SectionKind } from './sections.js';
 export { sectionKindOf } from './sections.js';
+export type { SourceShape } from './shape.js';
+export { measureSourceShape } from './shape.js';

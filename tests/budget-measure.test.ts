@@ -38,6 +38,8 @@ import { loadSource } from '../src/decode/load.js';
 import { classify } from '../src/schema/registry.js';
 import { commonColumnsOf } from '../src/semantic/common-columns.js';
 import { relationsOf } from '../src/semantic/relations.js';
+import { measureSourceShape } from '../src/syntax/index.js';
+import type { SourceShape } from '../src/syntax/index.js';
 import { scanSource } from '../src/syntax/scanner.js';
 import type { SyntaxAccounting, SyntaxScan } from '../src/syntax/scanner.js';
 import { FIXTURES } from './helpers/fixture-registry.js';
@@ -57,6 +59,7 @@ function measureOf(text: string, format: number | null = 21): ResourceMeasure {
 
 const SYNTHETIC = FIXTURES.filter((spec) => spec.fixtureClass === 'synthetic');
 const FIXTURE_SCANS = new Map<string, SyntaxScan>();
+const FIXTURE_TEXTS = new Map<string, string>();
 
 /** One committed synthetic fixture, staged and scanned; the same result for every test. */
 function scanOfFixture(id: string): SyntaxScan {
@@ -72,6 +75,30 @@ function scanOfFixture(id: string): SyntaxScan {
   } finally {
     staged.cleanup();
   }
+}
+
+/** The decoded text of one committed synthetic fixture, staged and loaded once. */
+function textOfFixture(id: string): string {
+  const cached = FIXTURE_TEXTS.get(id);
+  if (cached !== undefined) return cached;
+  const staged = stage(id);
+  try {
+    const outcome = loadSource(staged.path);
+    if (!outcome.ok) throw new Error(`${id} did not load`);
+    FIXTURE_TEXTS.set(id, outcome.source.text);
+    return outcome.source.text;
+  } finally {
+    staged.cleanup();
+  }
+}
+
+/** Every published figure of a shape, with its path, for the range assertions. */
+function shapeNumbers(shape: SourceShape): [path: string, value: number][] {
+  return [
+    ...Object.entries(shape.lines),
+    ['entityFieldOccurrences', shape.entityFieldOccurrences],
+    ['contentLineOccurrences', shape.contentLineOccurrences],
+  ];
 }
 
 /** The common columns every entity actually adopts, summed — what the bound must cover. */
@@ -773,6 +800,141 @@ describe('measure — the committed synthetic fixtures', () => {
     }
 
     expect(violations).toEqual([]);
+  });
+});
+
+// ── the pre-scan shape (U5) ────────────────────────────────────────────────
+
+describe('measureSourceShape — the pre-scan counters', () => {
+  it('agrees with §13’s accounting on every synthetic fixture, field by field', () => {
+    for (const spec of SYNTHETIC) {
+      const scan = scanOfFixture(spec.id);
+      const shape = measureSourceShape(textOfFixture(spec.id));
+
+      expect(Object.keys(shape.lines).sort(), spec.id).toEqual(
+        Object.keys(scan.accounting.lines).sort(),
+      );
+      for (const field of [
+        'total',
+        'sectionHeaders',
+        'keys',
+        'comments',
+        'blank',
+        'raw',
+      ] as const) {
+        expect(shape.lines[field], `${spec.id} lines.${field}`).toBe(scan.accounting.lines[field]);
+      }
+    }
+  });
+
+  it('counts the same entity Field occurrences as the scan-based measure', () => {
+    for (const spec of SYNTHETIC) {
+      expect(measureSourceShape(textOfFixture(spec.id)).entityFieldOccurrences, spec.id).toBe(
+        measure(scanOfFixture(spec.id)).counters.entityFieldOccurrences,
+      );
+    }
+  });
+
+  it('counts content lines as exactly the headers, keys and raw lines', () => {
+    for (const spec of SYNTHETIC) {
+      const shape = measureSourceShape(textOfFixture(spec.id));
+      const { lines } = shape;
+
+      expect(shape.contentLineOccurrences, spec.id).toBe(
+        lines.sectionHeaders + lines.keys + lines.raw,
+      );
+      // Comments and blank lines are the only lines left out (§7.4: they are not data).
+      expect(shape.contentLineOccurrences + lines.comments + lines.blank, spec.id).toBe(
+        lines.total,
+      );
+    }
+  });
+
+  it('publishes only non-negative safe integers', () => {
+    for (const spec of SYNTHETIC) {
+      for (const [path, value] of shapeNumbers(measureSourceShape(textOfFixture(spec.id)))) {
+        expect(Number.isSafeInteger(value), `${spec.id} ${path}`).toBe(true);
+        expect(value, `${spec.id} ${path}`).toBeGreaterThanOrEqual(0);
+      }
+    }
+  });
+});
+
+describe('measureSourceShape — the Field and content boundaries', () => {
+  it('counts Field= lines inside an [Entity] section, duplicates included', () => {
+    const shape = measureSourceShape('[Entity]\nField="id"\nField="name"\nField="id"\n');
+
+    expect(shape.entityFieldOccurrences).toBe(3);
+  });
+
+  it('follows the section through CRLF, CR and LF terminators alike', () => {
+    const shape = measureSourceShape('[Entity]\r\nField="a"\rField="b"\nField="c"');
+
+    expect(shape.entityFieldOccurrences).toBe(3);
+    expect(shape.lines.total).toBe(4);
+  });
+
+  it('does not treat a wrong-case or aliased header as an entity', () => {
+    for (const header of ['[entity]', '[Manager]', '[Relationship]', '[Relation]', '[Entity ]']) {
+      expect(measureSourceShape(`${header}\nField="id"\n`).entityFieldOccurrences, header).toBe(0);
+    }
+  });
+
+  it('counts nothing before the first header, and stops when the entity section ends', () => {
+    expect(measureSourceShape('Field="id"\n[Entity]\n').entityFieldOccurrences).toBe(0);
+
+    const shape = measureSourceShape(
+      '[Entity]\nField="a"\n[Manager]\nField="b"\n[Entity]\nField="c"\n',
+    );
+    expect(shape.entityFieldOccurrences).toBe(2);
+  });
+
+  it('counts only the exact key text', () => {
+    const shape = measureSourceShape(
+      '[Entity]\n Field="id"\nField ="id"\nfield="id"\n#Field="id"\n',
+    );
+
+    expect(shape.entityFieldOccurrences).toBe(0);
+    // The lines are still counted where they belong: nothing was dropped to reach that zero.
+    expect(shape.lines).toEqual({
+      total: 5,
+      sectionHeaders: 1,
+      keys: 3,
+      comments: 1,
+      blank: 0,
+      raw: 0,
+    });
+  });
+
+  it('excludes comments and blank lines from the content figure', () => {
+    const shape = measureSourceShape('# comment\n\n[Entity]\nField="a"\nbroken line\n');
+
+    expect(shape.lines).toEqual({
+      total: 5,
+      sectionHeaders: 1,
+      keys: 1,
+      comments: 1,
+      blank: 1,
+      raw: 1,
+    });
+    expect(shape.contentLineOccurrences).toBe(3);
+  });
+
+  it('measures an empty text as nothing at all', () => {
+    expect(measureSourceShape('')).toEqual({
+      lines: { total: 0, sectionHeaders: 0, keys: 0, comments: 0, blank: 0, raw: 0 },
+      entityFieldOccurrences: 0,
+      contentLineOccurrences: 0,
+    });
+  });
+
+  it('agrees with the scan on a pre-section region and an unknown section', () => {
+    const text = 'Key=1\nraw before any header\n[Unknown]\nKey=2\n[Entity]\nField="a"\n';
+    const shape = measureSourceShape(text);
+
+    expect(shape.lines).toEqual(scanOf(text).accounting.lines);
+    expect(shape.entityFieldOccurrences).toBe(1);
+    expect(shape.contentLineOccurrences).toBe(6);
   });
 });
 

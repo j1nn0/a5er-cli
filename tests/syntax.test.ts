@@ -25,7 +25,8 @@ import type { DecodedSource } from '../src/decode/load.js';
 import { splitComplex } from '../src/syntax/complex.js';
 import { scanSource } from '../src/syntax/scanner.js';
 import type { KeyRecord, SectionEntry, SectionScan, SyntaxScan } from '../src/syntax/scanner.js';
-import { splitLines } from '../src/syntax/lines.js';
+import { forEachLine, splitLines } from '../src/syntax/lines.js';
+import type { LineEnding, SourceLine } from '../src/syntax/lines.js';
 import { assertCodes } from './helpers/assert-codes.js';
 import { FIXTURES } from './helpers/fixture-registry.js';
 import type { FixtureSpec } from './helpers/fixture-registry.js';
@@ -224,6 +225,93 @@ describe('splitLines — physical lines and their terminators', () => {
         .map((line) => line.text + line.ending)
         .join(''),
     ).toBe(text);
+  });
+});
+
+// ── the line walk the splitter is built on (§4.1, U4) ─────────────────────
+/**
+ * `splitLines` as it stood before the walk was extracted, copied here on purpose: the equivalence
+ * below compares the walk against an independent implementation of the same rules, not against
+ * itself through the collector that delegates to it.
+ */
+function referenceSplitLines(text: string): SourceLine[] {
+  const lines: SourceLine[] = [];
+  let start = 0;
+  let number = 1;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char !== '\r' && char !== '\n') continue;
+
+    const ending: LineEnding =
+      char === '\r' && text[index + 1] === '\n' ? '\r\n' : char === '\r' ? '\r' : '\n';
+    lines.push({ number, text: text.slice(start, index), ending });
+    number += 1;
+    if (ending === '\r\n') index += 1;
+    start = index + 1;
+  }
+
+  if (start < text.length) lines.push({ number, text: text.slice(start), ending: '' });
+  return lines;
+}
+
+/** Every terminator shape §4.1 has to get right; the label names the case when one fails. */
+const LINE_WALK_CASES: readonly (readonly [string, string])[] = [
+  ['an empty text', ''],
+  ['a last line without a terminator', 'abc'],
+  ['LF only', 'a\nb'],
+  ['a trailing LF', 'a\nb\n'],
+  ['CR only', 'a\rb'],
+  ['a trailing CR', 'a\rb\r'],
+  ['CRLF only', 'a\r\nb'],
+  ['a trailing CRLF', 'a\r\nb\r\n'],
+  ['all three terminators in one text', 'a\r\nb\nc\rd'],
+  ['consecutive LFs', 'a\n\n\nb'],
+  ['consecutive CRLFs', '\r\n\r\n'],
+  ['consecutive bare CRs', '\r\r'],
+  ['consecutive terminators of mixed kinds', 'a\n\r\r\n\n\nb\r'],
+  ['nothing but terminators', '\n\r\n\r'],
+  ['a BOM and a mixed-ending header', '\uFEFF# A5:ER FORMAT:21\r\n[Manager]\rPageInfo=1\n[Entity]'],
+];
+
+describe('forEachLine — the walk splitLines collects', () => {
+  it('visits exactly the records the previous splitLines loop produced', () => {
+    for (const [label, text] of LINE_WALK_CASES) {
+      const visited: SourceLine[] = [];
+      forEachLine(text, (line) => {
+        visited.push(line);
+      });
+      expect(visited, label).toEqual(referenceSplitLines(text));
+      expect(visited, label).toEqual(splitLines(text));
+    }
+  });
+
+  it('numbers from 1 with no gap and no repeat', () => {
+    for (const [label, text] of LINE_WALK_CASES) {
+      const numbers: number[] = [];
+      forEachLine(text, (line) => {
+        numbers.push(line.number);
+      });
+      expect(numbers, label).toEqual(numbers.map((_, offset) => offset + 1));
+    }
+  });
+
+  it('reconstructs the walked text from the visited records alone', () => {
+    for (const [label, text] of LINE_WALK_CASES) {
+      const parts: string[] = [];
+      forEachLine(text, (line) => {
+        parts.push(line.text + line.ending);
+      });
+      expect(parts.join(''), label).toBe(text);
+    }
+  });
+
+  it('visits nothing for an empty text', () => {
+    const visited: SourceLine[] = [];
+    forEachLine('', (line) => {
+      visited.push(line);
+    });
+    expect(visited).toEqual([]);
   });
 });
 
