@@ -929,22 +929,52 @@ at a named stage; none reports a heap breakdown inside the stage that aborted, a
 any counter as the cause of a failure. The other direct figures are the 39 committed synthetic
 fixtures, whose maxima are Σ`L²` **277** and composed columns **2**.
 
+**The 20,878,001-byte run, in full, and it is a run of that time, not of this build.** That input was
+20,878,001 bytes carrying 1,999,000 unknown keys in 1,999,008 physical lines; `inspect` exited `1`
+with no stdout after `JSON.stringify` in `toJsonString` threw `RangeError: Invalid string length`,
+in 23.5 s at a 3.0 GB peak RSS (§7.1). It predates both gates, so it is **not** a post-U5-ADMIT2
+measurement: no figure here comes from running the current build on that input, and it was not
+re-executed for the pre-scan gate. **A second run, not this one.** B-6 (`test-strategy.md` §13.1) is a
+different document, command and build: 32,872,026 bytes, again 1,999,000 unknown keys, through
+`tables --format json` on a build before the pre-scan gate, exit `0`, 987,502,548 bytes of stdout in
+177.03 s. The two runs share a key count and nothing else — different input size, different command,
+different outcome — and neither figure substitutes for the other; B-6's recorded results stand
+unchanged.
+
 *Inference for the post-scan pair, and it is an extrapolation.* Where those two ceilings sit, and
 what they might catch, is not measured. They are a refusal point placed above every fixture, and
 they do not see a document that is expensive through the scan: neither counts a `Field=` line (a
 `Field=` line is not a `CommonField=` line) or a long `PName`. A document shaped like the
 67,108,851-byte run could sit **below** both of them, which is why the pre-scan pair exists.
 
-*Anchoring for the pre-scan pair, and it is a recorded shape rather than a measured boundary.* The
-envelope `Field=` ceiling is the count of the recorded 200,000-`Field` run: a document of exactly
-that size is admitted, one more `Field=` line is refused. The recorded 1,155,516-`Field` run is past
-it, so that shape — the one whose scan already held 594 MiB — is now refused before the scan. Unknown
-keys are `key=value` lines and therefore count as content lines: a document of B-6's
-1,999,000-unknown-key shape is far past the 400,000 content-line ceiling. The recorded
-20,878,001-byte unknown-key run is measured in bytes, not lines, so whether it would cross that
-ceiling is not stated here. None of the seven ceilings carries a proven relation to heap or RSS
-usage, and they are expected to move once F-4
-([issue #27](https://github.com/j1nn0/a5er-cli/issues/27)) measures where the boundary really is.
+*Anchoring for the pre-scan pair: one figure by record, three by judgement.* The four new ceilings do
+not share one kind of evidence, so they are stated apart.
+- `entityFieldOccurrences` **200,000** (`inspect`, `validate`) is **anchored to a completed run**: it
+  is the count of the recorded 200,000-`Field` document, so a document of exactly that size is
+  admitted and one more `Field=` line is refused. It is the largest such count known to have
+  completed, which is not the same as a safe one — that run recorded a 1.78 GB peak RSS, so this
+  ceiling is **not a memory upper bound** and is not offered as one.
+- `entityFieldOccurrences` **500,000** (`tables`), `contentLineOccurrences` **400,000** (`inspect`,
+  `validate`) and `contentLineOccurrences` **1,000,000** (`tables`) are **provisional operational
+  judgements**. No measurement derives them: the recorded large inputs report bytes, elapsed time and
+  peak RSS at whole-command granularity (§7.1, §10.3), none of them a refusal boundary for any
+  counter, and those figures neither prove nor disconfirm these three numbers. Whether they sit above
+  or below the real boundary is unknown.
+- All seven ceilings, the anchored 200,000 included, are **operating thresholds this build ships**,
+  not measured boundaries. None carries a proven relation to heap or RSS usage, and they are expected
+  to move once F-4 ([issue #27](https://github.com/j1nn0/a5er-cli/issues/27)) measures where the
+  boundary really is.
+
+*Inference from the recorded shapes, and it is static rather than reproduced.* Both readings below
+follow from the counter definitions in this section, not from a new run. The recorded
+1,155,516-`Field` run is past the 200,000 anchor, so that shape — the one whose scan already held
+594 MiB — is refused before the scan. Unknown keys are `key=value` lines and therefore content lines:
+the 1,999,000 unknown keys of the recorded 20,878,001-byte document make `contentLineOccurrences` at
+least 1,999,000 on their own, past the 400,000 ceiling for `inspect` and `validate` and past the
+1,000,000 for `tables`. The current code therefore refuses that shape at the pre-scan gate, before
+`scanSource()` allocates a line record — a conclusion **inferred from the recorded shape**. It was
+not produced by executing that input, or any other large input, on this HEAD, and no refusal
+measurement backs it.
 
 **What the pre-scan pair cannot see.** Both figures count lines, not the size of any one line: a
 document with few lines and very long values passes the pre-scan gate and is decided by the
@@ -1205,13 +1235,18 @@ types `counter` as a string, or ignores it and decides from `severity`, needs no
 new ones to compile against a pre-scan refusal — the same obligation the strict-enum `code` consumer
 below already has.
 
-**The intentional part is an outcome change, not a shape change.** A document above a ceiling that
-`0.1.0` used to process is now `failed` with exit `1`, so a consumer that recorded a success for
-such an input will now record a refusal at the same `(command, contractVersion)`. That is the gate's
-purpose, and it is the only behaviour `0.1.0` gains: no envelope key, key order or existing value
-meaning changed, and `DEFAULT_LIMITS` is untouched. The pre-scan gate widens the same outcome change
-rather than adding a second one: a Field- or content-heavy document that `0.1.0` processed is now
-refused *earlier*, on the same code, the same arm and the same exit `1`. The rule that keeps this
+**The intentional part is an outcome change, not a shape change, and the two gates add refusal
+conditions rather than reaching an existing one sooner.** Before U5-ADMIT1 there was no `Field`- or
+content-specific refusal of any kind, so a document of that shape was processed and either completed
+or failed for an unrelated reason — the engine's string limit or an out-of-memory abort (§10.3,
+§10.5). U5-ADMIT1 added the two post-scan conditions and U5-ADMIT2 the two pre-scan ones, so **some
+inputs that were processed before are now `failed` with exit `1`** at the same
+`(command, contractVersion)`. A document past a pre-scan ceiling is refused before
+`scanSource()`; one past only a post-scan ceiling is refused where U5-ADMIT1 already refused it, its
+counter names and position unchanged. That is the gates' purpose, and it is the only behaviour
+`0.1.0` gains: no envelope key, key order or existing value meaning changed, no diagnostic code was
+removed, a refusal uses the exit `1` this contract already gives every `failed` document, and
+`DEFAULT_LIMITS` is untouched. The rule that keeps this
 safe is the one the exit table already relies on: **decide from `status` and `severity` first, not
 from a list of codes**. Any `fatal` is a failed document — `source` and `completeness` `null`, exit
 `1` — and the code tells a human why. A decoder that maps the codes it recognises to behaviour, and

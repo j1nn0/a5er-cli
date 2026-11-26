@@ -452,12 +452,30 @@ The gates are tested in three layers instead.
    of each command, the fatal line, exit `1`, the decode-failure precedence over a pre-scan refusal,
    the pre-scan refusal before a post-scan one, and that an admitted document's envelope equals the
    composition the gate replaced.
-   **What the production wiring can and cannot show.** The profile wiring is observable from outside:
-   one spawned `dist/cli.js` run on a document past the shipped Σ`L²` ceiling is refused by `inspect`
-   and `validate` and admitted by `tables`. The pre-scan ceilings are not observable that way — no
-   spawned run may build a 200,000-line document — so their production wiring is pinned by the
-   defaults assertion (all seven numbers, per profile) plus pure `admitShape()` decisions at each
-   shipped value, not by a CLI refusal. **What the order pin can and cannot show.** It reads
+   **What the production wiring can and cannot show.** The profile wiring is observable from
+   outside, on one small synthetic document: the production-wiring case writes about 12,100 bytes —
+   a header, one `[Relation]` section, no `[Entity]` section — whose one long relation value puts
+   Σ`L²` at 144,048,020, past the shipped envelope ceiling of 134,217,728 and far inside `maxBytes`,
+   while its composed bound is `0` and both pre-scan counts sit far below the `tables` ceilings — the
+   `tables` profile does not cap Σ`L²` at all, and that is what separates the two profiles on this
+   input. That same input shape is then run as **three separate CLI invocations** — `inspect`,
+   `validate` and `tables --format json`, each its own spawned process, not one run reporting on three
+   commands: `inspect` and `validate` are refused (exit `1`, the fatal line, `E_LIMIT_BUDGET`
+   naming `relationValueLengthSquares` with the envelope's `134,217,728`), and `tables` admits it. A
+   command wired to the other profile's ceilings is what this tells apart, and it does so without
+   giant JSON.
+   **The pre-scan ceilings are not observable that way, and no CLI refusal at a shipped pre-scan
+   value is claimed.** A ceiling + 1 case for the envelope profile would take 200,001 `Field=` lines
+   or 400,001 content lines, and no such run exists. What is verified instead: the defaults assertion
+   pins all seven numbers per profile, pure `admitShape()` decisions cover each shipped value at the
+   ceiling and one past, and the small injected budgets of point 2 drive the same refusal arm through
+   the real pipeline.
+   **The one large CLI case that does exist, and what it shows.** `tests/cli-large-diagnostics.test.ts`
+   spawns `inspect` on a generated document with exactly 200,000 `Field=` lines in one entity — the
+   envelope ceiling itself, which the spec admits — and asserts exit `0`, the envelope and one finding
+   per line. It is an at-ceiling admission case, not a ceiling + 1 refusal case: it shows the pre-scan
+   counter does not refuse the anchored 200,000-`Field` size, and it says nothing about one `Field=`
+   line further. **What the order pin can and cannot show.** It reads
    `src/pipeline.ts` as text, so it proves where the calls sit, not what they do at run time; the
    run-time half is a delegating wrapper around `scanSource`, which asserts zero calls on a pre-scan
    refusal and exactly one on the same document with the ceiling raised. **What the fixture-maxima
@@ -474,8 +492,13 @@ The gates are tested in three layers instead.
 
 Consequences for the fixture policy and the gates:
 
-- **No large inputs, no OOM reproduction, no JSON generated at size.** A test that wants a refusal
-  injects a ceiling; it never writes a file aimed at the default one. No fixture was added.
+- **No refusal test writes a file aimed at a default ceiling + 1, and no OOM or large JSON is
+  reproduced here.** A test that wants a refusal injects a ceiling. Two documents come close to the
+  defaults and neither asks for a refusal: the ~12,100-byte production-wiring document is past the
+  shipped Σ`L²` ceiling by construction, that being the only way to tell the two profiles apart from
+  outside the process, and the 200,000-`Field` case above sits exactly on the envelope `Field`
+  ceiling and must be admitted. No file was added to the fixture corpus, and no test drives a shipped
+  pre-scan ceiling + 1 through the CLI.
 - **`E_LIMIT_BUDGET` is outside G-3 by construction**: G-3 covers the non-fatal codes, so a fatal no
   fixture can reach needs no exemption, and layers 1–2 are its coverage.
 - **The 44 goldens are unchanged** and none carries the new code: no fixture is refused, so no
@@ -564,13 +587,21 @@ bounded size (B-3, B-5). The in-memory stage shared with `inspect` can exhaust t
 within the read limits; that risk is tracked in
 [issue #27](https://github.com/j1nn0/a5er-cli/issues/27) and is not an acceptance condition of the
 `tables` implementation. **The admission gate changes which documents reach that risk, not the risk
-itself**, and this document does not claim otherwise. The pre-scan gate counts lines, and a document
-of the B-6 shape is 1,999,000 `Unknown<i>=1` lines — `key=value` lines, so content lines — far past
-the 1,000,000 content-line ceiling for `tables` and the 400,000 for `inspect`/`validate`; a document
-of the recorded single-entity `Field` shape is counted by `entityFieldOccurrences`, at 200,000 for
+itself**, and this document does not claim otherwise.
+
+**The B-6 record predates the pre-scan gate.** The run below was taken on a build **before** the
+pre-scan gate (U5-ADMIT2) existed — it is what `tables --format json` did then — and nothing here
+revises its recorded results. Under U5-ADMIT2 that same 1,999,000-unknown-key shape is **inferred**
+to be refused before the scan: its keys are `Unknown<i>=1` lines, `key=value` lines and therefore
+content lines, so `contentLineOccurrences` alone is at least 1,999,000 — past the 1,000,000
+content-line ceiling for `tables` and past the 400,000 for `inspect`/`validate` — and the pre-scan
+gate compares that figure before `scanSource()` runs (`architecture.md` §10.5). That is an inference
+from the recorded shape and the counter definitions, not a fresh observation: **the input was not
+re-executed on the current HEAD**, so no measured refusal is stated for it. A document of the
+recorded single-entity `Field` shape is counted by `entityFieldOccurrences`, at 200,000 for
 `inspect`/`validate` and 500,000 for `tables`. What the gate does not do is bound memory: a document
 below all seven ceilings can still exhaust the heap or reach the string limit, which is the risk
-[issue #27](https://github.com/j1nn0/a5er-cli/issues/27) tracks (`architecture.md` §10.5).
+[issue #27](https://github.com/j1nn0/a5er-cli/issues/27) tracks.
 
 **The B-6 run as recorded.** Node.js 24.22.3; a synthetic document of one entity carrying 1,999,000
 `Unknown<i>=1` keys (32,872,026 bytes); `tables --format json` with the V8 heap limit at 4 GiB and a
