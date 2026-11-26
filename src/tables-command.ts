@@ -22,6 +22,7 @@
  * read's code.
  */
 
+import { DEFAULT_RESOURCE_BUDGETS } from './budget/index.js';
 import type { OutputStream, WriteOutcome } from './io/stdout.js';
 import { OUTPUT_GENERATION_FAILED_LINE, writeOutput } from './io/stdout.js';
 import { encodeJson } from './json/index.js';
@@ -66,13 +67,14 @@ export interface TablesCommandOptions {
 /**
  * The real Phase A: the shared composition on this command's budget (`src/pipeline.ts`).
  *
- * `tables` renders a projection of the same record, so it takes the profile that caps the
+ * `tables` renders a projection of the same record, so it takes the budget that caps the
  * common-column composition and leaves Σ`L²` alone (`src/budget/admission.ts`). A rejected load
  * stops inside the pipeline and is reported by the diagnostics it already carries; a refused budget
  * stops there too and arrives as the `E_LIMIT_BUDGET` fatal, which the exit policy already maps to
- * `1`.
+ * `1`. The default *is* the tables profile, so the ceilings and the counters they cap cannot be
+ * named apart.
  */
-const defaultPipeline: TablesPipeline = createPipeline('tables');
+const defaultPipeline: TablesPipeline = createPipeline(DEFAULT_RESOURCE_BUDGETS.tables);
 
 /**
  * Run one `a5er tables` invocation and resolve with its exit code.

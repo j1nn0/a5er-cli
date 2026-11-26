@@ -88,18 +88,24 @@ export type ResourceBudget = EnvelopeResourceBudget | TablesResourceBudget;
  *
  * These are **tentative operational values**: not RSS, not a heap limit, not a bound on the envelope
  * string, and not a guarantee that a document below them is cheap. See the module comment.
+ *
+ * **Frozen at runtime, and frozen per profile.** `as const` is a compile-time claim about this
+ * build's own literal; it does not stop the published object from being written to once the module
+ * has loaded. Every level is therefore `Object.freeze()`d — the outer table and each profile object
+ * — so the ceilings a running process compares against are the ones this file states, whatever a
+ * caller does with the export.
  */
-export const DEFAULT_RESOURCE_BUDGETS = {
-  envelope: {
+export const DEFAULT_RESOURCE_BUDGETS = Object.freeze({
+  envelope: Object.freeze<EnvelopeResourceBudget>({
     profile: 'envelope',
     relationValueLengthSquares: 134_217_728,
     composedColumnsUpperBound: 524_288,
-  },
-  tables: {
+  }),
+  tables: Object.freeze<TablesResourceBudget>({
     profile: 'tables',
     composedColumnsUpperBound: 4_194_304,
-  },
-} as const satisfies Readonly<Record<BudgetProfile, ResourceBudget>>;
+  }),
+}) satisfies Readonly<Record<BudgetProfile, ResourceBudget>>;
 
 /**
  * The admission module's own contract violation: a ceiling it was handed, or an observation it was
@@ -141,20 +147,36 @@ function checkedObserved(value: unknown, counter: BudgetCounter): number {
 }
 
 /**
- * Resolve one budget into the ceilings it is allowed to carry, or throw.
+ * The one message for a profile this build does not apply.
  *
- * Every ceiling is a **positive safe integer**. `0`, `-1`, `1.5`, `NaN` and `±Infinity` would each
- * silently change what the tool accepts, and `2**53` is a positive integer that no longer counts
- * exactly — the next integer shares its double, so a ceiling there cannot be compared or reported as
- * the number it names. `Number.isSafeInteger` draws exactly that line and keeps
- * `Number.MAX_SAFE_INTEGER` a valid setting.
+ * Fixed text with no figure, no name and nothing read from the value it rejects, so a caller may log
+ * it without repeating what it was handed (the same rule the counter faults follow).
+ */
+const UNKNOWN_PROFILE = 'the budget names a profile this build does not apply';
+
+/**
+ * Resolve one budget into the ceilings it is allowed to carry, or throw.
  *
  * The result is a **fresh object holding only the members the profile declares**, built member by
  * member rather than spread: a caller's extra property — a restated Σ`L²` ceiling on a `tables`
  * budget, or a typo'd member — cannot ride along into the admission decision. A bad setting comes
  * from code and not from the input, so it throws here rather than becoming a diagnostic.
+ *
+ * **The discriminant is checked here, never taken from the type.** `ResourceBudget` is a union the
+ * compiler knows and the runtime does not: a `.js` caller, a `JSON.parse()`d record or a cast hands
+ * this function an object whose `profile` is any value at all, `undefined` included. So the profile
+ * is read first, and a value that is not one of this build's two — another string, an empty one, a
+ * differently cased one, `null`, a number — throws instead of falling into the `tables` branch.
+ * That branch is the last one left, and a last arm that doubles as "anything else" is how an
+ * unknown profile silently acquires the tables ceilings. The message is fixed, so no value travels
+ * in it.
  */
 export function withResourceBudget(budget: ResourceBudget): ResourceBudget {
+  // A type is not a check: `null`, `undefined` and every non-object reach this point at runtime.
+  if (typeof budget !== 'object' || budget === null) {
+    throw new ResourceAdmissionError(UNKNOWN_PROFILE);
+  }
+
   if (budget.profile === 'envelope') {
     return {
       profile: 'envelope',
@@ -169,13 +191,19 @@ export function withResourceBudget(budget: ResourceBudget): ResourceBudget {
     };
   }
 
-  return {
-    profile: 'tables',
-    composedColumnsUpperBound: checkedCeiling(
-      budget.composedColumnsUpperBound,
-      'composedColumnsUpperBound',
-    ),
-  };
+  // Explicit, and not the `else` of the branch above: at runtime this is the second and last value
+  // the discriminant is allowed to take, not whatever is left over.
+  if (budget.profile === 'tables') {
+    return {
+      profile: 'tables',
+      composedColumnsUpperBound: checkedCeiling(
+        budget.composedColumnsUpperBound,
+        'composedColumnsUpperBound',
+      ),
+    };
+  }
+
+  throw new ResourceAdmissionError(UNKNOWN_PROFILE);
 }
 
 /**
@@ -211,6 +239,13 @@ function refuseIfOver(
  * first, so a document that is over both reports the relation value proxy rather than the composed
  * bound. `tables` compares its one counter and never reads `counters` at all.
  *
+ * **Every observation this profile reads is proved comparable before the first comparison.** The
+ * order that decides the answer and the order that decides "can I decide?" are not the same one: a
+ * document over the Σ`L²` ceiling whose composed bound is `NaN` is a defect in this tool's own
+ * measurement, not a refusal about that document, so it throws instead of reporting a refusal the
+ * figures do not support. A refusal states a document's cost, and this module may only state costs
+ * it can compare.
+ *
  * The budget is validated here even when it came from `withResourceBudget()`: admission is the call
  * that compares, so it must be the call that can prove the numbers it compares. Nothing about the
  * measurement is written to — the record is read-only from this module's side — and the answer is a
@@ -221,15 +256,29 @@ export function admit(measurement: ResourceMeasure, budget: ResourceBudget): Adm
   const applied = withResourceBudget(budget);
 
   if (applied.profile === 'envelope') {
-    const relationValues = refuseIfOver(
-      checkedObserved(
-        measurement.counters.relationValueLengthSquares,
-        'relationValueLengthSquares',
-      ),
-      applied.relationValueLengthSquares,
+    // Both figures this profile reads, proved before either is compared. `tables` reads the composed
+    // bound only and reaches it below, so an unreadable Σ`L²` is not a fault there.
+    const relationValues = checkedObserved(
+      measurement.counters.relationValueLengthSquares,
       'relationValueLengthSquares',
     );
-    if (relationValues !== null) return relationValues;
+    const composedColumns = checkedObserved(
+      measurement.bounds.composedColumnsUpperBound.upperBound,
+      'composedColumnsUpperBound',
+    );
+
+    return (
+      refuseIfOver(
+        relationValues,
+        applied.relationValueLengthSquares,
+        'relationValueLengthSquares',
+      ) ??
+      refuseIfOver(
+        composedColumns,
+        applied.composedColumnsUpperBound,
+        'composedColumnsUpperBound',
+      ) ?? { admitted: true }
+    );
   }
 
   return (

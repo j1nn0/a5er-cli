@@ -39,6 +39,7 @@
  * `node dist/cli.js` needs no mode at all.
  */
 
+import { DEFAULT_RESOURCE_BUDGETS } from './budget/index.js';
 import { VERSION } from './index.js';
 import type { JsonCommand, JsonTablesCommand } from './json/index.js';
 import { serialize, toJsonString } from './json/index.js';
@@ -261,11 +262,12 @@ function parse(argv: readonly string[]): Parsed {
 /**
  * The shared composition with this command's budget (`src/pipeline.ts`).
  *
- * `inspect` and `validate` build one envelope string from all four stages, so they take the profile
+ * `inspect` and `validate` build one envelope string from all four stages, so they take the budget
  * that caps both figures; the stages themselves — and the refusal that can stop them before the
- * classification runs — are not repeated here.
+ * classification runs — are not repeated here. The default *is* the envelope profile, so the
+ * ceilings and the counters they cap cannot be named apart.
  */
-const inputFor = createPipeline('envelope');
+const inputFor = createPipeline(DEFAULT_RESOURCE_BUDGETS.envelope);
 
 /**
  * Prose for the severities that can decide a non-zero exit (§11's Exit column).

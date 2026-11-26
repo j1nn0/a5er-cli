@@ -7,7 +7,7 @@
  * scanned, refuses it on the refusal arm of `IntegrationInput`, and that the refusal reaches the
  * envelope, the exit policy and stderr unchanged.
  *
- * Nine axes:
+ * Ten axes:
  *
  * 1. **the refusal arm** — `{ load: { ok: false, … } }` and nothing else: one `E_LIMIT_BUDGET`,
  *    the limits the read applied, no `scan`, no `classification`, no `semantics`;
@@ -22,26 +22,32 @@
  * 5. **precedence** — a read that already failed is returned with its own fatal, never measured
  *    and never re-labeled as a budget refusal;
  * 6. **internal errors** — `ResourceMeasureError` and `ResourceAdmissionError` leave the pipeline
- *    as exceptions; neither is converted into a refusal;
+ *    as exceptions; neither is converted into a refusal, and a budget the pipeline cannot apply
+ *    stops it at construction rather than on the first document;
  * 7. **admitted documents are unchanged** — the envelope of a loaded fixture is identical to the
  *    composition the pipeline replaced, for every status this suite can produce.
  * 8. **order** — the one composition scans, measures, decides and only then classifies;
- * 9. **the three default ceilings** — pinned with pure `admit()` calls, at each ceiling and one past.
+ * 9. **the three default ceilings** — pinned with pure `admit()` calls, at each ceiling and one past;
+ * 10. **the production wiring** — the built `dist/cli.js`, run on one over-budget document, refuses
+ *    it on `inspect` and `validate` and admits it on `tables`, so each call site really builds its
+ *    pipeline from its own profile instead of agreeing by convention.
  *
- * The ceilings this build ships sit far above every committed fixture (at most 277 and 2), so each
- * refusal below is produced by passing a **small budget to `createPipeline(profile, budget)`** —
- * the optional second parameter, which the CLI and `a5er tables` never pass. No test here writes a
- * large document, generates JSON at size or relies on the environment: the fixtures are committed
- * synthetic ones staged as disposable copies, and the two files written by hand are a few bytes
- * each, for the read failures that no committed fixture can produce under the default limits.
+ * The ceilings this build ships sit far above every committed fixture (at most 277 and 2), so every
+ * refusal below is produced by passing a **small budget to `createPipeline(budget)`** — the one
+ * argument the function takes, which the CLI and `a5er tables` fill from this build's defaults. No
+ * test here generates JSON at size or relies on the environment: the fixtures are committed
+ * synthetic ones staged as disposable copies, and the files written by hand are small — a few bytes
+ * for the read failures no committed fixture can produce, and one eleven-kilobyte document whose
+ * single relation value crosses the shipped envelope Σ`L²` ceiling, for axis 10.
  */
 
+import { execFile } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import type { BudgetProfile, ResourceBudget, ResourceMeasure } from '../src/budget/index.js';
+import type { ResourceBudget, ResourceMeasure } from '../src/budget/index.js';
 import {
   admit,
   DEFAULT_RESOURCE_BUDGETS,
@@ -137,6 +143,41 @@ const TABLES_KEYS = [
 
 const PIPELINE_SOURCE = fileURLToPath(new URL('../src/pipeline.ts', import.meta.url));
 
+const CLI_PATH = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
+
+/**
+ * The one document this file writes at size: a relation value `12_000` code units long, quoted.
+ *
+ * Σ`L²` counts the raw value text — quotes included — so this value alone measures `12_002² =
+ * 144_048_004`, past the shipped envelope ceiling of `134_217_728` and far inside `maxBytes`. The
+ * document holds no `[Entity]` section, so its composed bound is `0`, and the `tables` profile —
+ * which caps that bound and nothing else — admits it. That difference is what lets axis 10 tell the
+ * two wirings apart from outside the process: an `inspect` wired to the tables budget would admit
+ * this file, and a `tables` wired to the envelope budget would refuse it.
+ */
+const OVER_ENVELOPE_FIELDS1 = `"${'a'.repeat(12_000)}"`;
+
+/** The document's other relation value: `"id"`, four code units, so `4² = 16`. */
+const OVER_ENVELOPE_FIELDS2 = '"id"';
+
+/** Σ`L²` over both relation values, added up from the two literals authored above. */
+const OVER_ENVELOPE_SQUARES = OVER_ENVELOPE_FIELDS1.length ** 2 + OVER_ENVELOPE_FIELDS2.length ** 2;
+
+/** The document itself: a header the reader recognises, one `[Relation]` section, eleven kilobytes. */
+function overEnvelopeDocument(): string {
+  return [
+    '# A5:ER FORMAT:21',
+    '# A5:ER ENCODING:UTF8',
+    '',
+    '[Relation]',
+    'Entity1="a"',
+    'Entity2="b"',
+    `Fields1=${OVER_ENVELOPE_FIELDS1}`,
+    `Fields2=${OVER_ENVELOPE_FIELDS2}`,
+    '',
+  ].join('\n');
+}
+
 /** One staged committed fixture, removed whatever the test does. */
 function staged<T>(id: string, use: (path: string) => T): T {
   const file = stage(id);
@@ -159,13 +200,58 @@ function withTempFile(name: string, bytes: Uint8Array, use: (path: string) => vo
   }
 }
 
+/** A temp file written as UTF-8 text and removed afterwards, for an async use that needs it. */
+async function inTempFile(
+  name: string,
+  text: string,
+  use: (path: string) => Promise<void>,
+): Promise<void> {
+  const directory = mkdtempSync(join(tmpdir(), 'a5er-pipeline-wire-'));
+  try {
+    const path = join(directory, name);
+    writeFileSync(path, Buffer.from(text, 'utf8'));
+    await use(path);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+/**
+ * One `dist/cli.js` run: the shipped entry point, its exit code and both streams decoded.
+ *
+ * The production call sites are module-level constants, so the only way to observe which budget
+ * each was built with is to run the built CLI: no seam was added for the test.
+ */
+function runCli(
+  args: readonly string[],
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      process.execPath,
+      [CLI_PATH, ...args],
+      { encoding: 'utf8', maxBuffer: 1 << 20 },
+      (error, stdout, stderr) => {
+        if (error === null) {
+          resolve({ code: 0, stdout, stderr });
+          return;
+        }
+        if (typeof error.code !== 'number') {
+          reject(error);
+          return;
+        }
+        resolve({ code: error.code, stdout, stderr });
+      },
+    );
+  });
+}
+
 /**
  * The pipeline the CLI and `a5er tables` build, run over one path, narrowed to the refusal arm.
  *
  * A document that is admitted is a failed expectation here, not a silently passing case.
  */
-function refused(profile: BudgetProfile, budget: ResourceBudget, path: string): RejectedInput {
-  const input: IntegrationInput = createPipeline(profile, budget)(path);
+function refused(budget: ResourceBudget, path: string): RejectedInput {
+  const input: IntegrationInput = createPipeline(budget)(path);
   if (input.load.ok) throw new Error('the document was admitted');
   return input.load;
 }
@@ -227,7 +313,7 @@ function measureWith(
 describe('pipeline admission — the refusal arm', () => {
   it('returns a rejected load: one E_LIMIT_BUDGET, the applied limits, no stage results', () => {
     staged('fmt-01', (path) => {
-      const input = createPipeline('envelope', ENVELOPE_BELOW_FMT01)(path);
+      const input = createPipeline(ENVELOPE_BELOW_FMT01)(path);
 
       // The union's other arm is not reachable: the refusal replaces the four stage results.
       expect(input.load.ok).toBe(false);
@@ -236,7 +322,7 @@ describe('pipeline admission — the refusal arm', () => {
       expect('classification' in input).toBe(false);
       expect('semantics' in input).toBe(false);
 
-      const load = refused('envelope', ENVELOPE_BELOW_FMT01, path);
+      const load = refused(ENVELOPE_BELOW_FMT01, path);
       expect(Object.keys(load).sort()).toEqual(['diagnostics', 'limits', 'ok']);
       // The limits the read actually applied, not a second resolution and not a placeholder.
       expect(load.limits).toEqual(DEFAULT_LIMITS);
@@ -259,7 +345,7 @@ describe('pipeline admission — the refusal arm', () => {
 
   it('reports the composed bound when that is the ceiling the document passes', () => {
     staged('sem-07', (path) => {
-      const load = refused('envelope', ENVELOPE_BELOW_SEM07, path);
+      const load = refused(ENVELOPE_BELOW_SEM07, path);
 
       expect(load.diagnostics).toHaveLength(1);
       const diagnostic = load.diagnostics[0];
@@ -279,7 +365,7 @@ describe('pipeline admission — the refusal arm', () => {
 
   it('keeps the details to the counter and two numbers: nothing from the document', () => {
     staged('fmt-01', (path) => {
-      const load = refused('envelope', ENVELOPE_BELOW_FMT01, path);
+      const load = refused(ENVELOPE_BELOW_FMT01, path);
       const diagnostic = load.diagnostics[0];
       if (diagnostic === undefined) throw new Error('the refusal carried no diagnostic');
 
@@ -305,7 +391,7 @@ describe('pipeline admission — the refusal arm', () => {
 describe('pipeline admission — the envelope and the exit policy', () => {
   it('integrates as failed with exit 1 for inspect and validate', () => {
     staged('fmt-01', (path) => {
-      const input = createPipeline('envelope', ENVELOPE_BELOW_FMT01)(path);
+      const input = createPipeline(ENVELOPE_BELOW_FMT01)(path);
       const integration = integrate(input);
 
       expect(integration.status).toBe('failed');
@@ -350,7 +436,7 @@ describe('pipeline admission — the envelope and the exit policy', () => {
 
   it('prints the existing fatal line on stderr, through the renderer tables also uses', () => {
     staged('fmt-01', (path) => {
-      const integration = integrate(createPipeline('envelope', ENVELOPE_BELOW_FMT01)(path));
+      const integration = integrate(createPipeline(ENVELOPE_BELOW_FMT01)(path));
 
       // §12's format for a fatal without a span; the same bytes `renderDiagnostics()` writes for
       // `inspect` and `validate` (`tests/text-diagnostics.test.ts` pins that equivalence).
@@ -364,7 +450,7 @@ describe('pipeline admission — the envelope and the exit policy', () => {
 
   it('does not claim truncation, and states no completeness it does not have', () => {
     staged('fmt-01', (path) => {
-      const input = createPipeline('envelope', ENVELOPE_BELOW_FMT01)(path);
+      const input = createPipeline(ENVELOPE_BELOW_FMT01)(path);
       const envelope = serialize(input, { command: 'inspect', path });
 
       // A refusal stops the read's *downstream* work; nothing was partially accepted, and the
@@ -381,11 +467,11 @@ describe('pipeline admission — tables', () => {
   it('admits a document the envelope profile refuses, because tables has no ΣL² ceiling', () => {
     staged('fmt-01', (path) => {
       // Same document, same ΣL² = 97; only the profile and its ceilings differ.
-      const admitted = createPipeline('tables', TABLES_OVER_FMT01)(path);
+      const admitted = createPipeline(TABLES_OVER_FMT01)(path);
       expect(admitted.load.ok).toBe(true);
       expect(integrate(admitted).status).not.toBe('failed');
 
-      const refusedByEnvelope = createPipeline('envelope', ENVELOPE_BELOW_FMT01)(path);
+      const refusedByEnvelope = createPipeline(ENVELOPE_BELOW_FMT01)(path);
       expect(refusedByEnvelope.load.ok).toBe(false);
       expect(integrate(refusedByEnvelope).exitPolicy.inspect).toBe(1);
     });
@@ -404,7 +490,7 @@ describe('pipeline admission — tables', () => {
           format,
           stdout: stdout.stream,
           stderr: stderr.stream,
-          pipeline: createPipeline('tables', TABLES_BELOW_SEM07),
+          pipeline: createPipeline(TABLES_BELOW_SEM07),
           onPhaseACode: (phaseCode): void => {
             phases.push(phaseCode);
           },
@@ -466,7 +552,7 @@ describe('pipeline admission — tables', () => {
         format: 'text',
         stdout: stdout.stream,
         stderr: stderr.stream,
-        pipeline: createPipeline('tables', TABLES_BELOW_SEM07),
+        pipeline: createPipeline(TABLES_BELOW_SEM07),
       });
 
       // The prose carries the code and the fixed message; `details` is never printed as prose.
@@ -497,7 +583,7 @@ describe('pipeline admission — a failed read keeps precedence', () => {
           relationValueLengthSquares: 1,
           composedColumnsUpperBound: 1,
         };
-        const input = createPipeline('envelope', budget)(path);
+        const input = createPipeline(budget)(path);
 
         expect(input.load.ok, name).toBe(false);
         expect(Object.keys(input), name).toEqual(['load']);
@@ -519,14 +605,14 @@ describe('pipeline admission — internal errors stay internal', () => {
   it('throws at construction for a ceiling it cannot compare, instead of refusing', () => {
     // A bad ceiling is a caller defect: the pipeline never starts, so no document is refused.
     expect(() =>
-      createPipeline('envelope', {
+      createPipeline({
         profile: 'envelope',
         relationValueLengthSquares: 0,
         composedColumnsUpperBound: 1,
       }),
     ).toThrow(ResourceAdmissionError);
     expect(() =>
-      createPipeline('tables', { profile: 'tables', composedColumnsUpperBound: Number.NaN }),
+      createPipeline({ profile: 'tables', composedColumnsUpperBound: Number.NaN }),
     ).toThrow('admission: the composedColumnsUpperBound ceiling is not a positive safe integer');
   });
 
@@ -579,7 +665,7 @@ describe('pipeline admission — admitted documents are unchanged', () => {
     for (const [id] of CASES) {
       staged(id, (path) => {
         for (const profile of ['envelope', 'tables'] as const) {
-          const pipeline = createPipeline(profile)(path);
+          const pipeline = createPipeline(DEFAULT_RESOURCE_BUDGETS[profile])(path);
           const reference = referenceInput(path);
 
           expect(pipeline.load.ok, `${id}/${profile}`).toBe(true);
@@ -604,7 +690,7 @@ describe('pipeline admission — admitted documents are unchanged', () => {
   it('leaves the status and both exit codes of each case exactly as they were', () => {
     for (const [id, status, validate] of CASES) {
       staged(id, (path) => {
-        const input = createPipeline('envelope')(path);
+        const input = createPipeline(DEFAULT_RESOURCE_BUDGETS.envelope)(path);
         const integration = integrate(input);
 
         expect(integration.status, id).toBe(status);
@@ -702,5 +788,123 @@ describe('pipeline admission — the three default ceilings', () => {
     expect(FIXTURE_MAX_COMPOSED * 100_000).toBeLessThan(
       DEFAULT_RESOURCE_BUDGETS.tables.composedColumnsUpperBound,
     );
+  });
+});
+
+describe('pipeline admission — one budget, so no profile can disagree with the ceilings', () => {
+  it('takes exactly one argument: the budget is the only source of a profile', () => {
+    // A second parameter would be a second place to disagree: a profile that decides which counters
+    // are compared and a set of ceilings that decides against what. The function's arity is asserted
+    // rather than the declaration's text, so re-adding one fails here wherever it is put.
+    expect(createPipeline.length).toBe(1);
+  });
+
+  it('throws ResourceAdmissionError at construction for a profile it does not apply', () => {
+    const unknownProfiles: unknown[] = [
+      'Envelope',
+      'TABLES',
+      'envelope ',
+      '',
+      'relationships',
+      null,
+      undefined,
+      1,
+      {},
+      { profile: 'bogus', composedColumnsUpperBound: 10 },
+    ];
+
+    for (const profile of unknownProfiles) {
+      const budget = {
+        profile,
+        relationValueLengthSquares: 10,
+        composedColumnsUpperBound: 10,
+      } as unknown as ResourceBudget;
+
+      expect(() => createPipeline(budget), String(profile)).toThrow(ResourceAdmissionError);
+    }
+  });
+
+  it('refuses to start a read on an invalid budget: the error is not a load failure', () => {
+    // The path does not exist, so a read that had started would come back as a rejected load with
+    // its own diagnostic. Construction throws first, which is the point: no file is opened, and the
+    // error names no path and no number.
+    const missing = join(tmpdir(), 'a5er-never-read-u5-admit1.a5er');
+    const budget = {
+      profile: 'envelope-tables',
+      relationValueLengthSquares: 10,
+      composedColumnsUpperBound: 10,
+    } as unknown as ResourceBudget;
+
+    let thrown: unknown;
+    try {
+      createPipeline(budget)(missing);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(ResourceAdmissionError);
+    expect(thrown).not.toBeInstanceOf(TypeError);
+    expect((thrown as Error).message).toBe(
+      'admission: the budget names a profile this build does not apply',
+    );
+    expect((thrown as Error).message).not.toContain(missing);
+    expect((thrown as Error).message).not.toMatch(/\d/);
+  });
+});
+
+describe('pipeline admission — the production wiring', () => {
+  it('refuses the over-budget document on inspect and validate: the CLI ships the envelope budget', async () => {
+    await inTempFile('over-envelope.a5er', overEnvelopeDocument(), async (path) => {
+      for (const command of ['inspect', 'validate'] as const) {
+        const result = await runCli([command, path]);
+
+        expect(result.code, command).toBe(1);
+        expect(result.stderr, command).toBe(BUDGET_LINE);
+
+        const envelope = JSON.parse(result.stdout) as {
+          readonly status: string;
+          readonly source: unknown;
+          readonly completeness: unknown;
+          readonly diagnostics: readonly unknown[];
+        };
+
+        expect(envelope.status, command).toBe('failed');
+        expect(envelope.source, command).toBeNull();
+        expect(envelope.completeness, command).toBeNull();
+        // The observed figure is Σ`L²` over the document's own two relation values and the ceiling
+        // is the envelope default, written out here: a budget without that ceiling could not report
+        // this counter at all.
+        expect(envelope.diagnostics, command).toEqual([
+          {
+            code: 'E_LIMIT_BUDGET',
+            severity: 'fatal',
+            message: BUDGET_MESSAGE,
+            details: {
+              counter: 'relationValueLengthSquares',
+              observed: OVER_ENVELOPE_SQUARES,
+              ceiling: 134_217_728,
+            },
+            span: null,
+            construct: 'Source',
+          },
+        ]);
+        expect(JSON.stringify(envelope), command).not.toContain(path);
+      }
+    });
+  });
+
+  it('admits the same document on tables: the command ships the tables budget', async () => {
+    await inTempFile('over-envelope.a5er', overEnvelopeDocument(), async (path) => {
+      const result = await runCli(['tables', '--format', 'json', path]);
+
+      // What the minimal relation costs the validator is not this test's subject, so the exit code
+      // is asserted as "not the refusal" rather than as a number it does not decide.
+      expect(result.code).not.toBe(1);
+      expect(result.stderr).not.toContain('E_LIMIT_BUDGET');
+      expect(result.stdout).not.toContain('E_LIMIT_BUDGET');
+
+      const document = JSON.parse(result.stdout) as { readonly status: string };
+      expect(document.status).not.toBe('failed');
+    });
   });
 });

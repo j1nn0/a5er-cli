@@ -6,13 +6,16 @@
  *
  * 1. **defaults** — the ceilings this build applies are written out from the unit's specification
  *    (2²⁷, 2¹⁹ and 2²²) and pinned exactly, so a silent change fails here rather than in a golden;
+ *    the table and each profile object are also frozen at runtime, not only `as const`;
  * 2. **profiles** — `tables` carries no Σ`L²` member at all, so its absence is asserted structurally
  *    (`in`-checks, a forged extra member, and an observation that would be invalid if it were read)
- *    rather than through a comparison against `Number.MAX_SAFE_INTEGER`;
+ *    rather than through a comparison against `Number.MAX_SAFE_INTEGER`; the discriminant is also a
+ *    runtime value, so an unknown, empty, mistyped or missing profile throws instead of becoming
+ *    the `tables` arm;
  * 3. **the boundary is a comparison** — `observed <= ceiling` admits and `observed > ceiling` refuses,
  *    exactly at the ceiling too, on both counters and on both profiles;
  * 4. **order** — on the envelope profile Σ`L²` is decided first, so a document over both reports the
- *    relation value proxy;
+ *    relation value proxy; both observations are proved comparable before either is compared;
  * 5. **contract violations throw** — an observation that is not a non-negative safe integer and a
  *    ceiling that is not a positive safe integer raise `ResourceAdmissionError`, never a refusal, and
  *    nothing is clamped, rounded or saturated into a comparable number;
@@ -149,6 +152,42 @@ describe('admission — the defaults this build applies', () => {
       expect(DEFAULT_RESOURCE_BUDGETS[profile].profile).toBe(profile);
     }
   });
+
+  it('is frozen at runtime, the table and each profile object alike', () => {
+    // `as const` is a compile-time claim. The runtime claim is a freeze, so a process that has
+    // loaded the module compares against the numbers this file states whatever a caller does.
+    expect(Object.isFrozen(DEFAULT_RESOURCE_BUDGETS)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_RESOURCE_BUDGETS.envelope)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_RESOURCE_BUDGETS.tables)).toBe(true);
+    expect(Object.isExtensible(DEFAULT_RESOURCE_BUDGETS)).toBe(false);
+    expect(Object.isExtensible(DEFAULT_RESOURCE_BUDGETS.envelope)).toBe(false);
+    expect(Object.isExtensible(DEFAULT_RESOURCE_BUDGETS.tables)).toBe(false);
+  });
+
+  it('cannot be mutated: a write or a delete throws and the numbers stay as they were', () => {
+    // Module code is strict, so an assignment to a frozen property is a TypeError rather than a
+    // silent no-op — the difference between a caller's ceiling and the shipped one is loud.
+    const outer = DEFAULT_RESOURCE_BUDGETS as unknown as Record<string, unknown>;
+    const envelope = DEFAULT_RESOURCE_BUDGETS.envelope as unknown as Record<string, unknown>;
+
+    expect(() => {
+      outer['envelope'] = { profile: 'envelope', relationValueLengthSquares: 1 };
+    }).toThrow(TypeError);
+    expect(() => {
+      outer['relationships'] = { profile: 'tables', composedColumnsUpperBound: 1 };
+    }).toThrow(TypeError);
+    expect(() => {
+      envelope['relationValueLengthSquares'] = 1;
+    }).toThrow(TypeError);
+    expect(() => {
+      delete envelope['composedColumnsUpperBound'];
+    }).toThrow(TypeError);
+
+    // And after every attempt, the same three numbers a decision would read.
+    expect(DEFAULT_RESOURCE_BUDGETS.envelope).toEqual(ENVELOPE_BUDGET);
+    expect(DEFAULT_RESOURCE_BUDGETS.tables).toEqual(TABLES_BUDGET);
+    expect(Object.keys(DEFAULT_RESOURCE_BUDGETS).sort()).toEqual(['envelope', 'tables']);
+  });
 });
 
 describe('admission — withResourceBudget', () => {
@@ -210,6 +249,92 @@ describe('admission — withResourceBudget', () => {
     expect(applied).toEqual({ profile: 'tables', composedColumnsUpperBound: 10 });
   });
 });
+describe('admission — the profile is a runtime value, not only a type', () => {
+  it('accepts exactly the two profiles this build applies', () => {
+    expect(withResourceBudget(ENVELOPE_BUDGET)).toEqual(ENVELOPE_BUDGET);
+    expect(withResourceBudget(TABLES_BUDGET)).toEqual(TABLES_BUDGET);
+    expect(admit(measureWith(1, 1), ENVELOPE_BUDGET)).toEqual({ admitted: true });
+    expect(admit(measureWith(1, 1), TABLES_BUDGET)).toEqual({ admitted: true });
+  });
+
+  it('throws for an unknown, empty, differently cased or non-string profile', () => {
+    // Each of these would have been *admitted as `tables`* by an `if (profile === 'envelope') …
+    // else` discriminant, so each one is asserted to throw rather than to be decided.
+    const profiles: unknown[] = [
+      'Envelope',
+      'TABLES',
+      'ENVELOPE',
+      'envelope ',
+      'tables\n',
+      '',
+      'relationships',
+      'both',
+      0,
+      1,
+      true,
+      null,
+      undefined,
+      {},
+      [],
+    ];
+
+    for (const profile of profiles) {
+      const budget = {
+        profile,
+        relationValueLengthSquares: 10,
+        composedColumnsUpperBound: 10,
+      } as unknown as ResourceBudget;
+
+      expect(() => withResourceBudget(budget), String(profile)).toThrow(ResourceAdmissionError);
+      expect(() => admit(measureWith(1, 1), budget), String(profile)).toThrow(
+        ResourceAdmissionError,
+      );
+    }
+  });
+
+  it('throws for a budget with no profile member at all, and for a non-object', () => {
+    for (const budget of [
+      {},
+      { composedColumnsUpperBound: 10 },
+      { relationValueLengthSquares: 10, composedColumnsUpperBound: 10 },
+      null,
+      undefined,
+      'tables',
+      0,
+      true,
+      [],
+    ]) {
+      expect(() => withResourceBudget(budget as unknown as ResourceBudget)).toThrow(
+        ResourceAdmissionError,
+      );
+      expect(() => admit(measureWith(1, 1), budget as unknown as ResourceBudget)).toThrow(
+        ResourceAdmissionError,
+      );
+    }
+  });
+
+  it('states the profile fault in fixed text that repeats no value', () => {
+    const message = 'admission: the budget names a profile this build does not apply';
+    const budget = {
+      profile: 'Envelope',
+      composedColumnsUpperBound: 10,
+    } as unknown as ResourceBudget;
+
+    let thrown: unknown;
+    try {
+      withResourceBudget(budget);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(ResourceAdmissionError);
+    expect(thrown).not.toBeInstanceOf(TypeError);
+    expect((thrown as Error).message).toBe(message);
+    expect((thrown as Error).name).toBe('ResourceAdmissionError');
+    expect(message).not.toContain('Envelope');
+    expect(message).not.toMatch(/\d/);
+  });
+});
 
 describe('admission — the envelope profile', () => {
   it('admits ΣL² exactly at the ceiling and refuses one more', () => {
@@ -252,6 +377,34 @@ describe('admission — the envelope profile', () => {
     expect(admission).toEqual({ admitted: true });
     expect(Object.keys(admission)).toEqual(['admitted']);
   });
+
+  it('orders ΣL² before the composed bound on every combination of the two', () => {
+    const overRelationValues = {
+      admitted: false,
+      counter: 'relationValueLengthSquares',
+      observed: ENVELOPE_RELATION_CEILING + 1,
+      ceiling: ENVELOPE_RELATION_CEILING,
+    };
+    const overComposed = {
+      admitted: false,
+      counter: 'composedColumnsUpperBound',
+      observed: ENVELOPE_COMPOSED_CEILING + 1,
+      ceiling: ENVELOPE_COMPOSED_CEILING,
+    };
+
+    // ΣL² over, composed within: the relation value proxy.
+    expect(
+      refusalOf(ENVELOPE_RELATION_CEILING + 1, ENVELOPE_COMPOSED_CEILING, ENVELOPE_BUDGET),
+    ).toEqual(overRelationValues);
+    // ΣL² within, composed over: the composition bound.
+    expect(
+      refusalOf(ENVELOPE_RELATION_CEILING, ENVELOPE_COMPOSED_CEILING + 1, ENVELOPE_BUDGET),
+    ).toEqual(overComposed);
+    // Both over: the first counter in this profile's order, never the second.
+    expect(
+      refusalOf(ENVELOPE_RELATION_CEILING + 1, ENVELOPE_COMPOSED_CEILING + 1, ENVELOPE_BUDGET),
+    ).toEqual(overRelationValues);
+  });
 });
 
 describe('admission — the tables profile', () => {
@@ -276,6 +429,28 @@ describe('admission — the tables profile', () => {
 });
 
 describe('admission — contract violations throw, they never become a refusal', () => {
+  it('proves both envelope observations before it compares either of them', () => {
+    // A document over ΣL² whose composed bound is unreadable is a defect in this tool's own
+    // measurement, so the answer is neither of the two refusals: it throws.
+    expect(() => refusalOf(ENVELOPE_RELATION_CEILING + 1, Number.NaN, ENVELOPE_BUDGET)).toThrow(
+      'admission: composedColumnsUpperBound is not a non-negative safe integer',
+    );
+    expect(() => refusalOf(Number.NaN, ENVELOPE_COMPOSED_CEILING + 1, ENVELOPE_BUDGET)).toThrow(
+      'admission: relationValueLengthSquares is not a non-negative safe integer',
+    );
+
+    // `tables` reads the composed bound only, so an unreadable ΣL² is not a fault there: the two
+    // profiles do not validate each other's counters.
+    expect(refusalOf(Number.NaN, TABLES_COMPOSED_CEILING + 1, TABLES_BUDGET)).toEqual({
+      admitted: false,
+      counter: 'composedColumnsUpperBound',
+      observed: TABLES_COMPOSED_CEILING + 1,
+      ceiling: TABLES_COMPOSED_CEILING,
+    });
+    expect(refusalOf(Number.NaN, TABLES_COMPOSED_CEILING, TABLES_BUDGET)).toEqual({
+      admitted: true,
+    });
+  });
   it('refuses to compare an observation that is not a non-negative safe integer', () => {
     for (const invalid of [
       Number.NaN,

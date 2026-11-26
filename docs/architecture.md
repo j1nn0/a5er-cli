@@ -801,8 +801,10 @@ produced a 17,032,749-byte envelope at a 232 MB peak RSS, an 816,067-byte input 
 bytes at 259 MB, and a 20,878,001-byte input hit the engine's string limit
 (`RangeError: Invalid string length`) at a 3.0 GB peak RSS and produced no envelope at all. A
 document inside `maxBytes`, `maxLines` and `maxLineLength` can therefore still exhaust the heap:
-on that recorded baseline, 67,108,851 bytes (just under `maxBytes`) reached a 2,847 MiB heap in
-`integrate()` and then aborted with `FATAL ERROR … heap out of memory`, exit `134`.
+on that recorded baseline, 67,108,851 bytes (just under `maxBytes`; 1,155,516 `Field` lines in one
+entity) left `integrate()` at a 2,847 MiB heap, and `serialize()` then aborted with `FATAL ERROR …
+heap out of memory`, exit `134`. The abort was in the serialization that follows `integrate()`, not
+inside it, and it is one recorded run rather than a boundary.
 
 The cap **bounds input size, not memory**. Where the failure boundary lies depends on the Node
 build, the operating system and the configured heap limit, not on `maxBytes`, so input bytes alone
@@ -821,16 +823,20 @@ file as an empty-but-healthy ER diagram. An empty file is `E_EMPTY_INPUT`; a bin
 ### 10.5 Processing budget (admission gate)
 
 The read limits bound the **input**; they say nothing about the **work** one accepted document asks
-for. Two stages amplify: the relation stage turns one `Fields1`/`Fields2` value into a column list
-whose work grows with the value's length, and common columns give every entity that adopts them the
-document's whole `CommonField` list, so that work grows with `[Entity]` sections × declarations.
+for. Two stages amplify, so each gets one counter: the relation stage turns one `Fields1`/`Fields2`
+value into a column list whose work grows with the value's length, and common columns give every
+entity that adopts them the document's whole `CommonField` list, so that work grows with `[Entity]`
+sections × declarations. `relationValueLengthSquares` therefore targets the relation stage's
+quadratic amplification and `composedColumnsUpperBound` the entity × common-column composition —
+two proxies for downstream work, not a measurement of memory (§10.3).
+
 Every command therefore measures the document right after the scan and refuses the ones that would
 cost more than a documented budget. The order is the point: both figures are cheap to compute from
 the scan, and the stage they protect — classification — has not run yet.
 
 | Counter | How it is measured (§13) | Profiles |
 |---|---|---|
-| `relationValueLengthSquares` | Σ`L²` over every `Fields1`/`Fields2` value in a relation section, `L` the raw value's UTF-16 code-unit length | `inspect`, `validate` |
+| `relationValueLengthSquares` | Σ`L²` over every `Fields1`/`Fields2` value in a relation section, `L` the raw value's UTF-16 code-unit length — quoting and escapes included, the same unit as `String.length` | `inspect`, `validate` |
 | `composedColumnsUpperBound` | `[Entity]` section count × `CommonField=` line count — an upper bound, since a declaration that fails to decode can only shrink the real count | `inspect`, `validate`, `tables` |
 
 **Two profiles, and the absence of Σ`L²` for `tables` is structural.** `tables` renders a projection
@@ -851,35 +857,71 @@ internal defect (`ResourceMeasureError`, `ResourceAdmissionError`) and never a r
 refusal is a statement about a document and a caller defect is not. There are no environment
 variables, CLI options or per-file overrides for these numbers.
 
-**A refusal is the fatal family's** (`E_LIMIT_BUDGET`, §11): `status: "failed"`, `source`, `schema`
-and `completeness` all `null`, `unsupported` empty, `limits.truncated` `false`, exit `1` for every
-command, one machine-readable envelope on stdout and the one fatal line on stderr. The refusal
-replaces the four stage results, so no scan, classification or semantics of a refused document is
-retained and no stage after admission runs.
+**One budget object per command, checked before it is used.** A budget carries its own `profile` and
+the ceilings that profile caps, and `createPipeline(budget)` takes that one argument: a profile cannot
+be paired with ceilings that decide against something else, because there is no second value to pass.
+Construction resolves the budget through `withResourceBudget()`, which accepts exactly the two profile
+values at runtime — an unknown, empty, mistyped or missing `profile` throws `ResourceAdmissionError`
+rather than falling into the `tables` branch — and re-checks every ceiling. A bad configuration is
+therefore a defect that stops the pipeline **before any file is opened**, while a document over a
+ceiling is a refusal; the two are never the same answer. `src/cli.ts` passes
+`DEFAULT_RESOURCE_BUDGETS.envelope` and `src/tables-command.ts` `DEFAULT_RESOURCE_BUDGETS.tables`, and
+those defaults are frozen at runtime (the table and each profile object), so a running process cannot
+be judged against ceilings the source does not state.
 
-**Provenance and uncertainty: a small-sample extrapolation, not a measured safe limit.** The sample
-is the four recorded runs in `docs/proposals/human-cli.md` §7.1 (616,068 bytes → 17,032,749-byte
-envelope at 232 MB peak RSS; 816,067 bytes → 25,832,745 bytes at 259 MB; 20,878,001 bytes → the
-engine's string limit and no envelope; 67,108,851 bytes → a 2,847 MiB heap, then OOM inside
-`integrate()`, §10.3), together with the 39 committed synthetic fixtures, whose maxima are Σ`L²`
-**277** and composed columns **2** — more than five orders of magnitude below the ceilings. The
-conditions are narrow: one Node build, one platform, synthetic documents, peak RSS only, no per-stage
-heap breakdown, and no run that isolates either counter as the cause of a failure. The ceilings
-therefore carry **no proven relation to memory**: they are a refusal point placed above every
-fixture and below the shapes the recorded failures came from, and they are expected to move once
-F-4 ([issue #27](https://github.com/j1nn0/a5er-cli/issues/27)) measures where the boundary really
-is. **False positives** are possible — a legitimate document with a handful of very long relation
-values, or thousands of entities sharing a large `CommonField` list, is refused although it might
-have completed. **False negatives** are expected and documented: a document under both ceilings can
-still exhaust the heap, because the recorded `RangeError` and OOM were driven by envelope size,
-which neither counter bounds. A refusal is therefore a **cost bound, not a safety proof**, and it
-never claims the file is invalid — the diagnostics before it are silent about correctness.
+**A refusal is the fatal family's** (`E_LIMIT_BUDGET`, §11): `status: "failed"`, `source` and
+`completeness` `null`, `unsupported` empty, `limits.truncated` `false`, exit `1` for every command,
+and the one fatal line on stderr. What stdout carries follows the command's **format**, and only two
+of the three forms are an envelope: `inspect` and `validate` emit their JSON envelope with `schema`
+`null`; `tables --format json` emits the tables document with `result` `null`; `tables` text emits
+the text failure framing — the status note, `# objects: none (status failed)` and
+`# completeness: none (status failed)`, with no table header and no envelope at all
+(`docs/proposals/human-cli.md` §3.8, §5.6). A refusal is therefore never described as "three
+envelopes": two commands' envelopes and one command's text form.
+
+The refusal replaces the four stage results, so no scan, classification or semantics of a refused
+document is retained and no stage after admission runs.
+
+**Provenance and uncertainty: provisional operating values, partly extrapolated, not a measured safe
+limit.** Two kinds of evidence are mixed in this section, and they are kept apart below: what was
+**directly measured**, and what is **inferred** from it.
+
+*Direct measurement.* The five recorded runs in `docs/proposals/human-cli.md` §7.1 — one Node build,
+one platform, synthetic documents — are: 616,068 bytes → a 17,032,749-byte envelope at 232 MB peak
+RSS; 816,067 bytes → 25,832,745 bytes at 259 MB; 20,878,001 bytes of unknown keys → the engine's
+string limit (`RangeError: Invalid string length`) and no envelope; 200,000 `Field` lines in one
+entity → a 372,293,684-byte envelope at 1.78 GB peak RSS; 1,155,516 `Field` lines (67,108,851
+bytes) → per-stage heap figures up to the end of `integrate()` (load 82, scan 594, classify 2,628,
+semantics 2,847 MiB), then OOM in `serialize()` (§10.3). Those runs report peak RSS or a heap figure
+at a named stage; none reports a heap breakdown inside the stage that aborted, and none isolates
+either counter as the cause of a failure. The other direct figures are the 39 committed
+synthetic fixtures, whose maxima are Σ`L²` **277** and composed columns **2**.
+
+*Inference, and it is an extrapolation.* Where the ceilings sit, and what they might catch, is not
+measured. They are a refusal point placed above every fixture — and they are **not** demonstrably
+above the recorded failure shapes: those were single-entity `Field` lines, unknown keys and very long
+names, and by construction neither counter counts them (a `Field=` line is not a `CommonField=` line,
+and a long `PName` is not a relation value). A document shaped like the 67,108,851-byte run or the
+~2 M-unknown-key run can therefore sit **below** both ceilings and fail exactly as it did before.
+The ceilings carry **no proven relation to heap or RSS usage**, and they are expected to move once
+F-4 ([issue #27](https://github.com/j1nn0/a5er-cli/issues/27)) measures where the boundary really is.
+
+**False positives** are possible: a legitimate document with a handful of relation values long enough
+to pass Σ`L²`, or with more than 524,288 `CommonField=` lines — **one** `[Entity]` section suffices,
+since the bound is sections × declarations, and none of the recorded failures had that shape — is
+refused although it might have completed. **False negatives** are expected: a document under both
+ceilings can still exhaust the heap or reach the string limit below them, because the recorded
+failures were driven by line counts, envelope size and name length, which neither counter bounds. A
+refusal is therefore a **cost bound, not a safety proof**, and it never claims the file is invalid —
+the diagnostics before it are silent about correctness.
 
 Because every committed fixture is admitted, the gate is invisible in the fixture corpus: all 39
 synthetic fixtures × 4 command forms (`inspect`, `validate`, `tables`, `tables --format json`) are
 stdout-, stderr- and exit-code-identical to the pre-gate build, 156 of 156 (`test-strategy.md` §10
 G-10). The one behaviour change is intentional and new: a document above a ceiling that used to be
-processed — expensively, or until the heap gave out — is now refused.
+processed — expensively — is now refused. A document **below** both ceilings behaves as it did, and
+that includes the cases where the heap runs out (§10.3): the gate was not built to catch those, and
+the recorded failures were not shapes it counts.
 
 ---
 
@@ -929,7 +971,7 @@ Initial code list (frozen enough to test against, not a promise of completeness)
 | `E_IO`, `E_NOT_A_FILE`, `E_EMPTY_INPUT`, `E_BINARY_INPUT` | fatal | cannot treat input as text |
 | `E_TRUNCATED_INPUT` | fatal | the OS returned fewer bytes than the file declared — a partial read, refused |
 | `E_LIMIT_BYTES`, `E_LIMIT_LINES`, `E_LIMIT_LINE_LENGTH` | fatal | a documented limit refused the whole file — nothing was partially accepted |
-| `E_LIMIT_BUDGET` | fatal | the document would cost more downstream work than the processing budget allows — measured after the scan and before the classification (§10.5); `details` carry `counter`, `observed`, `ceiling` and nothing from the file |
+| `E_LIMIT_BUDGET` | fatal | the document would cost more downstream work than the processing budget allows — measured after the scan and before the classification (§10.5); `details` carry `counter`, `observed`, `ceiling` and no file text (§12) |
 | `E_UNDECODABLE`, `E_CODEC_UNAVAILABLE` | fatal | no strict decoder succeeded |
 | `E_UNRECOGNIZED_DOCUMENT`, `E_FILE_CHANGED_DURING_READ` | fatal | not an a5er, or unstable input |
 | `D_BOM_MISSING`, `D_ENCODING_ASSUMED` | info | spec-preferred form absent |
@@ -953,7 +995,8 @@ Initial code list (frozen enough to test against, not a promise of completeness)
 `E_LIMIT_BUDGET` is the one fatal code no reader raises: `src/pipeline.ts` emits it, with
 `construct: "Source"`, after `measure()` and `admit()` have run (§10.5). It is on the same
 `LoadOutcome` rejection arm as the read failures, so every consumer that already handles a `fatal`
-handles it — see §12 for what that means for an existing decoder.
+handles it. What that means for an existing decoder, and what its `details` do and do not carry, are
+stated once in §12.
 Severity is assigned by consequence, not by family: a missing `RelationType1` / `RelationType2`
 is a `warning` (contradiction K6, U14), a missing `PName` is an `error`, and a duplicate scalar
 key is a `warning` (U6 defines no semantics).
@@ -984,7 +1027,9 @@ the shape from which keys happen to be present. The tables shape is specified in
 generation failed) or `74` (stdout write failed or closed early), stdout may hold any prefix of
 the output, and "accepted" means accepted by Node, not delivered. An invocation that exits `0`
 through the bounded writer is not proof that a reader received every byte. The `inspect` and
-`validate` sentences are unchanged: their write path does not change.
+`validate` sentences are unchanged: their write path does not change. A **failed** document does
+not turn `tables` text into an envelope either: the framing follows the format, not the status, and
+`E_LIMIT_BUDGET` is described per format once, in §10.5.
 
 ```json
 {
@@ -1083,6 +1128,9 @@ Contract rules:
    envelope byte-identical is additive and does not move it. Consumers select decoders by
    `(command, contractVersion)` and reject pairs they do not support. `tables` was added this way,
    which is why `contractVersion` stays `0.1.0`.
+   The diagnostic set is extensible on the same terms: a new `diagnostics` code adds a member to a
+   list the contract already declares open, keeps the ten envelope keys and their order, and leaves
+   every existing member's meaning as it was, so it does not move `contractVersion` either (§11).
 7. **One `diagnostics` list, not separate `warnings` and `errors` arrays.** Severity is a
    field, so ordering follows the file and a consumer never has to merge two streams to
    reconstruct causality. `unsupported` stays separate because it is evidence, not a
@@ -1092,16 +1140,27 @@ Contract rules:
 members of the envelope, so adding one is not a shape change and does not move `contractVersion`: a
 consumer of `(inspect, 0.1.0)` or `(validate, 0.1.0)` sees the same ten members in the same order as
 before, and the same is true of `tables`. What a consumer *can* observe is a code it has no branch
-for, and `E_LIMIT_BUDGET` (§10.5) is the first of those to arrive after `0.1.0` was published. The
-rule that keeps this safe is the one the exit table already relies on: **decide from `severity`, not
-from a list of codes**. Any `fatal` is a failed document with `source`, `schema` and `completeness`
-`null` and exit `1`; the code tells a human why. A decoder that maps codes it recognises to
-`null` and exit `1`; the code tells a human why. A decoder that maps the codes it recognises to
-behaviour, and treats an unknown code as success, would mis-handle a refused document; one that
-decides from `severity` needs no branch at all. `E_LIMIT_BUDGET`'s `details` (`counter`, `observed`,
-`ceiling`) are this tool's own numbers and carry nothing from the file, so they are safe to print —
-but nothing in them identifies the document either. The two amplification figures themselves are
-**not** envelope members: they appear only when they cause a refusal.
+for, and `E_LIMIT_BUDGET` (§10.5) is the first of those to arrive after `0.1.0` was published.
+
+**The intentional part is an outcome change, not a shape change.** A document above a ceiling that
+`0.1.0` used to process is now `failed` with exit `1`, so a consumer that recorded a success for
+such an input will now record a refusal at the same `(command, contractVersion)`. That is the gate's
+purpose, and it is the only behaviour `0.1.0` gains: no envelope key, key order or existing value
+meaning changed, and `DEFAULT_LIMITS` is untouched. The rule that keeps this safe is the one the exit
+table already relies on: **decide from `status` and `severity` first, not from a list of codes**. Any
+`fatal` is a failed document — `source` and `completeness` `null`, exit `1` — and the code tells a
+human why. A decoder that maps the codes it recognises to behaviour, and treats an unknown code as
+success, would mis-handle a refused document; one that decides from `severity` needs no branch at
+all. A **strict-enum** consumer, whose `code` type enumerates a fixed set, must add
+`E_LIMIT_BUDGET` to compile against a refusal; one that types `code` as a string or branches on
+`severity` is unaffected.
+
+**What `details` do and do not carry.** `E_LIMIT_BUDGET`'s `details` (`counter`, `observed`,
+`ceiling`) are this tool's own figures: they embed no file body, no key or column name and no path,
+so they are safe to print. They are not "information-free" either — `observed` is an aggregate
+computed from the document's structure (§13), so it describes the file without quoting it. The two
+amplification figures themselves are **not** envelope members: they appear only when they cause a
+refusal.
 
 **`limits`.** Two facts, and the second is narrower than its name suggests:
 
@@ -1125,9 +1184,7 @@ but nothing in them identifies the document either. The two amplification figure
   `E_LIMIT_LINE_LENGTH`) rejects the whole file and is `false`; so is every other fatal
   (`E_IO`, `E_UNDECODABLE`, `E_BINARY_INPUT`, `E_FILE_CHANGED_DURING_READ`, `E_LIMIT_BUDGET`),
   because nothing partial ever leaves the reader. The field is derived from the diagnostic sequence
-  and from
-  partial ever leaves the reader. The field is derived from the diagnostic sequence and from
-  nothing else, so it cannot disagree with the reason the read stopped, and it is never inferred
+  and nothing else, so it cannot disagree with the reason the read stopped, and it is never inferred
   from the limit numbers.
 - The caps bound **input size, not memory**: they limit how many bytes may be read, and that is not
   a memory-safety guarantee — the retained cost also follows the document's shape (§10.3).
@@ -1145,8 +1202,8 @@ maps the command to its column and adds nothing.
 
 | Code | `inspect` | `validate` | What was written |
 |---|---|---|---|
-| `0` | any non-failed read, `degraded` included | no `error`-severity diagnostic | one envelope on stdout; stderr stays empty unless the result carries a `fatal`/`error` diagnostic — `warning`/`info` findings live only in the envelope |
-| `1` | any `fatal` diagnostic | any `fatal` diagnostic | the envelope is still emitted, with `source`, `schema` and `completeness` `null`; stderr carries the fatal line |
+| `0` | any non-failed read, `degraded` included | no `error`-severity diagnostic | one envelope on stdout for `inspect`, `validate` and `tables --format json`; `tables` text writes its listing instead. stderr stays empty unless the result carries a `fatal`/`error` diagnostic — `warning`/`info` findings live only in the envelope |
+| `1` | any `fatal` diagnostic | any `fatal` diagnostic | `inspect`/`validate` still emit their envelope, with `source`, the payload and `completeness` `null`; `tables --format json` emits the tables document with `result` `null`, and `tables` text its text failure framing; stderr carries the fatal line |
 | `3` | never | any `error`-severity diagnostic | one envelope whose `status` is `degraded`; stderr carries the error line |
 | `2` | — | — | nothing on stdout; the usage block on stderr. Decided before any input is read, so no file can cause it |
 | `70` | — | — | `tables` only: the output could not be generated, so stdout is incomplete and must be discarded |
@@ -1363,7 +1420,7 @@ not as spec behaviour. None of U1–U15 is presented as settled by these decisio
 | TBD-O2 | Streaming threshold for very large files | None; `maxBytes` only, and the threshold is **undecided**. **Where the cap is judged:** from the `fstat` size in `src/io/read.ts`, *before* the input-body read buffer is allocated — `readExactly()`'s `Buffer.allocUnsafe(sizeBytes)` is what an over-cap file never reaches, so its body is never read. The `open`, the `fstat`, the diagnostic record and the `close` still run, so this claims neither constant nor zero memory, and "one `stat`" would understate it; a file *at* the cap is still materialised whole. **What the tests exercise:** real reads above 4 KiB do happen, and they are `res-03`'s other two members — `res-03-max-lines.a5er` (2,000,001 bytes) and `res-03-max-line-length.a5er` (4,194,305 bytes), each written to a temp file, read whole under the default `Limits` and refused later, during decode, with `E_LIMIT_LINES` and `E_LIMIT_LINE_LENGTH` (`tests/decode.test.ts` "res-03: one limit per file, matched against the catalog"). They say nothing about the byte cap. `res-03-max-bytes.a5er` (67,108,865 bytes = 64 MiB + 1) is generation plus a length check only — built in memory, its length asserted, never written or read — so it is not a default-boundary rejection test. The **64 MiB default `maxBytes` boundary stays unverified**: no read at or above that size is executed, and a read existing above 4 KiB is not evidence that a large accepted input is memory-safe (§10.3, F-4) | Phase 2, stage 2 |
 | TBD-O3 | Final limit defaults (`maxBytes`, `maxLines`, `maxLineLength`), and the provenance of the envelope's `limits` | **Resolved — provenance.** `LoadOutcome` keeps the effective three numbers on both arms, the JSON reports that effective `maxBytes` (§12), and a `SerializeContext.limits` that disagrees with the read is detected at runtime instead of trusted, so the old caller-supplied gap is closed (`tests/json-contract.test.ts` "reports the maxBytes the read actually applied, with no context at all", "reports the cap the read applied, and refuses a context that states another", "throws for any single disagreeing field, on the success and the failure arm"). **What the boundary evidence is, without rounding up — three tests, three different shapes:** A — `tests/decode.test.ts` "res-01: a read stopped by the cap is E_LIMIT_BYTES": generated bytes written to a real file, a 4 KiB cap, `E_LIMIT_BYTES` from the `fstat` before the input-body read buffer is allocated, so the filesystem is real but the body is never read at that size. B — `tests/io.test.ts` "rejects above the cap without reading a single byte": a fake handle reporting 4 KiB under a 1 KiB cap, `E_LIMIT_BYTES` from that stat before any read, and `reads` stays empty. C — `tests/io.test.ts` "accepts exactly maxBytes and rejects maxBytes + 1": real 1024- and 1025-byte files under a 1024-byte cap, the first accepted and read, the second refused. All three cap low. **Still open:** the final judgement on the default caps (the §10.2 values stand); evidence at the 64 MiB default boundary itself — no read at or above that size is executed, so the 64 MiB boundary is **not** verified; and the resource-exhaustion risk, which is F-4 in [issue #27](https://github.com/j1nn0/a5er-cli/issues/27), still open | Phase 2, stage 2 |
 | TBD-O4 | Whether a JSON Schema file ships with the CLI | Not in v0.1.0 | Phase 2, stage 7 |
-| TBD-O5 | `contractVersion` bump policy and its relation to package semver | **Closed in §12 rule 6**: the version versions each command's envelope and moves when a field of an existing command's envelope changes or a value's meaning changes. A new command with its own shape, selected by `(command, contractVersion)`, that keeps the shared members verbatim and leaves every existing envelope byte-identical is additive — which is how `tables` arrives without moving `0.1.0`. Independent of the package version | Closed — Phase 2 stage 7 |
+| TBD-O5 | `contractVersion` bump policy and its relation to package semver | **Closed in §12 rule 6**: the version versions each command's envelope and moves when a field of an existing command's envelope changes or a value's meaning changes. A new command with its own shape, selected by `(command, contractVersion)`, that keeps the shared members verbatim and leaves every existing envelope byte-identical is additive — which is how `tables` arrives without moving `0.1.0`. A new `diagnostics` code is additive on the same terms (the set is extensible, the ten keys, their order and every existing meaning stay), so `E_LIMIT_BUDGET` arrives at `0.1.0`; its outcome change — some previously-processed inputs are now `failed` with exit `1` — is intentional and does not move the version, because consumers decide from `status` and `severity` (§12). Independent of the package version | Closed — Phase 2 stage 7 |
 | TBD-O6 | Whether the AST is exposed behind a flag (`--ast`) | Not exposed | Phase 2, stage 7 |
 | TBD-O7 | Exit code for non-`validate` commands when `error`-severity diagnostics exist | **Decided in §12's exit table**: `0` for `inspect` even when an `error`-severity finding is present, `3` only for `validate`, `1` for a fatal read in both, `2` for misuse. The mapping is `ExitPolicy` in `validate/`; command-line misuse is decided by `src/cli.ts` and is not part of it; neither appears in the envelope (§11, §12) | Closed — Phase 2 stage 7 |
 | TBD-O8 | Whether `export` exists as a command or `inspect --format` covers it | Not decided | Phase 3 |

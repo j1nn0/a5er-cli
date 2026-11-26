@@ -33,8 +33,8 @@
  * exit `70`; `inspect` and `validate` keep their existing handling.
  */
 
-import type { BudgetProfile, ResourceBudget } from './budget/index.js';
-import { admit, DEFAULT_RESOURCE_BUDGETS, measure, withResourceBudget } from './budget/index.js';
+import type { ResourceBudget } from './budget/index.js';
+import { admit, measure, withResourceBudget } from './budget/index.js';
 import { loadSource } from './decode/load.js';
 import { emit } from './diagnostics/diagnostic.js';
 import { classify } from './schema/index.js';
@@ -49,24 +49,23 @@ export type IntegrationPipeline = (path: string) => IntegrationInput;
 const LIMIT_CONSTRUCT = 'Source';
 
 /**
- * Build the pipeline for one budget profile.
+ * Build the pipeline for one budget.
  *
- * The ceilings come from `DEFAULT_RESOURCE_BUDGETS[profile]` and are resolved once, through
- * `withResourceBudget()`, so every invocation of the returned function is judged against the same
- * validated budget and an invalid one fails at construction rather than on the first document.
+ * **One argument, one source of truth.** The budget is the whole configuration: its own `profile`
+ * decides which counters are compared and it carries exactly those ceilings, so there is no second
+ * value a caller could pair with it and no way for a profile and a set of ceilings to disagree.
+ * `src/budget/admission.ts` explains why the profile is a member of the budget rather than a
+ * separate parameter.
  *
- * The second parameter exists **for tests only**: the ceilings this build ships sit far above every
- * committed fixture (at most 277 and 2), so a documented refusal cannot be produced from a small
- * input without replacing them. Injecting a budget changes no call site — the CLI and `a5er tables`
- * both pass one argument — and the value goes through the same validation as the default. The
- * injected budget's own `profile` decides which counters are compared; a caller that pairs a
- * `tables` budget with the `envelope` profile is asking for the ceilings it named, not for the
- * profile to override them.
+ * The budget is resolved once, through `withResourceBudget()`, so every invocation of the returned
+ * function is judged against the same validated ceilings, and a budget this module cannot apply — an
+ * unknown or missing `profile`, a ceiling that is not a positive safe integer — throws **at
+ * construction**, before any path is known and therefore before any file could be read. The CLI and
+ * `a5er tables` each pass the one default profile they ship; tests inject a small budget the same
+ * single-argument way, because the ceilings this build ships sit far above every committed fixture
+ * (at most 277 and 2).
  */
-export function createPipeline(
-  profile: BudgetProfile,
-  budget: ResourceBudget = DEFAULT_RESOURCE_BUDGETS[profile],
-): IntegrationPipeline {
+export function createPipeline(budget: ResourceBudget): IntegrationPipeline {
   const applied = withResourceBudget(budget);
 
   return (path: string): IntegrationInput => {
