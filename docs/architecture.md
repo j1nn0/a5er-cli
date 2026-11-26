@@ -932,7 +932,7 @@ fixtures, whose maxima are Σ`L²` **277** and composed columns **2**.
 **The 20,878,001-byte run, in full, and it is a run of that time, not of this build.** That input was
 20,878,001 bytes carrying 1,999,000 unknown keys in 1,999,008 physical lines; `inspect` exited `1`
 with no stdout after `JSON.stringify` in `toJsonString` threw `RangeError: Invalid string length`,
-in 23.5 s at a 3.0 GB peak RSS (§7.1). It predates both gates, so it is **not** a post-U5-ADMIT2
+in 23.5 s at a 3.0 GB peak RSS (docs/proposals/human-cli.md §7.1). It predates both gates, so it is **not** a post-U5-ADMIT2
 measurement: no figure here comes from running the current build on that input, and it was not
 re-executed for the pre-scan gate. **A second run, not this one.** B-6 (`test-strategy.md` §13.1) is a
 different document, command and build: 32,872,026 bytes, again 1,999,000 unknown keys, through
@@ -957,7 +957,7 @@ not share one kind of evidence, so they are stated apart.
 - `entityFieldOccurrences` **500,000** (`tables`), `contentLineOccurrences` **400,000** (`inspect`,
   `validate`) and `contentLineOccurrences` **1,000,000** (`tables`) are **provisional operational
   judgements**. No measurement derives them: the recorded large inputs report bytes, elapsed time and
-  peak RSS at whole-command granularity (§7.1, §10.3), none of them a refusal boundary for any
+  peak RSS at whole-command granularity (docs/proposals/human-cli.md §7.1, §10.3), none of them a refusal boundary for any
   counter, and those figures neither prove nor disconfirm these three numbers. Whether they sit above
   or below the real boundary is unknown.
 - All seven ceilings, the anchored 200,000 included, are **operating thresholds this build ships**,

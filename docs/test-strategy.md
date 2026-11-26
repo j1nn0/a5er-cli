@@ -492,13 +492,8 @@ The gates are tested in three layers instead.
 
 Consequences for the fixture policy and the gates:
 
-- **No refusal test writes a file aimed at a default ceiling + 1, and no OOM or large JSON is
-  reproduced here.** A test that wants a refusal injects a ceiling. Two documents come close to the
-  defaults and neither asks for a refusal: the ~12,100-byte production-wiring document is past the
-  shipped Σ`L²` ceiling by construction, that being the only way to tell the two profiles apart from
-  outside the process, and the 200,000-`Field` case above sits exactly on the envelope `Field`
-  ceiling and must be admitted. No file was added to the fixture corpus, and no test drives a shipped
-  pre-scan ceiling + 1 through the CLI.
+- **What touches a shipped default.** The ~12,100-byte production-wiring document is past the shipped Σ`L²` ceiling by construction — that being the only way to tell the two profiles apart from outside the process — and `inspect`/`validate` refuse it with exit `1` across three separate CLI runs; that is a real default-ceiling refusal, not an injected one. The 200,000-`Field` case above sits exactly on the envelope `Field` ceiling and must be admitted, and that existing CLI test generates its large input and its large JSON envelope output. No file was added to the fixture corpus, and no test drives a shipped pre-scan ceiling + 1 through the CLI.
+- **What is not reproduced here.** No OOM or `RangeError` run from the record was re-executed on this HEAD. A test that wants a pre-scan refusal injects a ceiling; the shipped pre-scan boundaries are pinned by pure `admitShape()` decisions and the defaults assertion instead.
 - **`E_LIMIT_BUDGET` is outside G-3 by construction**: G-3 covers the non-fatal codes, so a fatal no
   fixture can reach needs no exemption, and layers 1–2 are its coverage.
 - **The 44 goldens are unchanged** and none carries the new code: no fixture is refused, so no
