@@ -1326,19 +1326,19 @@ describe('src/budget — module surface and purity', () => {
     return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
   }
 
-  it('holds exactly the measurement module and its barrel', () => {
+  it('holds exactly the admission, measurement and barrel modules', () => {
     const files = readdirSync(BUDGET_DIR)
       .filter((name) => name.endsWith('.ts'))
       .sort();
 
-    expect(files).toEqual(['index.ts', 'measure.ts']);
+    expect(files).toEqual(['admission.ts', 'index.ts', 'measure.ts']);
   });
 
   // Forbidden later-stage imports, relative to `src/budget/`. `../syntax/` and `./` stay allowed.
   const FORBIDDEN_STAGE_IMPORT = /from\s+['"]\.\.\/(?!syntax\/)(?:schema|decode|semantic|json)\//;
 
   it('reads no clock, environment, filesystem or heap figure', () => {
-    for (const file of ['index.ts', 'measure.ts']) {
+    for (const file of ['admission.ts', 'index.ts', 'measure.ts']) {
       const text = stripComments(readFileSync(join(BUDGET_DIR, file), 'utf8'));
       expect(text, file).not.toMatch(/\bnode:/);
       expect(text, file).not.toMatch(/\bconsole\./);

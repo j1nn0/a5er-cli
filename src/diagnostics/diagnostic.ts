@@ -36,6 +36,8 @@ export type DiagnosticCode =
   | 'E_LIMIT_BYTES'
   | 'E_LIMIT_LINES'
   | 'E_LIMIT_LINE_LENGTH'
+  // Refused before the work it would cost, by the admission gate — never a partial result either.
+  | 'E_LIMIT_BUDGET'
   // No strict decoder succeeded, or the codec is missing from this build.
   | 'E_UNDECODABLE'
   | 'E_CODEC_UNAVAILABLE'
@@ -68,7 +70,15 @@ export type DiagnosticCode =
   | 'V_UNSUPPORTED_SUBTYPE_MEMBERSHIP'
   | 'V_VIEW_COLUMNS_UNKNOWN';
 
-/** A code `io/` or `decode/` can raise: the fatal and decode families. */
+/**
+ * A code `io/`, `decode/` or the admission gate can raise: the fatal and decode families.
+ *
+ * The admission gate is the one exception to the module split: the reader refuses a document by its
+ * bytes and lines (§10.2) and `src/pipeline.ts` refuses it by the work it would still cost (§13),
+ * and both refusals close the whole file before any later stage runs. `E_LIMIT_BUDGET` is therefore
+ * raised through `emit()` with `construct: 'Source'`; its `details` carry the counter and the two
+ * figures, never anything read from the document.
+ */
 export type SourceStageCode =
   | 'E_IO'
   | 'E_NOT_A_FILE'
@@ -78,6 +88,7 @@ export type SourceStageCode =
   | 'E_LIMIT_BYTES'
   | 'E_LIMIT_LINES'
   | 'E_LIMIT_LINE_LENGTH'
+  | 'E_LIMIT_BUDGET'
   | 'E_UNDECODABLE'
   | 'E_CODEC_UNAVAILABLE'
   | 'E_UNRECOGNIZED_DOCUMENT'
@@ -184,6 +195,13 @@ const DEFINITIONS: Readonly<Record<SourceStageCode, Definition>> = {
   E_LIMIT_LINE_LENGTH: {
     severity: 'fatal',
     message: 'The input has a line longer than the limit',
+  },
+  // The admission gate's one code: the document was readable, but finishing it would cost more than
+  // the processing budget allows. The counter and the two figures travel in `details`; the message is
+  // fixed, so a refused file states no numbers of its own.
+  E_LIMIT_BUDGET: {
+    severity: 'fatal',
+    message: 'The input would need more work than the processing budget allows',
   },
   E_UNDECODABLE: {
     severity: 'fatal',

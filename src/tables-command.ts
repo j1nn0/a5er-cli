@@ -1,10 +1,10 @@
 /**
  * `tables-command.ts` — `a5er tables`, end to end (`docs/proposals/human-cli.md` §2, §6, §7.2).
  *
- * **Two phases, one writer.** Phase A is eager and runs before any output: the same four stages
- * `inspect` uses, then `integrate()` for the exit policy. Phase B is lazy and runs *inside* the
- * writer's guard, so a defect in the projection or in a renderer becomes an
- * output-generation failure (exit `70`) instead of a stack trace: the tables envelope is a pure
+ * **Two phases, one writer.** Phase A is eager and runs before any output: the shared pipeline of
+ * `src/pipeline.ts` on this command's budget, then `integrate()` for the exit policy. Phase B is
+ * lazy and runs *inside* the writer's guard, so a defect in the projection or in a renderer becomes
+ * an output-generation failure (exit `70`) instead of a stack trace: the tables envelope is a pure
  * function of the stage results and their integration, and the CLI stays the only parser.
  *
  * **Why the writer is separate.** `src/io/stdout.ts` owns the §7.2 state machine — the single
@@ -22,13 +22,10 @@
  * read's code.
  */
 
-import { loadSource } from './decode/load.js';
 import type { OutputStream, WriteOutcome } from './io/stdout.js';
 import { OUTPUT_GENERATION_FAILED_LINE, writeOutput } from './io/stdout.js';
 import { encodeJson } from './json/index.js';
-import { classify } from './schema/index.js';
-import { derivePartialSemantics } from './semantic/index.js';
-import { scanSource } from './syntax/index.js';
+import { createPipeline } from './pipeline.js';
 import { renderTablesText, tablesDiagnosticLines } from './text/index.js';
 import type { Integration, IntegrationInput } from './validate/index.js';
 import { integrate } from './validate/index.js';
@@ -40,8 +37,8 @@ export type TablesFormat = 'text' | 'json';
 /**
  * Phase A, as a seam.
  *
- * The real implementation is the CLI's own pipeline; tests inject one that throws, which is how
- * R-20 reaches the Phase A guard without a broken document.
+ * The real implementation is the shared pipeline below, on the `tables` budget; tests inject one that
+ * throws, which is how R-20 reaches the Phase A guard without a broken document.
  */
 export type TablesPipeline = (path: string) => IntegrationInput;
 
@@ -67,19 +64,15 @@ export interface TablesCommandOptions {
 }
 
 /**
- * The real Phase A: `loadSource` → `scanSource` → `classify` → `derivePartialSemantics`.
+ * The real Phase A: the shared composition on this command's budget (`src/pipeline.ts`).
  *
- * The same composition `src/cli.ts` has always used for `inspect`; a rejected load stops here and
- * is reported by the diagnostics it already carries.
+ * `tables` renders a projection of the same record, so it takes the profile that caps the
+ * common-column composition and leaves Σ`L²` alone (`src/budget/admission.ts`). A rejected load
+ * stops inside the pipeline and is reported by the diagnostics it already carries; a refused budget
+ * stops there too and arrives as the `E_LIMIT_BUDGET` fatal, which the exit policy already maps to
+ * `1`.
  */
-function defaultPipeline(path: string): IntegrationInput {
-  const load = loadSource(path);
-  if (!load.ok) return { load };
-
-  const scan = scanSource(load.source);
-  const classification = classify(scan);
-  return { load, scan, classification, semantics: derivePartialSemantics(classification) };
-}
+const defaultPipeline: TablesPipeline = createPipeline('tables');
 
 /**
  * Run one `a5er tables` invocation and resolve with its exit code.

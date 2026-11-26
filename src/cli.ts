@@ -3,12 +3,14 @@
  * `a5er` command-line entry point.
  *
  * Three commands read a `.a5er` file: `inspect`, `validate` and `tables`. All three run the one
- * pipeline the library already has — `loadSource` → `scanSource` → `classify` →
+ * pipeline `src/pipeline.ts` owns — `loadSource` → `scanSource` → `measure` → `admit` → `classify` →
  * `derivePartialSemantics` — and hand the stage results to `integrate()` for the exit policy and to
  * `serialize()` for the envelope. Nothing about the file is decided here: the exit code is
  * `integrate().exitPolicy[command]` (`architecture.md` §11, §12, §17 TBD-O7), and the bytes on
  * stdout are `toJsonString()` plus the one trailing newline that §12's
- * one-envelope-per-invocation rule implies.
+ * one-envelope-per-invocation rule implies. A document the admission gate refuses arrives here as a
+ * `failed` read, so the refusal needs no case of its own: it is the fatal family's envelope with
+ * exit `1`.
  *
  * `inspect` and `validate` differ only in the exit policy and the `command` member. `tables` reads
  * the same bytes and prints a projection of the same envelope — text by default, one JSON document
@@ -37,15 +39,12 @@
  * `node dist/cli.js` needs no mode at all.
  */
 
-import { loadSource } from './decode/load.js';
 import { VERSION } from './index.js';
 import type { JsonCommand, JsonTablesCommand } from './json/index.js';
 import { serialize, toJsonString } from './json/index.js';
-import { classify } from './schema/index.js';
-import { derivePartialSemantics } from './semantic/index.js';
-import { scanSource } from './syntax/index.js';
+import { createPipeline } from './pipeline.js';
 import { runTablesCommand } from './tables-command.js';
-import type { Integration, IntegrationInput } from './validate/index.js';
+import type { Integration } from './validate/index.js';
 import { integrate } from './validate/index.js';
 
 // `quoteArg` moved to `src/text/escape.ts` with the rest of the escape set (§6); the import
@@ -259,15 +258,14 @@ function parse(argv: readonly string[]): Parsed {
   return { kind: 'command', command, path };
 }
 
-/** The four stage results, or the rejected load that stopped the pipeline (§11's fatal family). */
-function inputFor(path: string): IntegrationInput {
-  const load = loadSource(path);
-  if (!load.ok) return { load };
-
-  const scan = scanSource(load.source);
-  const classification = classify(scan);
-  return { load, scan, classification, semantics: derivePartialSemantics(classification) };
-}
+/**
+ * The shared composition with this command's budget (`src/pipeline.ts`).
+ *
+ * `inspect` and `validate` build one envelope string from all four stages, so they take the profile
+ * that caps both figures; the stages themselves — and the refusal that can stop them before the
+ * classification runs — are not repeated here.
+ */
+const inputFor = createPipeline('envelope');
 
 /**
  * Prose for the severities that can decide a non-zero exit (§11's Exit column).

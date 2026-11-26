@@ -412,10 +412,45 @@ v1 — it is reported, because a percentage would let an untested branch hide be
 | G-8 | Fixture integrity: every catalog ID exists, is tracked, and is not ignored | `catalog.test.ts` runs `git ls-files` and `git check-ignore --no-index` |
 | G-9 | Policy: the tracked `.a5er` set equals the catalog's synthetic fixtures (exactly 39 today); any other tracked `.a5er` fails | `catalog.test.ts` compares `git ls-files '*.a5er'` with the registry and checks the `.gitignore` allowlist with `git check-ignore --no-index`; CI may run the same `ls-files` comparison |
 | G-10 | **`inspect` and `validate` stay byte-identical** to the baseline: 44 fixtures × 2 commands, stdout and stderr compared as raw UTF-8 bytes against expectations built from the committed goldens and the fixture's diagnostics — never from `serialize()` | `cli-byte-regression.test.ts` (88 runs); the goldens themselves are unchanged, and `git diff` shows nothing under `tests/fixtures/` |
+| G-11 | The **admission gate** is wired and its refusal is a contract: one `E_LIMIT_BUDGET` with exact `counter`/`observed`/`ceiling`, the limits the read applied, no `scan`/`classification`/`semantics`, a `failed` envelope with `source`/`schema`/`completeness` `null`, `unsupported` `[]`, `limits.truncated` `false`, and exit `1` for `inspect`, `validate` and `tables`; a read that already failed keeps its own fatal and is never measured; `ResourceMeasureError`/`ResourceAdmissionError` stay internal (`tables` Phase A still `70`); a document exactly at a ceiling is admitted and one past it is refused | `pipeline-admission.test.ts` (the wiring, the per-profile decisions, the refusal's envelope and fatal line, `tables` end to end through `runTablesCommand`, internal errors, admitted-document equality with the pre-gate composition); `budget-admission.test.ts` (the decision itself, over hand-built measures) |
 
 G-4 and G-5 are guard tests, not lint rules, because no linter is decided in
 `architecture.md` §15. They are a stopgap: once a linter is chosen, both move to lint rules and
 the guard tests are deleted (TBD-T2).
+
+### 10.1 The admission gate (U5-ADMIT1)
+
+The ceilings (`architecture.md` §10.5) are far above every fixture — the 39 synthetic fixtures measure
+at most Σ`L²` **277** and composed columns **2** — so no committed document can reach one under the
+default limits, and none may be grown towards one: a default refusal needs either a relation value of
+roughly 11.6 KB or thousands of entities sharing thousands of `CommonField` declarations. The gate is
+tested in three layers instead.
+
+1. **The decision** (`budget-admission.test.ts`) — hand-built `ResourceMeasure` records: every
+   boundary at and one past each ceiling, invalid observations and ceilings, immutability,
+   determinism, and a fixed exception message that repeats no input value.
+2. **The wiring** (`pipeline-admission.test.ts`) — committed synthetic fixtures staged as disposable
+   copies, with a **small budget injected through `createPipeline(profile, budget)`**, the optional
+   second parameter the CLI and `a5er tables` never pass. It proves the refusal arm, the failed
+   envelope, the fatal line, exit `1` for all three commands, the load-failure precedence, and that
+   an admitted document's envelope equals the composition the gate replaced.
+3. **The corpus** — the gate is invisible where it must be. G-10's in-repo fence covers the 88
+   `inspect`/`validate` runs; the recorded extension for this unit is 39 synthetic fixtures × 4
+   command forms (`inspect`, `validate`, `tables`, `tables --format json`), compared with the pre-gate
+   build at base commit `1c6a4320` on stdout bytes, stderr bytes and exit code — **156 of 156
+   identical**. That comparison is a recorded pre-merge run rather than a CI job: it needs the base
+   build as well as the head one.
+
+Consequences for the fixture policy and the gates:
+
+- **No large inputs, no OOM reproduction, no JSON generated at size.** A test that wants a refusal
+  injects a ceiling; it never writes a file aimed at the default one. No fixture was added.
+- **`E_LIMIT_BUDGET` is outside G-3 by construction**: G-3 covers the non-fatal codes, so a fatal no
+  fixture can reach needs no exemption, and layers 1–2 are its coverage.
+- **The 44 goldens are unchanged** and none carries the new code: no fixture is refused, so no
+  expected envelope changed.
+- **The two amplification figures are not envelope members.** A refusal publishes them inside
+  `E_LIMIT_BUDGET.details`; an admitted document publishes nothing about them.
 
 ---
 
