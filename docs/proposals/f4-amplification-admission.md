@@ -1,11 +1,11 @@
-# Proposal — F4-D1: an admission control for relation-column slots on `tables`
+# Proposal — F4-D1: a separator-count admission control for relation columns on `tables`
 
-> **Status: draft design proposal. Not implemented, not calibrated, no ceiling approved.**
+> **Status: draft design proposal. Not implemented, not calibrated, no metric or ceiling approved.**
 > Nothing here is shipped behaviour. This document changes no code, test, fixture, golden, contract
-> or version. It designs **one** additive `tables` budget member that compares a figure the
-> measurement already publishes, names the calibration that must happen before any value is chosen,
-> and leaves the envelope profile untouched. Design acceptance is not calibration and neither is an
-> approval to ship a ceiling (§5, §9).
+> or version. It recommends **one** additive `tables` budget member, fed by **one** new measurement
+> figure, compares it after the existing composed bound, names the calibration that must happen
+> before any value is chosen, and leaves the envelope profile untouched. Design acceptance is not
+> calibration, calibration is not a ceiling decision, and neither authorises shipping a value.
 
 | | |
 |---|---|
@@ -13,8 +13,8 @@
 | Package | `@j1nn0/a5er-cli` `0.1.2` |
 | Contract | `CONTRACT_VERSION` `0.1.0`, and it stays `0.1.0` (§6) |
 | Tracks | [issue #27](https://github.com/j1nn0/a5er-cli/issues/27) (F-4) |
-| Scope | R1: one new `TablesResourceBudget` member comparing the already-published `bounds.relationColumnSlotsUpperBound`, with its ceiling to be approved later. R2 is named as a later unit and is not designed here |
-| Out of scope | ceiling values (§5), calibration runs, implementation, envelope changes, Field-heavy JSON, unknown-key volume, additive diagnostics outside the relation path, streaming or plan-B projection, read-limit changes |
+| Scope | R1: one new `TablesResourceBudget` member compared against a new separator-count figure, with the metric recommended by this design and both the metric and its ceiling approved later. R2 is a future independent unit (§4) |
+| Out of scope | ceiling values (§5), calibration runs, implementation, integration, envelope changes, Field-heavy JSON, unknown-key volume, diagnostics outside the relation path, streaming or plan-B projection, read-limit changes |
 
 Normative words: **must**, **must not** and **never** are requirements on an implementation this
 proposal would authorise. "Today" means the baseline above. Every claim carries one of four labels:
@@ -26,50 +26,49 @@ proposal would authorise. "Today" means the baseline above. Every claim carries 
 | **estimate** | Arithmetic on a written record's shape. A planning figure, not an observation. |
 | **hypothesis** | Plausible but unestablished, and stated as such. Physical heap cost is the main one. |
 
-**Recommendation in one paragraph.** Give the `tables` profile an effective relation control by
-adding **one** member to `TablesResourceBudget` that compares the figure the measurement already
-publishes — `bounds.relationColumnSlotsUpperBound`, the sum of `L + 1` over every `Fields1`/`Fields2`
-value, in **slots** — and compare it **after** the existing composed bound so today's refusal reason
-survives. The measurement, the 28-leaf pin and the envelope profile do not change: no new counter is
-added, the envelope keeps Σ`L²` unchanged, and the previously proposed envelope composite is dropped
-(§3.4). No ceiling value is chosen here: the band the value must satisfy is derived in §5, and the
-calibration that would justify a value is a separate, separately authorised step (§5.4, §9). R2 — name
-length in common-column composition — remains a later, independently reviewed unit (§4).
+**Recommendation in one paragraph.** Adopt a **separator count** as the `tables` R1 metric: for every
+`Fields1`/`Fields2` value, `1 + the number of literal commas`, summed — a figure that is a sound upper
+bound on the retained relation columns and, unlike the published slot bound, is **blind to name
+length** (§3). Add it to `ResourceMeasure.counters` in the existing relation loop, and add one
+`TablesResourceBudget` member comparing it **after** the existing composed bound, so today's refusal
+reason survives. The published `bounds.relationColumnSlotsUpperBound` stays where it is — published,
+documented, unchanged, with no consumer — because its unit mixes columns with name lengths (§3.1).
+The envelope profile, Σ`L²` and the seven shipped ceilings do not change. No ceiling value is chosen
+here: §5 records derivations only, the calibration that would justify a value is a separate,
+separately authorised step, and rejecting the manager's shape is a **policy choice** for that step.
+R2 remains a future, independently reviewed unit with a narrower proxy than the previous draft
+claimed (§4).
 
 ## 1. Problem statement and the current implementation
 
 ### 1.1 What admission is for, and the rule it applies
 
 The read limits bound the **input** — `maxBytes` is bytes (`src/io/read.ts:242`), while `maxLines`
-and `maxLineLength` are counts of **decoded UTF-16 code units** (`src/decode/decode.ts:252-267`,
-`src/io/limits.ts:17-22`) — and say nothing about the **work** an accepted document asks for
-(`docs/architecture.md` §10.5; module comment at `src/budget/admission.ts:50-60`). Admission therefore
-runs twice: a pre-scan walk before the scan (`src/pipeline.ts:116-118`) and a measurement of the
-finished scan before `classify()` (`src/pipeline.ts:124-125`, classification at `:127`). Today the two
-gates compare seven figures, and the comparison rule is one line: `observed > ceiling` refuses, and a
-document **exactly at** a ceiling is admitted (`src/budget/admission.ts:274-281`, rationale at
-`:26-32`).
+and `maxLineLength` are counts of **decoded UTF-16 code units** (`src/decode/decode.ts:252-267`) — and
+say nothing about the **work** an accepted document asks for (`docs/architecture.md` §10.5; module
+comment at `src/budget/admission.ts:50-60`). Admission runs twice: a pre-scan walk before the scan
+(`src/pipeline.ts:116-118`) and a measurement of the finished scan before `classify()`
+(`src/pipeline.ts:124-125`, classification at `:127`). The comparison rule is one line:
+`observed > ceiling` refuses, and a document **exactly at** a ceiling is admitted
+(`src/budget/admission.ts:274-281`, rationale at `:26-32`).
 
-The units matter for everything below. `L` in this document is the **raw relation value's UTF-16
-code-unit length**, quotes and escapes included — the same unit `maxLineLength` limits and the same
-text the scan stores. All four codecs this project decodes — `utf-8`, `shift_jis`, `utf-16le`,
-`utf-16be` (`src/decode/bom.ts:9`, candidate order `:12`; declared-name mapping
-`src/decode/decode.ts:189-201`) produce decoded text, so the slot figure is **codec-independent**;
-only the bytes-per-unit ratio differs (UTF-8 1 unit per 1–4 bytes, Shift_JIS 1 per 1–2, UTF-16LE/BE 1
-per 2). A BOM only lowers the byte count. The counter is therefore stated in code units, not
-bytes: its figure is codec-independent, while `maxBytes` is not.
+The unit of every relation figure in this document is the **decoded relation value**, quotes and
+escapes included — the string the scanner hands to `measure()`. All four codecs this project decodes
+— `utf-8`, `shift_jis`, `utf-16le`, `utf-16be` (`src/decode/bom.ts:9`, candidate order `:12`;
+declared-name mapping `src/decode/decode.ts:189-201`) — produce decoded text, so a figure computed
+from that text is **codec-independent**, while `maxBytes` is not. A BOM only lowers the byte count.
 
 ### 1.2 R1 — what the relation stage actually retains
 
-`columnsOf` (`src/semantic/relations.ts:174-204`) is the amplification. For one section and one key it
-walks the entries and, for the last decoded occurrence, splits each element's text on commas:
+`columnsOf` (`src/semantic/relations.ts:174-204`) is the amplification. For one section and one key
+it walks the entries and, for the **last** decoded occurrence, splits every element's text on commas:
 
 ```ts
 // src/semantic/relations.ts:188-201, abridged
 const parts = value.trailingElementsOmitted ? value.parts.slice(0, -1) : value.parts;
 const columns: RelationColumn[] = [];
 for (const part of parts) {
-  for (const name of part.value.split(',')) {
+  for (const name of part.value.split(',')) {          // split first, unescape second (:193)
     columns.push({ pname: unescapeEscaped(name), raw: partRaw(part), span: occurrence.span,
                    index: columns.length, empty: name === '' });
   }
@@ -77,29 +76,27 @@ for (const part of parts) {
 list = { key, raw: occurrence.raw, span: occurrence.span, columns };   // ← assignment, not append
 ```
 
-Three rules follow from that code, and the design must not describe anything else:
+Four rules follow from that code, and the design must not describe anything else:
 
 * **Only the last decoded occurrence per key per section survives.** `list` is assigned (`:201`); a
-  second `Fields1` in one section replaces the first, and the earlier array is not retained. The
-  measurement deliberately counts every occurrence (`src/budget/measure.ts:479-493`), so
-  `relationColumnSlotsUpperBound` (`:514-522`) and Σ`L²` **over-count duplicates** — an over-estimate
-  pinned as intended by `tests/budget-measure.test.ts:548-565` ("bounds lists that the relation stage
-  never reads"). The duplicate is still reported once per extra occurrence as `S_DUPLICATE_KEY`
+  second `Fields1` in one section replaces the first and the earlier array is not retained. A
+  duplicate is reported once per extra occurrence as `S_DUPLICATE_KEY`
   (`src/schema/registry.ts:730-740`; `Fields1`/`Fields2` are not `repeatable`, `:162-181`).
 * **`trailingElementsOmitted` drops exactly one element**, and only when the last element is empty
   *and* unquoted (`src/syntax/complex.ts:189-192`). A bare trailing comma declares nothing; a quoted
-  empty element (`""`) declares an empty slot, which is retained as a record but skipped for
-  diagnostics (`src/semantic/relations.ts:355`).
-* **Each slot's `raw` is the whole element text** (`partRaw`, `src/schema/values.ts:232-234`), so a
+  empty element (`""`) declares an empty slot, retained as a record but skipped for diagnostics
+  (`src/semantic/relations.ts:355`).
+* **One slice yields exactly one part.** The element splitter cuts only outside double quotes
+  (`src/syntax/complex.ts:113-143`), and `readPart` (`:145-166`) returns one part per slice.
+* **Each column's `raw` is the whole element text** (`partRaw`, `src/schema/values.ts:232-234`), so a
   quoted element of `L` code units that splits into `n` slots retains `n` records each holding that
-  element's text. `n` is linear in the text — `n ≤ L + 1`, because every separator is one code unit —
-  but the **logical** retained and emitted size is the product `n × L`. Whether that becomes physical
-  heap is engine-dependent and is **not established here** (§1.5, §3.5).
+  element's text. The **logical content** is `n × L` code units; whether that becomes physical heap
+  is engine-dependent and is **not established here** (§1.5, §3.6).
 
 The envelope then repeats the shape: per column it writes `{pname, raw, span, index, empty}` and per
-list it writes the whole value again as `raw` (`src/json/serialize.ts:846-863`), and the value also
-appears as `scalars[].raw` and `scalars[].value.parts[].value` (`:882-903`, `:564-573`).
-`inspect`/`validate` build that envelope as one string (`src/cli.ts:304`, `src/json/index.ts:83`).
+list the whole value again as `raw` (`src/json/serialize.ts:846-863`), and the value also appears as
+`scalars[].raw` and `scalars[].value.parts[].value` (`:882-903`, `:564-573`). `inspect`/`validate`
+build that envelope as one string (`src/cli.ts:304`, `src/json/index.ts:83`).
 
 ### 1.3 What `tables` pays for the same work
 
@@ -121,29 +118,49 @@ one document is built before either writer runs (`src/tables-command.ts:116-120`
 retains the same objects and only writes fewer bytes (`src/text/tables.ts:311-373`; stderr receives
 only `fatal`/`error`, `src/text/diagnostics.ts:28-36`).
 
-### 1.4 The gap: the `tables` profile has no relation control
+Four things must stay apart when costs are discussed, and this document keeps them apart:
 
-Two figures target the relation path, and the `tables` gate reads neither:
-
-| Figure | Where it is computed | Compared by |
+| Thing | What it is | Bounded by |
 |---|---|---|
-| `counters.relationValueLengthSquares` (Σ`L²`) | `src/budget/measure.ts:479-493` | `inspect`, `validate` only — deliberately absent from `TablesResourceBudget` (`src/budget/admission.ts:84-92`) |
-| `bounds.relationColumnSlotsUpperBound` = Σ(`L + 1`) | `src/budget/measure.ts:514-522`, type at `:349-361` | **nobody**: published, unit-tested (`tests/budget-measure.test.ts:518-576`, `:790-800`), read by neither gate |
+| **retained records** | `RelationColumn` and `DanglingColumn` objects kept in `PartialSemantics` until the process ends | a **column count** (the R1 metric, §3) |
+| **transient objects** | per-value `parts`, the `part.value.split(',')` arrays and substrings, the replaced list of a duplicate key | the scan's lifetime, not by the gate |
+| **JSON mappings** | one fresh `jsonDiagnostic` object per diagnostic while the document is built | the diagnostic count |
+| **estimated bytes** | the written document, from per-record arithmetic (§2.3) | nothing here — an **estimate**, not a bound |
+
+### 1.4 The gap: the `tables` profile has no relation control
 
 The `tables` branch of `admit()` compares exactly one figure, `composedColumnsUpperBound`
 (`src/budget/admission.ts:332-341`). A document with no `[Entity]` and no `CommonField` has a composed
 bound of 0, so **every** `tables` ceiling passes it regardless of how many relation columns it
-declares, while each of those columns can produce a retained record and a diagnostic. §5.3 gives the
-verified construction that does exactly this, and shows the envelope refusing the same document twice.
+declares, while each of those columns can produce a retained record and a diagnostic.
 
-### 1.5 What is not in question
+Two published figures come close, and neither is a column count:
 
-The shipped counters are sound at what they measure: the slot bound is a conservative over-count
-(duplicates and trailing slots included), it is pinned by tests, and it is already one of the 28
-numeric leaves of the measurement (`tests/budget-measure.test.ts:144-157`, `:780-789`). Nothing in
-this proposal weakens it or the seven shipped ceilings (§6.4), and no physical-memory claim is made
-for any of them: the logical `n × L` representation is a risk, the heap cost of it is a
-**hypothesis** that no measurement in this repository establishes.
+| Figure | Unit | Why it is not the control |
+|---|---|---|
+| `counters.relationValueLengthSquares` (Σ`L²`) | code units squared | grows with name length; one 4 MiB name scores 1.7 × 10¹³ with **one** column, while 400,000 one-code-unit values score 400,000 with 400,000 columns |
+| `bounds.relationColumnSlotsUpperBound` = Σ(`L + 1`) | **slots** | a sound count upper bound, but its unit mixes columns with name length: the committed anchor scores 12,008 for **two** columns (§3.1, §5.2) |
+
+§5.3 gives a derived, unexecuted illustration that the `tables` profile admits today and the envelope
+refuses at its pre-scan gate.
+
+### 1.5 What is not in question (the invariants this change must keep)
+
+| Invariant | Detail |
+|---|---|
+| Seven shipped ceilings unchanged | Σ`L²` 134,217,728; composed 524,288 (envelope) / 4,194,304 (`tables`); Field 200,000 / 500,000; content lines 400,000 / 1,000,000 (`src/budget/admission.ts:129-138`) |
+| Envelope profile unchanged in R1 | no new member, no new counter, Σ`L²` still its only relation figure |
+| The target is `tables` | the profile that emits no relation text but carries the diagnostics list |
+| Composed precedence | the composed bound is still compared first, so today's refusal reason survives |
+| `details` exactly three keys | `{counter, observed, ceiling}`; no document text (`src/pipeline.ts:69-86`) |
+| `CONTRACT_VERSION` stays `0.1.0` | a new `counter` value is data (`docs/architecture.md:1228-1242`) |
+| Admitted bytes preserved | no admitted document's output changes; no golden is regenerated |
+| Some `tables` inputs newly fail | stated as an outcome change in §6.3, not hidden |
+| Fixtures and goldens absolute | never edited to accommodate a ceiling; a value must admit all 39 fixtures |
+| 156 comparisons as a post-implementation fence | 39 × 4, after implementation, not during design (§7.2) |
+
+The reason for the gate at all is the same as before: the read limits bound the input, and a
+document inside every read limit can still ask the relation stage for millions of records.
 
 ## 2. Measured evidence versus estimates
 
@@ -174,333 +191,331 @@ baseline source `8df73ea8fa4f79880196cfab79497be65437e031`; CLI SHA-256
 dangling-column count, no OOM and no `RangeError`. **R2:** about 67 KB in, about 1.32 MB of `inspect`
 JSON, growth of the form entities × common columns × name length, composed counter name-blind, no
 string-limit failure. It is a manager report, not a record committed to this repository: it was not
-re-run for this proposal, and the per-diagnostic figure below is **arithmetic** on it, not a second
-observation.
+re-run for this proposal, and the per-diagnostic figure below is **arithmetic** on it.
 
 ### 2.2 What none of those measurements establish
 
-* **No run reports the slot figure for its input.** F4-M1A reports output volume, diagnostic count and
-  the growth direction; it does not report `relationColumnSlotsUpperBound`, Σ`L²` or `E × Σℓ` for that
-  document. The about-114,004 slots attributed to it in §5.2 are **derived** from its diagnostic count,
-  not read from a run.
-* **No measurement of a proposed counter exists**, because this proposal adds none (§6.4).
-* **No heap measurement exists for the relation shape.** The `n × L` representation is established
-  from the code; its physical cost is a **hypothesis** (engine-dependent, unmeasured), and this
-  document makes no RSS or heap claim about it.
+* **No run reports a column count or a separator count.** F4-M1A reports output volume, diagnostic
+  count and the growth direction; the about-57,001 separator count attributed to that shape in §5.2 is
+  a **shape-dependent estimate** derived from its diagnostic count, not read from a run.
+* **No measurement of the recommended figure exists**, because it is not implemented.
+* **No heap measurement exists for the relation shape.** The `n × L` representation is logical content
+  established from the code; its physical cost is a **hypothesis** (engine-dependent, unmeasured), and
+  this document makes no RSS or heap claim about it.
 * **`tables` measurements do not transfer to `inspect`.** `tables` streams in chunks
   (`src/json/stream.ts:1-49`) and builds its own document; `inspect`/`validate` build one string.
-* **Nothing here was re-run.** No load, heap or out-of-memory measurement was run for this proposal.
+* **Nothing here was re-run.** No load, heap or out-of-memory measurement was run for this proposal,
+  and the §5.3 illustration was not executed.
 
-### 2.3 Per-record size estimates and arithmetic used later
+### 2.3 Per-record estimates and arithmetic used later
 
 | Quantity | Value | Derivation |
 |---|---|---|
 | Relation column record in the envelope (`jsonRelationColumn`, `src/json/serialize.ts:846-853`) | ≈128 characters excluding `raw` | a representative record with a 4-character `raw` serialises to 132 characters, 128 of them not `raw` — **estimate** |
-| Effective-column record in the envelope (`jsonEffectiveColumn`, `:664-676`) | ≈140 characters excluding the two names | 137 characters with both names empty, 148 with a 7-character and a 2-code-unit name — **estimate** |
+| Effective-column record in the envelope (`jsonEffectiveColumn`, `:664-676`) | ≈140 characters excluding the names | 137 characters with both names empty, 148 with a 7-character and a 2-code-unit name — **estimate** |
 | Escape factor `f` on a decoded name | 1–6 | `src/schema/values.ts:100-142`: `\n`/`\t` decode to one control character, which JSON writes back as 2 characters, or up to 6 (`\u000b`) — **derived** |
-| Diagnostic record in the `tables` JSON (`jsonDiagnostic`, `src/json/serialize.ts:1305-1314`) | ≈279 bytes average | **arithmetic** on F4-M1A: 15.9 MB / 57,000. No worst-case per-diagnostic figure is claimed anywhere in this document |
+| Diagnostic record in the `tables` JSON (`jsonDiagnostic`, `src/json/serialize.ts:1305-1314`) | ≈279 bytes average | **arithmetic** on F4-M1A: 15.9 MB / 57,000. No worst-case per-diagnostic figure is claimed in this document |
 
-## 3. R1 — options and recommendation
+## 3. R1 — the metric decision
 
-### 3.1 Options
+### 3.1 Decision table: the published slot bound (B) versus the separator count (E)
 
-| Option | Figure | What it can control | Why not (or why now) |
-|---|---|---|---|
-| A | Σ `Fields1`/`Fields2` code units (`fields1ValueCodeUnits + fields2ValueCodeUnits`, `src/budget/measure.ts:484`, `:491`) | nothing useful: linear in the text, and bounded by `maxBytes`, so any ceiling is either non-binding or refuses legitimate documents | rejected |
-| B | `bounds.relationColumnSlotsUpperBound` = Σ(`L + 1`), unit slots | the number of retained column records and the slot-driven diagnostics, one-to-one | **adopted for `tables`** (§3.2) |
-| C | an output-cost model over the raw text | close to the written bytes | needs a second model that can drift from `serialize.ts` and from `stream.ts`, and a second bookkeeping path `src/budget/measure.ts:13-29` forbids |
-| D | envelope composite `Σ(L² + L)` (previous draft) | the envelope's `n × L` representation, in principle | **dropped** (§3.4): its usable ceiling is non-binding by construction; it couples a long value and many short values into one figure; it adds no independent slot-risk coverage; it costs a new measurement leaf and its tests |
-| E | envelope slot ceiling (compare B on the envelope profile too) | record count when names are short, where Σ`L²` is small | a candidate **follow-up**, not initial scope; the `k × n` residual needs its own analysis (§3.4) |
+`B` is the shipped `bounds.relationColumnSlotsUpperBound` = Σ(`L + 1`). `E` is the recommended figure:
+Σ over every `Fields1`/`Fields2` occurrence of `1 + the number of literal commas` in the raw value.
+"cols" is the number of `RelationColumn` records actually retained by `columnsOf`.
 
-### 3.2 Recommendation (proposal): one member, on `tables` only
+| Criterion | **B** — Σ(`L + 1`) | **E** — Σ(1 + literal commas) |
+|---|---|---|
+| Metric and units | slots: an upper bound on columns, derived from **code-unit length** | **columns**: a sound upper bound on the retained column count, computed from **separators** |
+| Soundness | sound (`L + 1 ≥ names`, `src/budget/measure.ts:349-361`), verified against the listed slots on every fixture (`tests/budget-measure.test.ts:518-576`, `:790-800`) | sound by the slice/part identity (§3.2); tight except `+1` per trailing-omitted value and duplicates (§3.3) |
+| Compute location and cost | already computed — `src/budget/measure.ts:514-522`; zero additional cost | new accumulation in the relation branch (`:479-493`): one allocation-free pass over text the loop already holds, `O(ΣL)`, `O(1)` memory, `checkedAdded` accumulation (§3.5) |
+| False-positive class | **length-sensitive**: any value longer than the ceiling is refused regardless of column count. The committed anchor scores 12,008 for 2 columns; a one-column document with a 500-code-unit name scores 503 | **length-blind**: a 4 MiB single name scores 1. Only multiplicity counts — duplicate occurrences (each ≤ 1 per value) and one dropped trailing slot per value |
+| Demonstrated amplification rejected | the manager's shape at any ceiling `< ≈114,006`; the §5.3 illustration at any sane ceiling | the manager's shape at any ceiling `< ≈57,001`; the §5.3 illustration at any sane ceiling |
+| Calibration still required | yes, and awkwardly: no ceiling below `maxLineLength + 1` (4,194,305) is free of long-name refusals | yes, but the number is directly a column budget; rejecting the manager's shape is a **policy choice** |
+| Contract impact | none — the figure exists; only a member and a comparison are added, and the 28-leaf pin is untouched | **one new leaf**: a new `ResourceCounters` field makes the pin 28 → **29** (§3.5, §6.4) and adds one `BudgetCounter` value |
+| Test requirements | reuse the slots-bound tests; add the gate cases and the one-column long-name case, which must be admitted at whatever value is chosen | all of B's gate tests **plus** a fixture-wide agreement test: `E` equals the actual `columnsOf` count on every fixture, the analogue of `tests/budget-measure.test.ts:790-800` |
+| Verdict | **stays published-only**, no consumer | **recommended** for the `tables` ceiling |
 
-Add **one** member to `TablesResourceBudget`:
+### 3.2 Why E is sound — proof sketch
 
-```
-relationColumnSlotsUpperBound: number      // ceiling, in slots; value not chosen here (§5)
-```
+Let `r` be one raw value and `C(r)` its number of **literal** commas.
 
-and compare `measurement.bounds.relationColumnSlotsUpperBound` against it. Semantics, exactly as the
-measurement already documents them (`src/budget/measure.ts:349-361`, `:514-522`):
+1. The element splitter yields `C_outside(r) + 1` slices, where `C_outside` counts commas outside
+   double quotes (`src/syntax/complex.ts:113-143`; `:141` pushes the final slice), and `readPart`
+   maps each slice to **exactly one** part — its only returns are `:151`, `:160` and `:165`
+   (`:145-166`).
+2. `columnsOf` keeps `K` parts: `K = slices − 1` when `trailingElementsOmitted`, else `K = slices`
+   (`src/semantic/relations.ts:188`).
+3. Each kept part contributes `commas(part.value) + 1` columns (`:191`). `part.value` is a **substring**
+   of `r` (`src/syntax/complex.ts:160`, `:165`; the only trimming is spaces and tabs at slice edges,
+   `:148-150`), so its commas are a subset of `r`'s.
+4. The `slices − 1` separator commas sit **outside** every slice, so they are counted in `C(r)` and
+   never inside a kept part.
 
-* **What it counts:** the sum over every `Fields1`/`Fields2` key occurrence in a relation section of
-  the raw value's UTF-16 code units **plus one**. Unit: **slots (columns)**.
-* **Why it is conservative:** every separator costs one code unit, so a value of `L` units yields at
-  most `L + 1` slots; the sum therefore never under-states the listed slots. It also over-counts the
-  cases the stage does not read: duplicate occurrences whose earlier list is replaced
-  (`tests/budget-measure.test.ts:548-565`) and the one slot `trailingElementsOmitted` may drop
-  (`src/semantic/relations.ts:188`).
-* **What it costs:** nothing new — the figure is already computed by `measure()` and is already one
-  of the 28 numeric leaves (`tests/budget-measure.test.ts:144-157`, `:780-789`). No new accumulation,
-  no second parser, no new counter, and the 28-leaf pin is untouched (§6.4).
-* **Where it is compared:** in the `tables` branch of `admit()`, **after** the existing composed bound
-  (`src/budget/admission.ts:332-341`), so a document over both keeps reporting
-  `composedColumnsUpperBound` exactly as it does today. The new observation joins the pre-comparison
-  check that already proves every figure the profile reads (`:305-316`).
-* **What it does not change:** the envelope profile, Σ`L²`, the composed bound, the pre-scan figures,
-  the seven shipped ceilings, the refusal shape and the exit code (§6).
+Therefore `columns(r) = C(r) − C_outside(r) + C_outside(r) + 1 = C(r) + 1 = E(r)` when nothing is
+dropped, and `columns(r) = C(r) = E(r) − 1` when one trailing slot is dropped. Unescaping cannot change
+this: **no escape maps to a comma** (`src/schema/values.ts:101-108`) and unescaping happens **after**
+the split (`src/semantic/relations.ts:191-193`). A Complex value also cannot fail to decode
+(`src/schema/values.ts:206-218` returns `ok: true`), so there is no failure path that would change the
+count.
 
-### 3.3 Why a count is the right control for `tables`
+Every case is covered, including the awkward ones: a quoted list (`"a,b"` → 2), two quoted elements
+(`"a","b"` → 2, the separator is the counted comma), an unquoted list (`a,b` → 2), a trailing
+separator (`a,b,` → `E` 3, columns 2 — **safe over-count**), a quoted empty element (`"a",""` → 2),
+an empty value (`Fields1=` → `E` 1, one `empty` slot), an escaped comma (`"a\,b,c"` → `E` 3,
+columns 3), an unterminated quote (`"a,b` → `E` 2, columns 2, plus one `S_COMPLEX_UNTERMINATED_QUOTE`),
+duplicate keys (`E` counts both, columns keep the last — safe), and a malformed line with no `=`
+(neither counted; `src/syntax/scanner.ts:245-254`).
 
-The `tables` document contains **counts and diagnostics**, not column text (§1.3). Every relation
-column therefore costs the profile at most one retained record plus, when it does not resolve, one
-diagnostic whose size is bounded (fixed message, details cut at 200 code units). One diagnostic
-records about 279 bytes on average in the F4-M1A report (**arithmetic**, not a worst case), so the
-count of columns is the quantity that tracks this profile's output growth — which is also what the
-report observed: linear in the dangling-column count.
+### 3.3 The maintenance condition this soundness depends on
 
-That is a statement about **records and diagnostics**, not a universal sufficiency claim. In
-particular the count does not bound the bytes of the retained records, which still hold the element
-text (§3.5), and it says nothing about physical heap, which is a **hypothesis** for both profiles.
+`E` is sound **only while every literal comma outside quotes becomes a column boundary and no other
+separator exists**. That is the grammar rule `columnsOf` implements today: `slice` splits on commas
+outside quotes and on nothing else, and `readPart` produces one part per slice. A future change that
+introduces another separator, CSV-style `""` doubling, or a path by which a comma reaches
+`part.value` from somewhere other than the raw text would have to change `columnsOf` itself — so the
+review of that change must re-derive this bound. **Writing that dependency into the design is a
+requirement**, not a comment: the counter's doc comment must name `columnsOf` as the grammar it
+mirrors (§3.7).
 
-### 3.4 Why the envelope keeps Σ`L²`, and the composite is dropped
+### 3.4 Recommendation: E, with B left published
 
-The envelope profile already has the product-shaped figure, `relationValueLengthSquares`, with its
-134,217,728 ceiling and a pinned refusal identity. The previous draft added a second envelope counter,
-`Σ(L² + L)`, and this correction removes it from the implementation plan entirely:
+Take **E** for the `tables` ceiling. Its unit is what the gate is about — a column budget — and it is
+length-blind, so it does not refuse a document because one name is long. B stays exactly as it is:
+published, documented, unit-tested, and still read by no gate. The alternative of reusing B (zero new
+leaves) is rejected because its unit cannot express "at most N columns": the committed 12,100-byte
+anchor scores 12,008 for two columns, and a ceiling low enough to mitigate would refuse every
+document with a long name (§5.2).
 
-* **Its usable value was non-binding by construction.** Σ`L` cannot exceed the file's decoded code
-  units, so a ceiling that admits every document the Σ`L²` ceiling admits would have to sit above
-  Σ`L²` ceiling + `maxBytes` — and a comparison that can never fire changes no outcome. It was a
-  consistency guard, never a mitigation.
-* **It couples two unrelated shapes.** Folding a long value and many short values into one number
-  makes a refusal reason harder to read than two figures with their own ceilings.
-* **It adds no independent slot-risk coverage** on the envelope profile: for every value with
-  `L ≥ 1`, `L² + L ≥ L + 1`, so a Σ`L²` ceiling already dominates the slot count for those values. The
-  one residue Σ`L²` cannot see — per-column fixed cost at `L = 0` and the `k × n` term for short
-  values — is a **slot** question, not a composite one.
-* **It costs a measurement leaf and its tests**: a new counter makes the leaf count 29 and forces a
-  deliberate edit of a pin that this correction instead leaves untouched (§6.4).
+**What the gate compares and in what order** (`src/budget/admission.ts:305-341`):
 
-**Envelope follow-up, not initial scope.** If the envelope needs a slot-shaped control later, the
-figure to consider is the same `relationColumnSlotsUpperBound` on `EnvelopeResourceBudget` (option E),
-together with an analysis of the `k × n` residual — the ≈128-character per-column constant that
-neither Σ`L²` nor a slot count measures in code units. That work belongs to issue #27 and is not
-authorised here.
+| # | Profile | Gate | Figure | Compared |
+|---|---|---|---|---|
+| 1 | both | pre-scan | `entityFieldOccurrences` | before `scanSource()` — unchanged |
+| 2 | both | pre-scan | `contentLineOccurrences` | before `scanSource()` — unchanged |
+| 3 | envelope | post-scan | `relationValueLengthSquares` | unchanged |
+| 4 | envelope | post-scan | `composedColumnsUpperBound` | unchanged |
+| 5 | `tables` | post-scan | `composedColumnsUpperBound` | **unchanged and first**, so today's reason survives |
+| 6 | `tables` | post-scan | `relationColumnCountUpperBound` (E) | **new**, after the composed bound |
 
-### 3.5 What the count does and does not bound
+### 3.5 Where it is computed, and what it costs
 
-**It bounds:** the number of `RelationColumn` records the relation stage can retain
-(`src/semantic/relations.ts:189-200`), and therefore the number of slot-driven findings — one
-`V_DANGLING_COLUMN` per unmatched non-empty slot (`src/semantic/relations.ts:353-375`,
-`src/semantic/partial.ts:243-251`) — and the diagnostics list that `tables` copies into its document.
+* **Location:** the `kind === 'Relation'` branch of `measure()` (`src/budget/measure.ts:479-493`),
+  beside the `checkedValueLength(entry.value, …)` calls (`:483`, `:490`) — the same string, already
+  proven to be a string there.
+* **Cost:** one pass over the relation values, `O(ΣL)` character comparisons, **allocation-free** as a
+  loop (`split(',').length` would allocate arrays and substrings and must not be used), `O(1)` retained
+  state. `ΣL ≤ maxBytes` = 67,108,864, so the worst case is 64 M comparisons — the same order as the
+  decoder's own pass over the same text.
+* **Documentation impact:** `src/budget/measure.ts:39-42` promises `O(S + E)` with no
+  input-proportional work; it becomes `O(S + E + ΣL)` for the relation values only. The
+  "no input-proportional intermediate array" half stays true.
+* **Integer safety:** per value `commas + 1 ≤ L + 1 ≤ maxLineLength + 1 = 4,194,305`; the running total
+  is at most `occurrences × (maxLineLength + 1) ≤ 2,000,000 × 4,194,305 ≈ 8.4 × 10¹² < 2⁵³`. Accumulate
+  through `checkedAdded` (`src/budget/measure.ts:129-144`) like every other counter, so a hand-built
+  scan outside that range throws `ResourceMeasureError` instead of publishing a rounded figure.
+* **New leaf:** E is not any existing figure. `ResourceCounters` (`:247-317`) and `ResourceBounds`
+  (`:349-362`) hold no comma count, and `relationColumnSlotsUpperBound` is Σ(`L + 1`), not Σ(1 +
+  commas). So the measurement gains **one numeric leaf**, and the pin at
+  `tests/budget-measure.test.ts:784` becomes **29** — edited deliberately in the same change, with the
+  reason recorded. This is the price of a figure whose unit is a column count; a decision to reuse B
+  would pay zero and inherit B's unit.
 
-**It does not bound:** the bytes those records hold (each keeps the element's text, §1.2); physical
-heap or RSS; per-column JSON overhead; `[Entity]` `Field=` lines or their projections; unknown keys;
-diagnostics that do not come from relation slots; the composed path; or the envelope's `n × L`
-representation.
+### 3.6 What E does and does not bound
 
-**The other findings are bounded elsewhere.** Under the content-line ceiling (400,000 for the envelope
-profile, 1,000,000 for `tables`), a document is limited in **lines**, so:
+**It bounds**, for the retained list of each key in each section, the number of columns (§3.2), and
+therefore the column-driven records and the column-driven diagnostics (`V_DANGLING_COLUMN`, one per
+unmatched non-empty slot, `src/semantic/partial.ts:243-251`). It over-counts duplicates by one per
+extra occurrence and one dropped trailing slot by one, both in the safe direction.
 
-* **line-driven** findings — one `V_MISSING_REQUIRED_KEY` per section carrying absent names
-  (`src/semantic/required.ts:172-190`) and one `S_DUPLICATE_KEY` per extra occurrence
-  (`src/schema/registry.ts:730-740`) — are bounded by the number of sections and key lines, not by
-  the slot count;
-* **section-driven** findings — one per section or document, e.g. the document-level `PageInfo` error
-  (`src/semantic/required.ts:135-148`) — are bounded by section count;
-* **slot-driven** findings are the ones this member caps.
+**It does not bound:**
 
-### 3.6 Non-coverage, stated as a requirement
+* the **whole** `tables` diagnostic volume. Endpoint findings (`V_DANGLING_ENTITY`, up to 2 per
+  relation) and missing-required-key findings (one per relation section) are linear in the **relation
+  count**, not in the column count. They are bounded instead by the pre-scan content-line ceiling
+  (1,000,000 for `tables`) and must be described that way;
+* the **bytes** those records hold — each retains its element text (`partRaw`), so the logical content
+  is `n × L`; the heap cost of that is a **hypothesis**, not a bound (§1.5);
+* **transient** objects (`parts`, the split arrays, a replaced duplicate list) or the JSON mappings
+  built while the document is encoded;
+* `[Entity]` `Field=` lines, their projections, unknown keys, the composed path, or diagnostics that
+  are not relation-column findings;
+* the envelope's `n × L` representation — that is `inspect`/`validate`'s problem, and Σ`L²` is its
+  figure.
 
-An implementation must document, in the member's own doc comment and in `docs/architecture.md`
-§10.5, that `relationColumnSlotsUpperBound` on `tables`:
+### 3.7 The envelope is unchanged
 
-* is **not** a byte, heap or RSS bound: it bounds records and slot-driven diagnostics, and a record
-  built from a quoted element keeps its own copy of that element's text
-  (`partRaw`, `src/schema/values.ts:232-234`);
-* **over-counts** by construction (`L + 1` per occurrence, duplicates included), so it also refuses a
-  document whose single column name is longer than the ceiling even though that document costs
-  `tables` one record (§5.3, §5.4);
-* says nothing about `[Entity]` `Field=` lines, unknown keys, line- or section-driven findings, or the
-  composed path — those stay with the pre-scan figures, the composed bound, and issue #27.
+The envelope profile keeps Σ`L²` as its only relation figure, with its 134,217,728 ceiling and its
+pinned refusal identity, and gains no member. That is deliberate rather than an oversight: a ceiling
+for an envelope relation figure sitting at or above Σ`L²` ceiling + `maxBytes` is *sufficient* to be
+non-binding, but sufficiency is not necessity, and no value below that was shown to be safe. Neither
+Σ`L²` nor E is a substitute for the other, either: `ΣL² ≥ E` does **not** hold in general (a value `,`
+has `L = 1`, `E = 2`, `L² = 1`), so a Σ`L²` ceiling does not bound the number of short columns. That
+residue is exactly the `tables` hole this change closes on the `tables` profile, and an envelope
+question for issue #27 — not this unit.
 
-## 4. R2 — a later unit, not designed here
+## 4. R2 — a future independent unit
 
-### 4.1 Scope statement
+### 4.1 Scope
 
-R2 covers name length in common-column composition on the `inspect`/`validate` envelope. It is a
-**separate, independently reviewed unit**: it shares no commit with R1, adds no member to the `tables`
-profile, and the correction in §3 does not depend on it. The facts below are recorded so the later
-unit starts from the truth rather than from the previous draft's claims.
+R2 covers name length in common-column composition. It stays a **separate, independently reviewed
+unit**: no shared commit with R1, no `tables` member, and no dependency of the R1 design on it. The
+paragraphs below record what the proxy may and may not claim, so the later unit does not inherit the
+previous draft's overstatements.
 
-### 4.2 `tables` shares the derivation and its costs
+### 4.2 What the proxy covers, restricted
 
-There is one `derivePartialSemantics` call site (`src/pipeline.ts:128`), and `commonColumnsOf` runs for
-every command (`src/semantic/partial.ts:169`, `:319-322`). So `tables` pays the same composition and
-retains the same `EntityColumns[]` (`src/semantic/partial.ts:108-112`, `:308-312`). Its own bytes stay
-O(E) because it emits counts (`src/view/tables.ts:405-411`), but its **peak** includes the shared
-records. Any later claim that R2 is "an `inspect` problem" is wrong; only its *emitted* name text is
-envelope-only.
+A name-length-weighted figure — entity sections × Σ raw `CommonField` value code units — is a proxy for
+**common-derived physical and logical names in the arrays that render them, before escaping**: the
+`columns` (effective) and `common` lists written through `jsonEffectiveColumn`
+(`src/json/serialize.ts:678-707`, `:664-676`), i.e. about `2 × N_ent × Σℓ` code units before escaping,
+where `N_ent` is the number of `[Entity]` sections. Outside those lists, only each collision's
+repeated entity `object` and its `pname` are length-related. It does **not** cover:
 
-### 4.3 What `E × Σℓ` would and would not bound
+* **declared** column names (`declared`, `:681-683`) or `[Entity]` `Field` projections, `attributes`,
+  `rawElements`;
+* the collision **object** beyond its repetition and the collision `pname` where it may be a declared
+  name, and the collision **spans** (four numbers each, `g` per group;
+  `src/semantic/common-columns.ts:108-114`, `src/json/serialize.ts:684-690`);
+* entity names as such, `manager.commonFields` (`:1102`), or unrelated diagnostics;
+* the **fixed per-record cost** `k ≈ 140` characters per effective column (`jsonEffectiveColumn`
+  without names) — invisible to a length-weighted figure;
+* escaping beyond the 2–6× factor (§2.3).
 
-A name-length-weighted figure, `[Entity]` sections × Σ raw `CommonField` value code units, is a
-**proxy**. It bounds:
+Collisions **multiply the repeated entity name**: each collision record repeats `object` (the entity's
+`PName`, `common-columns.ts:298`, `src/semantic/access.ts:59-61`) and one span per occurrence, so a
+group of size `g` emits `g` spans. A collision can form from **declared fields alone** — two `Field`
+lines with the same physical name (`common-columns.ts:301-307`, `:322`, `:323-345`, case-insensitive
+at `:326`) produce one `ColumnCollision` with no `CommonField` needed — and that declared-only case has
+**no committed test** (only the mixed declared-vs-common case is pinned, in
+`tests/semantic-domains.test.ts:408-425` and `tests/json-contract.test.ts:2704-2735`). **That gap must
+be named and closed in R2's own tests.**
 
-* the two emitted name lists — `columns` (effective) and `common` — which `jsonEntityColumns` writes
-  through `jsonEffectiveColumn` (`src/json/serialize.ts:678-707`, `:664-676`), i.e. about
-  `2 × E × Σℓ` code units before escaping;
-* each collision's `pname` and `object` — O(1) per collision, not per column (`:684-690`).
+### 4.3 Shared costs the later unit must not attribute to `inspect` alone
 
-It does **not** bound:
+`commonColumnsOf` runs for every command (`src/semantic/partial.ts:169`), so the composition and its
+`toLowerCase` work are paid by `tables` too. The `toLowerCase` sites are in the shared path
+(`src/semantic/common-columns.ts:244`, `:326`, `:338`, `:355`) and touch declared physical names for
+**map keys only**; the records keep their original case (`:342`). Opt-out and unusable declarations
+only make the `N_ent × C`-style products over-count.
 
-* the per-record constant `k ≈ 140` characters (`jsonEffectiveColumn` without names), i.e.
-  `2 × E × C × k` — invisible to a length-weighted figure;
-* the `declared` list (`:681-683`), `[Entity]` `Field` projections, `attributes`, `rawElements`;
-* `manager.commonFields` (`:1102`), one record per declaration, linear in the input;
-* diagnostics volume (`V_DANGLING_COLUMN`, `V_MISSING_REQUIRED_KEY`, collision findings);
-* collision `spans` (`src/semantic/common-columns.ts:108-114`, serialised at
-  `src/json/serialize.ts:684-690`): four numbers each, `g` per collision group, which a count-only
-  `E × C` bound also does not see;
-* **`tables` bytes**, which remain O(E) and are not `O(E × Σℓ)` (`src/view/tables.ts:405-411`);
-* escape expansion beyond the 2–6× factor (§2.3).
-
-### 4.4 Corrections to the previous draft's R2 prose
-
-* **Case folding touches declared physical names for keys only.** `toLowerCase` appears in the R2 path
-  at `src/semantic/common-columns.ts:244` (duplicate grouping), `:326` (the per-entity `seen` map,
-  declared and composed), `:338` (the colliding-key set) and `:355` (the per-record `collision` flag).
-  The records keep the original case (`pname: first.pname`, `:342`); only map keys are folded. Object
-  names and logical names are never folded, and the unrelated `toLowerCase` sites (`pages.ts`,
-  `domains.ts`, the declared-encoding token in `decode.ts`) are not part of R2.
-* **Opt-out and invalid declarations over-count only.** `composed` is built only when
-  `using.value === 1` (`:311-320`); `0` and an unrecognised value compose nothing (`:274-276`), while
-  `E × C` counts every `[Entity]` section, so the product over-counts by the opted-out and
-  indeterminate entities. `declarationsOf` skips entries that fail to decode or carry no span
-  (`:200-204`), while `measure()` counts every `CommonField=` line (`src/budget/measure.ts:473-477`),
-  so the `C` factor over-counts unusable declarations too. The only under-count direction is JSON
-  escaping of a literal control character in a decoded name, hence the 2–6× factor.
-* **The collision record shape** is `{sectionIndex, object, pname, spans}` with `object` the entity's
-  unescaped `PName` (`:298`) and `pname` the first occurrence's original case (`:342`), so each
-  collision costs `|object| + |pname| + 4 numbers per span`.
-
-### 4.5 Sequencing
-
-R2 lands after R1, as its own reviewed change with its own calibration and ceiling. It is not a
-precondition for the `tables` control in §3, and the `tables` control is not a licence to describe R2
-as done.
+**No universal `tables`-bytes claim.** `tables` writes one row per object with four counts and the
+shared diagnostics list (`src/view/tables.ts:67-112`, `:405-411`), so its volume depends on the object
+count, the diagnostic count and the per-record sizes together. No single figure bounds it, and R2 makes
+no claim about its size.
 
 ## 5. Calibration and the undecided ceiling
 
-### 5.1 No ceiling is decided, approved or implied
+### 5.1 No ceiling is decided or implied
 
-This proposal chooses **no** value. A number inside the theoretical band of §5.2 is **not** thereby
-approved, and shipping an unproven value needs a separate explicit authorisation that is **not granted
-here**. The sequence is fixed (§5.4): design acceptance first, then a separately authorised bounded
-calibration, then a management ceiling decision, then one implementation PR.
+This design **recommends** the metric and approves nothing. It chooses **no** ceiling. A number inside
+any band derived below is **not** thereby approved; rejecting the manager's shape is a **policy
+choice** for the ceiling decision, not a mathematical consequence; and shipping an unproven value
+needs a separate explicit authorisation that is **not granted here**.
 
-### 5.2 The band the value must satisfy, derived
+### 5.2 Five-small-shape arithmetic, and why the B band does not transfer to E
 
-Two shapes fix the band. Neither is a measurement of this counter; both are arithmetic on figures
-established above.
+`B = Σ(L + 1)`, `E = Σ(1 + literal commas)`, "cols" = retained `RelationColumn` count. All values are
+**derived** from §3.2 and the code's own rules.
 
-| Shape | Slots | Today |
-|---|---|---|
-| The committed anchor `overEnvelopeDocument()` (`tests/pipeline-admission.test.ts:1008-1017`): about 12,100 bytes, `Fields1` a 12,000-character name (raw 12,002), `Fields2` = `id` (raw 4), no `[Entity]` | (12,002 + 1) + (4 + 1) = **12,008** | `tables` admits it and **must keep** admitting it; `inspect`/`validate` refuse it on Σ`L²` = 144,048,020 |
-| The manager's F4-M1A shape (§2.1): the same construction at about 115 KB | about **114,004** (**derived** from about 57,000 diagnostics, not read from a run) | admitted by `tables` today; a real mitigation must refuse it |
+| Shape | Arithmetic | `B` | `E` | cols |
+|---|---|---|---|---|
+| (a) one 500-code-unit single-column name | `L = 502`, commas 0 | 503 | **1** | 1 |
+| (b) 2,000 relations, 2 columns per side, 8-code-unit names | per occurrence `L = 19`, 1 comma → `B` 20, `E` 2; ×2 occurrences ×2,000 | 80,000 | **8,000** | 8,000 |
+| (c) one dense dangling relation, 40 commas in one quoted element | 41 one-character names, `L = 83` | 84 | **41** | 41 |
+| (d) escaped commas: `"a\,b,c"` and `"a\\,b"` | `L` 8 / 7, literal commas 2 / 1 | 9 / 8 | **3 / 2** | 3 / 2 |
+| (e) duplicated then malformed: `"a,b"` twice, then `"a,b` | `B` 2 × 6 / `E` 2 × 2; `B` 5 / `E` 2 | 12 / 5 | **4 / 2** | 2 / 2 |
 
-So a `tables` ceiling `C` needs `12,008 < C < ≈114,004` — a band of factor ≈9.5. Three powers of two
-lie inside it: **16,384**, **32,768** and **65,536** (2¹³ = 8,192 is below the anchor, 2¹⁷ = 131,072
-above the measured shape). At two slots per column, they admit roughly 8,192 / 16,384 / 32,768 short
-columns and correspond to about 2.3 / 4.6 / 9.1 MB of `tables` diagnostics at the measured 279-byte
-average (**estimates**). Choosing among them is the management decision of §5.4, not a design choice.
-The §5.3 construction sits far above this band — 12,799,968 slots — so every candidate inside it
-refuses that document too; the band is set by the **smallest** shape a mitigation must refuse (the
-manager's) and the **largest** shape it must admit (the committed anchor).
+The shape that matters for calibration is the manager's F4-M1A document (§2.1): about 57,001 columns,
+so `E ≈ 57,001` and `B ≈ 114,006`, both **shape-dependent estimates** derived from its diagnostic count,
+not measurements of either figure.
 
-### 5.3 The verified construction, and why this is a `tables`-specific hole
+**Do not transfer the B band to E.** Under B the committed anchor requires a ceiling of at least 12,008
+and the largest power of two that still rejects the manager's shape is 2¹⁶ = 65,536 (5.46× anchor
+headroom). Under E the anchor scores **2**, so that constraint disappears, and the largest power of two
+that still rejects the manager's shape is **2¹⁵ = 32,768** — 16,384× the anchor's score. Whether to
+reject that shape at all is the policy choice above; a ceiling of 2¹⁵ is a recorded derivation, not an
+approval.
+
+**The prospective objective, without a tolerance.** Calibration's objective is to give the ceiling
+decision a recorded basis: for each candidate, which synthetic shapes it admits and refuses, what
+`observed` each reports, how much output the admitted side produces, and where the refusal lands. No
+tolerance, percentage, safety margin or "acceptable risk" figure is specified here.
+
+### 5.3 A derived, unexecuted illustration of the `tables` hole
 
 One **quoted** element per side with 22 commas inside it — 23 names — repeated in 133,333 `[Relation]`
-sections, with `Entity1`, `Entity2`, `Fields1`, `Fields2` only:
-
-```
-[Relation]
-Entity1="t"
-Entity2="t"
-Fields1="a,a,…,a"      23 names, 22 commas inside one quoted element
-Fields2="a,a,…,a"      same
-```
-
-All figures below are **derived** by hand from the code's own rules (§1.2); nothing was run.
+sections, with `Entity1`, `Entity2`, `Fields1`, `Fields2` only. **This has not been run.** Every figure
+is **derived** from the code's rules (§1.2, §3.2):
 
 | Quantity | Derivation | Value |
 |---|---|---|
-| `L` (raw relation value, code units) | 2 quotes + 23 names + 22 commas | **47** |
-| slots per occurrence | `L + 1` (`src/budget/measure.ts:349-361`) | 48 |
-| `relationColumnSlotsUpperBound` | 2 × 48 × 133,333 | **12,799,968** |
+| `L` (raw value, code units) | 2 quotes + 23 names + 22 commas | **47** |
+| `E` per section | 2 occurrences × (22 + 1) | **46** |
+| `E` total (`relationColumnCountUpperBound`) | 46 × 133,333 | **6,133,318** |
+| `B` total (`relationColumnSlotsUpperBound`) | 2 × 48 × 133,333 | **12,799,968** |
 | Σ`L²` | 2 × 47² = 4,418 per section × 133,333 | **589,065,194** |
-| input lines | 5 per section (1 header + 4 keys), no blanks | **666,665** |
-| `contentLineOccurrences` | 133,333 headers + 533,332 key lines | **666,665** |
-| `entityFieldOccurrences` | no `[Entity]` | 0 |
-| composed bound | 0 `[Entity]` × 0 `CommonField` | 0 |
-| input size | 147 bytes per section × 133,333 | **≈19.6 MB** (inside `maxBytes` 64 MiB) |
-| longest line | `Fields1=` (8) + raw value (47) code units | **55** (inside `maxLineLength` 4 MiB) |
-| **retained `RelationColumn` records** | 23 + 23 = 46 per section (no empty slots, no dropped trailing slot) × 133,333 | **6,133,318** |
-| `DanglingColumn` records | one per unmatched non-empty slot | **6,133,318** |
-| diagnostics | 6,133,318 `V_DANGLING_COLUMN` + 266,666 `V_DANGLING_ENTITY` (both endpoints dangling) + 133,333 `V_MISSING_REQUIRED_KEY` (one per section, for the absent `RelationType1`, `RelationType2`, `Position`) + 1 document-level `PageInfo` finding | **6,533,318** |
-| `tables --format json` volume | 6,533,318 × ≈279 B | **≈1.8 GB** (**estimate**, arithmetic on the average) |
+| `contentLineOccurrences` | 133,333 headers + 533,332 key lines | **666,665** — the same with or without the FORMAT header, because comments are excluded |
+| total lines, with `# A5:ER FORMAT:21` + `# A5:ER ENCODING:UTF8` | 666,665 + 2 comment lines | **666,667** |
+| total lines, without those headers | — | **666,665**, plus one `S_HEADER_UNKNOWN_FORMAT` warning (`src/syntax/scanner.ts:449-457`) |
+| `entityFieldOccurrences` / composed bound | no `[Entity]` | 0 / 0 |
+| input size | 147 bytes per section × 133,333 | **≈19.6 MB** (inside `maxBytes`) |
+| longest line | `Fields1=` (8) + raw value (47) code units | **55** (inside `maxLineLength`) |
+| **retained `RelationColumn` records** | 46 per section × 133,333 | **6,133,318** |
+| retained `DanglingColumn` records | one per unmatched non-empty slot | **6,133,318** |
+| diagnostics | 6,133,318 `V_DANGLING_COLUMN` + 266,666 `V_DANGLING_ENTITY` + 133,333 `V_MISSING_REQUIRED_KEY` (one per section, for the absent `RelationType1`, `RelationType2`, `Position`) + 1 `PageInfo` finding | **6,533,318** (6,533,319 without the FORMAT header) |
+| `tables --format json` volume | 6,533,318 × ≈279 B | **≈1.8 GB** (**estimate**) |
 
-**The gates today:**
+**What the gates would do:**
 
 | Gate | Figure | Ceiling | Result |
 |---|---|---|---|
-| envelope pre-scan | `contentLineOccurrences` 666,665 | 400,000 (`src/budget/admission.ts:132`) | **refused** |
-| envelope post-scan | Σ`L²` 589,065,194 | 134,217,728 (`:129`) | **refused** |
-| envelope pre-scan | `entityFieldOccurrences` 0 | 200,000 | pass |
+| envelope pre-scan | `contentLineOccurrences` 666,665 | 400,000 (`src/budget/admission.ts:132`) | **refused — the pipeline returns here** (`src/pipeline.ts:118`) |
+| envelope post-scan | Σ`L²` 589,065,194 | 134,217,728 (`:129`) | **never executed** for this document: the pre-scan refusal returns first. It is mathematically over the ceiling, but no Σ`L²` comparison runs |
 | `tables` pre-scan | `contentLineOccurrences` 666,665 | 1,000,000 (`:138`) | pass |
-| `tables` pre-scan | `entityFieldOccurrences` 0 | 500,000 | pass |
 | `tables` post-scan | composed bound 0 | 4,194,304 (`:136`) | pass |
-| `tables` post-scan | slots 12,799,968 | **no member** (`:93-98`) | **pass** |
+| `tables` post-scan | E 6,133,318 | **no member today** | **pass — the hole** |
 
-So the document is **not** "admitted by all": the envelope refuses it twice, on the content-line
-ceiling and on Σ`L²`. It is a **`tables`-specific hole** — an input about 19.6 MB, inside every read
-limit, that this command processes today. Closing it would refuse, at `(tables, 0.1.0)`, a document
-`tables` answered before, which §6.3 states as an outcome change rather than hiding.
-
-Three syntax facts keep the construction honest, and the design must not generalise past them: the
-commas must sit **inside one quoted element** (`columnsOf` splits `part.value`, and `partRaw` is the
-element text, so an unquoted list gives one-character raws and no `n × L` effect); `Fields1`/`Fields2`
-are not repeatable, so a second occurrence would both warn and replace the list (the construction uses
-one each); and omitting the three required keys costs **one warning per section**, not one per key
-(`src/semantic/required.ts:172-190`), which is why it stays under the `tables` content-line ceiling
-while adding 133,333 findings.
+So the illustration is **not** "admitted by all": the envelope refuses it at the pre-scan gate, and the
+Σ`L²` comparison is over mathematically but unexecuted. It is a `tables`-specific hole — about 19.6 MB
+inside every read limit that this command would process — and closing it is a new kind of refusal for
+that profile (§6.3). The distinction between the **retained** records (6,133,318), the **transient**
+arrays built while constructing them, the **JSON mappings** built while encoding 6,533,318 diagnostics,
+and the **estimated bytes** (≈1.8 GB) must be kept in any summary of this example.
 
 ### 5.4 Calibration sequence, and what a record must contain
 
-The order is fixed and each step is a separate authorisation:
+The order is fixed, and each step is a separate authorisation:
 
-1. **Design acceptance** — this document, reviewed and accepted as a design. No value, no code.
-2. **Separately authorised bounded calibration** — using the existing measurement API and the
-   **baseline** CLI, without depending on the new member: `measure()` already publishes
-   `relationColumnSlotsUpperBound`, so calibration needs no implementation. **Bounded** is part of the
-   authorisation and means: no run writes the §5.3 construction's document (its ≈1.8 GB output stays
-   an **estimate**); the construction is exercised at the scan/measurement level only, and JSON-volume
-   and RSS evidence comes from fixtures whose output stays inside a recorded cap; and no
-   out-of-memory reproduction is authorised. A record must:
-   * use **synthetic fixtures only**, through the real command (`runTablesCommand`) on the `tables`
-     profile for the output measurements, and through the measurement API for the construction's
-     slot figure;
-   * report per run: the slot figure, the diagnostics count by code, the emitted JSON length, and peak
-     RSS;
+1. **Design acceptance** — this document. It accepts the metric, the comparison order and the
+   sequence; it does not accept a ceiling.
+2. **Separately authorised bounded calibration** — run against the **baseline** CLI and the existing
+   measurement API. It **cannot prove the new comparison**: E does not exist in the product yet, so it
+   is computed out-of-tree from the same synthetic documents, and the baseline has no such gate. The
+   record must:
+   * use **synthetic fixtures only**, so no real diagram is ever involved;
+   * run `tables` on the synthetic documents, recording per run: the **estimated E**, the diagnostics
+     count by code, the emitted JSON length, and peak RSS;
    * record platform, Node version, heap limit and maximum string length, as `human-cli.md` §7.1 does
      (`docs/proposals/human-cli.md:1432-1436`);
-   * cover the **anchor**, the **verified construction** (slot figure only) and the **candidate ceiling
-     ± 1** — at, one below and one above — so both edges of the rule (`observed > ceiling` refuses,
-     `observed == ceiling` admits, `src/budget/admission.ts:274-281`) are demonstrated;
-   * state the band and the false-positive class the count carries (§3.6, §5.3).
-3. **Management ceiling decision** — one value, recorded with the record above and with what it does
-   and does not guarantee. Shipping a value that the record does not establish needs a separate,
-   explicit authorisation; none is granted here.
-4. **One R1 implementation PR** (§8) — the member, the comparison, the tests, the documentation.
+   * cover the committed anchor, the manager's shape and the §5.3 illustration **without executing the
+     illustration's document** — its numbers are arithmetic, and the calibration must not require
+     running a ≈1.8 GB output to establish them;
+   * state the objective of §5.2 and the false-positive classes of §3.1, and name the policy choice
+     about rejecting the manager's shape.
+3. **Management metric-and-ceiling choice** — confirm E and pick a value, recorded with the calibration
+   record, with what it does and does not guarantee. Shipping a value the record does not establish
+   needs a separate explicit authorisation; none is granted here.
+4. **One implementation PR** (§8), then **review**, then **authorised integration** — three separate
+   steps, none implied by the previous one.
 
 ### 5.5 Who may change the value afterwards
 
 `DEFAULT_RESOURCE_BUDGETS` is frozen and pinned (`src/budget/admission.ts:126-160`,
 `tests/budget-admission.test.ts:126-233`), and the §10.5 tables list every figure with its profiles. A
 value change must move the default, the pin and the documentation in the same change; no future edit
-may lower it below the anchor's 12,008; and a value that would refuse a committed fixture must never
-ship (§6.6).
+may lower it below the committed anchor's score; and a value that would refuse a committed fixture
+must never ship (§6.5).
 
 ## 6. Contract and compatibility analysis
 
@@ -515,9 +530,9 @@ outcome and a previously processed input becoming `failed` are explicitly not ve
 meaning, none of which changes here.
 
 **The one consumer obligation.** R1 adds exactly **one** new value,
-`relationColumnSlotsUpperBound`, to `E_LIMIT_BUDGET.details.counter`. A consumer that types `counter`
+`relationColumnCountUpperBound`, to `E_LIMIT_BUDGET.details.counter`. A consumer that types `counter`
 as a **strict enum** of the previous values must add it to compile against a refusal; one that types it
-as a string or decides from `severity` needs no change. This must be stated in the release note.
+as a string or decides from `severity` needs no change. The release note must say so.
 
 ### 6.2 `details` keeps three keys, and the refusal shape is unchanged
 
@@ -529,59 +544,51 @@ type-legal and unnecessary, and §9 asks management to keep it that way.
 
 A refusal is `fatal`; `integrate()` gives status `failed` with `source`/`schema`/`completeness` `null`
 and `unsupported` `[]`, and `exitPolicyOf` maps any fatal to `{inspect: 1, validate: 1}`
-(`src/validate/index.ts:311-315`). `tables` uses the same arm
-(`src/tables-command.ts:96-127`), emits `JsonTablesEnvelopeFailed` with status `failed`, `source` and
-`result` `null` (`src/json/envelope.ts:965-982`, built at `src/view/tables.ts:353-370`) and exits
-`1`. Phase A's `70` stays reserved for internal errors and `74` for a write failure. A refusal is
-whole-file and reports `truncated: false`, because `limits.truncated` derives only from
-`E_TRUNCATED_INPUT` (`src/json/serialize.ts:1426-1428`).
+(`src/validate/index.ts:311-315`). `tables` uses the same arm (`src/tables-command.ts:96-127`), emits
+`JsonTablesEnvelopeFailed` with status `failed`, `source` and `result` `null`
+(`src/json/envelope.ts:965-982`, built at `src/view/tables.ts:353-370`) and exits `1`. Phase A's `70`
+stays reserved for internal errors and `74` for a write failure. A refusal is whole-file and reports
+`truncated: false`, because `limits.truncated` derives only from `E_TRUNCATED_INPUT`
+(`src/json/serialize.ts:1426-1428`).
 
 ### 6.3 A new kind of refusal for `tables`
 
 Some inputs that are processed today would become `failed` with exit `1`. That is the gate's purpose
 and has precedent at the same `(command, contractVersion)` (`docs/architecture.md:1238-1253`), but for
-`tables` this is a **new kind** of refusal, not a tighter existing one: that profile has no
-relation-shaped ceiling today, so the §5.3 construction is admitted and its slot-driven diagnostics
-are written out. The release note must say so in those terms.
+`tables` this is a **new kind** of refusal: that profile has no relation-shaped ceiling today, so the
+§5.3 illustration would be admitted and its column-driven diagnostics written out. The release note
+must say so in those terms, and the `tables` consumer is the one to watch.
 
-### 6.4 One new member, no new measurement, the envelope untouched
+### 6.4 One member, one new leaf, everything else fixed
 
 | Item | Today | Under this proposal |
 |---|---|---|
 | `relationValueLengthSquares` (envelope) | 134,217,728, computed and compared | **unchanged** |
-| `relationColumnCodeUnits` (envelope composite) | absent | **not added** — dropped from the plan (§3.4) |
-| `composedColumnsUpperBound` (envelope / tables) | 524,288 / 4,194,304 | unchanged, both still compared |
+| envelope profile member count | 4 | **unchanged** — no new member |
+| `composedColumnsUpperBound` | 524,288 (envelope) / 4,194,304 (`tables`) | unchanged, both compared, **composed still first** |
 | `entityFieldOccurrences`, `contentLineOccurrences` | 200,000/500,000, 400,000/1,000,000 | unchanged |
-| `bounds.relationColumnSlotsUpperBound` | published, one of the 28 leaves, compared by nobody | **unchanged figure**; now compared on `tables` only |
-| `TablesResourceBudget` | 3 members | **+1 member**, value decided later (§5) |
-| `EnvelopeResourceBudget` | 4 members | **unchanged** — no new member |
-| numeric leaves of `ResourceMeasure` | 28, pinned (`tests/budget-measure.test.ts:780-789`) | **28, unchanged** — reusing the published figure adds none |
+| `bounds.relationColumnSlotsUpperBound` (B) | published, one of the 28 leaves, no consumer | **unchanged and still published-only**; no member compares it |
+| new figure E | absent | **new counter** `relationColumnCountUpperBound`, one new numeric leaf |
+| numeric leaves of `ResourceMeasure` | 28, pinned (`tests/budget-measure.test.ts:784`) | **29**, pin edited deliberately in the implementation change |
+| `TablesResourceBudget` | 3 members | **4** — one new member comparing E |
 
 Because `withResourceBudget()` rebuilds each profile member by member with `checkedCeiling`
-(`src/budget/admission.ts:206-252`), a missing member is a compile error rather than a silent
-default, and no ceiling can ride along from the other profile. The new member must be added to that
-construction and to the pre-comparison check; `EnvelopeResourceBudget` must not gain it.
+(`src/budget/admission.ts:206-252`), a missing member is a compile error rather than a silent default,
+and no ceiling can ride along from the other profile. The new member must be added to that construction
+and to the pre-comparison check that already proves every observed figure (`:290-295`, `:305-316`); the
+envelope profile must not gain it.
 
-**Precedence, stated so it cannot be inferred from `??` chaining** (`src/budget/admission.ts:305-329`):
-
-| # | Profile | Gate | Figure | Compared |
-|---|---|---|---|---|
-| 1 | both | pre-scan | `entityFieldOccurrences` | before `scanSource()` — unchanged |
-| 2 | both | pre-scan | `contentLineOccurrences` | before `scanSource()` — unchanged |
-| 3 | envelope | post-scan | `relationValueLengthSquares` | unchanged |
-| 4 | envelope | post-scan | `composedColumnsUpperBound` | unchanged |
-| 5 | `tables` | post-scan | `composedColumnsUpperBound` | **unchanged and first**, so today's reason survives |
-| 6 | `tables` | post-scan | `relationColumnSlotsUpperBound` | **new**, after the composed bound |
-
-### 6.5 Goldens and fixtures
+### 6.5 Goldens, fixtures, and the post-implementation fence
 
 The committed corpus measures Σ`L²` = 277 and composed = 2 at its maximum
-(`tests/pipeline-admission.test.ts:888-905`). A shipped `tables` value cannot be below the anchor's
-12,008 slots without refusing a document the suite requires to be admitted
-(`tests/pipeline-admission.test.ts:1008-1017`), and it must also admit all 39 fixtures — asserted,
-not assumed. No committed envelope changes and no golden may be regenerated; a ceiling that would
-refuse a fixture is a defect, not a calibration choice. Fixtures and goldens are never edited to
-accommodate a ceiling.
+(`tests/pipeline-admission.test.ts:888-905`). Any shipped E ceiling must admit the committed anchor
+(`tests/pipeline-admission.test.ts:1008-1017`) and all 39 fixtures — asserted, not assumed — so no
+committed envelope changes and no golden may be regenerated. A ceiling that would refuse a fixture is a
+defect, not a calibration choice. After implementation, the **156-of-156** fence (39 synthetic fixtures
+× 4 command forms — `inspect`, `validate`, `tables` text, `tables --format json` — byte-identical on
+stdout, stderr and exit code against the accepted baseline build) is a post-implementation
+requirement; the recorded 156/156 runs against `1c6a4320` and `251ec00` were **pre-merge records, not
+CI jobs**, and are not re-run here (`docs/test-strategy.md:485-492`).
 
 ### 6.6 The Agent Skill
 
@@ -592,30 +599,35 @@ envelope. No change is required. A refusal is already reported as a failed docum
 
 ### 7.1 Safe tests the implementation PR must contain
 
-None of these needs a large document, a shipped ceiling, or a load run.
+None of these needs a large document, a shipped ceiling, a load run, or a production seam.
 
-| Layer | File | What it must show |
+| Test | File | What it must show |
 |---|---|---|
-| Pure admission | `tests/budget-admission.test.ts` | hand-built small `ResourceMeasure` objects: exactly at the injected `tables` ceiling **admits**, one past **refuses** (`src/budget/admission.ts:274-281`), an invalid observation throws instead of refusing, the composed bound is reported when **both** are exceeded (precedence), `tables` reads the slot figure while the envelope profile has no such member (profile separation), and the frozen defaults pin the member once a value exists |
-| Pipeline wiring (small) | `tests/pipeline-admission.test.ts` | a small injected `tables` budget with slots `S`: a document at `S − 1` slots is refused, one at `S` and one at `S + 1` are admitted; the refusal is one fatal `E_LIMIT_BUDGET` naming `relationColumnSlotsUpperBound` with `details` of three keys, `source`/`result` `null`, exit `1`; a delegating `scanSource` wrapper proves the refusal happens before `classify()` |
-| Construction as mathematics only | this document and a pure-admission case | the §5.3 numbers are asserted as arithmetic, **not** by running a 19.6 MB document or any admitted large-slot pipeline case |
+| Measurement | `tests/budget-measure.test.ts` | E equals a hand-computed value per hand-built scan (all §3.2 cases); the slot bound and Σ`L²` are unchanged; checked arithmetic rejects an out-of-range accumulation; the leaf pin is edited from 28 to 29 with its reason |
+| **Agreement** | `tests/budget-measure.test.ts` | on **every** one of the 39 fixtures, E is at least the actual `columnsOf` column count — the analogue of the existing slots-bound test (`:790-800`). Without this, the proof in §3.2 is only a comment |
+| Pure admission, varied **observed** | `tests/budget-admission.test.ts` | with a **fixed injected ceiling `S`**: observed `S − 1` admits, `S` admits, `S + 1` refuses — the varied parameter is the observation |
+| Pure admission, varied **ceiling** | `tests/budget-admission.test.ts` | with a **fixed observed `S`**: an injected ceiling `S − 1` refuses, `S` admits, `S + 1` admits — the varied parameter is the ceiling |
+| Order and pre-check | `tests/budget-admission.test.ts` | composed is reported when both are exceeded (precedence); an invalid observation throws instead of refusing; the envelope profile has no E member (profile separation); the defaults pin the member once a value exists |
+| **Skip proof** | `tests/pipeline-admission.test.ts` | with an injected `tables` budget that refuses, a Vitest `vi.mock` of `../src/schema/index.js` whose `classify` is a **delegating spy** (it calls through to the real implementation) records **zero** invocations; on the admitted twin of the same document it records **one**. A `scanSource` wrapper is **not** proof of this and must not be offered as such; no production seam is authorised |
+| Wiring (small) | `tests/pipeline-admission.test.ts` | the small refused document yields one fatal `E_LIMIT_BUDGET` naming `relationColumnCountUpperBound`, `details` of three keys, `source`/`result` `null`, exit `1`; the admitted twin yields the unchanged document |
 | Immutability | `tests/immutability.test.ts`, `tests/json-goldens.test.ts`, `tests/cli-tables-cases.test.ts` | every committed envelope is byte-identical; staged copies only; no fixture edited |
-| Diagnostics and exit | `tests/pipeline-admission.test.ts` | the fatal line, `details` of three keys and exit `1` for `tables` text and JSON; the pre-scan refusal still precedes the post-scan one; `70`/`74` unaffected |
+| Diagnostics and exit | `tests/pipeline-admission.test.ts` | the fatal line, exit `1` and the failed JSON document for `tables` text and JSON; the pre-scan refusal still precedes the post-scan one; `70`/`74` unaffected |
+
+The §5.3 illustration is **not** a test input: no pipeline or CLI run may use a document of that size,
+and its numbers are asserted as arithmetic (a pure-admission case can use the same `E` on a small
+hand-built measure).
 
 ### 7.2 Post-approval behavioural tests (implementation plan, after the ceiling is decided)
 
 These need a decided value and belong to the implementation PR, not to the design or the calibration:
 
-* **ceiling ± 1 through the real command**, on synthetic fixtures staged as disposable copies;
-* **the default-profile CLI case that stays safe if the gate fails open**: one long relation value
-  that exceeds the slot ceiling yet yields exactly **one** real column — the short-circuit case of the
-  bound's own conservatism — so even a broken comparison that admits it runs a resource-bounded
-  document. This is the one admitted-side CLI run at a shipped ceiling, and it is safe by construction;
-* the **156-of-156** fixture fence: 39 synthetic fixtures × 4 command forms (`inspect`, `validate`,
-  `tables` text, `tables --format json`), byte-identical on stdout, stderr and exit code against the
-  accepted baseline build. The recorded comparison is 156 of 156 against base `1c6a4320` and again
-  against `251ec00` (`docs/test-strategy.md:485-492`); those were **pre-merge runs, not CI jobs**, and
-  this plan requires the comparison again after implementation rather than re-running it now.
+* **threshold ± 1 through the real command** on synthetic fixtures staged as disposable copies: for a
+  fixed ceiling, `S − 1` and `S` admit and `S + 1` refuses;
+* **default-profile CLI cases that yield exactly one real column** — a long single name (where E = 1
+  and B is large) and a two-column anchor-like shape — so that even a broken comparison that admits the
+  document runs a resource-bounded case. These are the only admitted-side CLI runs at a shipped
+  ceiling, and they are safe by construction;
+* the **156-of-156** fence of §6.5, after implementation.
 
 ### 7.3 Gates and what the plan does not verify
 
@@ -624,56 +636,59 @@ including failures. CI is `.github/workflows/ci.yml` as it exists: two jobs — 
 (ubuntu-latest/windows-latest × Node 24/26, running those five commands) and `pack-smoke` (the same
 matrix, packing the tarball and smoke-testing the CLI from it). CI must be checked against the exact
 pushed commit SHA for every job of that matrix, and the CodeQL check that GitHub-side default setup
-runs on pull requests must be inspected and reported — it is **not** part of `ci.yml` and no workflow
+runs on pull requests must be inspected and reported — it is **not** part of `ci.yml`, and no workflow
 file for it exists in this repository.
 
-What the plan does **not** verify: any threshold (that is §5.4's separate calibration); any heap, RSS
-or out-of-memory behaviour (nothing here measures physical memory); any claim that a document below
-every ceiling is cheap; and any shipped `tables` value, because none is decided.
+What the plan does **not** verify: any ceiling (that is §5.4's separate calibration); the physical heap
+cost of the `n × L` content (unmeasured, a **hypothesis**); any claim that a document below every
+ceiling is cheap; and any behaviour of the new comparison before it is implemented.
 
 ## 8. Implementation sequence
 
-Each step is separate and none begins without the previous authorisation.
+Each step is separate, and none begins without the previous authorisation.
 
-1. **Design acceptance** — this document. The reviewer's PASS accepts the mechanism and the sequence,
-   not a ceiling.
-2. **Calibration** (§5.4, separately authorised) — bounded, synthetic, baseline CLI, existing
-   measurement API; produces the record.
-3. **Ceiling decision** — management picks a value from the record and records its false-positive
-   class and non-guarantees.
-4. **One R1 PR** (`src/budget/admission.ts`, `docs/architecture.md` §10.5, `docs/test-strategy.md`
-   gate table):
-   * add `relationColumnSlotsUpperBound` to `TablesResourceBudget`, to `withResourceBudget()`'s
-     member-by-member construction and to its pre-comparison check;
-   * compare it in the `tables` branch **after** the composed bound (§6.4 table), with
-     `observed > ceiling` refusing and `observed == ceiling` admitting;
+1. **Design acceptance** — this document. It accepts the metric (E), the order (composed first), the
+   leaf-count change (28 → 29) and the sequence. It does not accept a ceiling.
+2. **Calibration** (§5.4, separately authorised) — bounded, synthetic, baseline CLI, out-of-tree E; it
+   cannot prove the comparison.
+3. **Metric-and-ceiling choice** — management confirms E and picks a value from the record, with its
+   policy choice about rejecting the manager's shape and with its non-guarantees.
+4. **One implementation PR** — the only code change this design authorises, and only after step 3:
+   * add the E accumulation to `src/budget/measure.ts:479-493` with `checkedAdded`, an allocation-free
+     loop and the `O(S + E + ΣL)` doc correction;
+   * add `relationColumnCountUpperBound` to `ResourceCounters` and to `BudgetCounter`; edit the 28-leaf
+     pin to 29 deliberately;
+   * add the member to `TablesResourceBudget`, to `withResourceBudget()`'s member-by-member
+     construction and to its pre-comparison check; compare it **after** the composed bound;
    * add the decided value to `DEFAULT_RESOURCE_BUDGETS.tables` and to the defaults pin;
-   * add the tests of §7.1 and §7.2, and document the non-coverage of §3.6;
-   * add **no** counter to `ResourceMeasure`, leave the 28-leaf pin at 28, and leave
-     `EnvelopeResourceBudget` without a new member.
-5. **Post-implementation verification** — the 156-of-156 fence, the §7.2 behavioural cases, the full
-   gate set and CI on the pushed commit.
+   * add the tests of §7.1 and §7.2, and document the non-coverage of §3.6 (including the
+     `columnsOf` maintenance dependency of §3.3);
+   * leave B published and unchanged, leave the envelope profile without a new member, and add no
+     fourth `details` key.
+5. **Review** — an independent reviewer records PASS. Implementation completion is not acceptance
+   (`AGENTS.md`).
+6. **Authorised integration** — merging is its own authorisation, not implied by 1–5.
 
-Constraints: no step may lower an existing ceiling, add a new measurement leaf, add a fourth `details`
-key, change the exit code, regenerate a golden, or ship a value without the authorisation of step 3.
-R2 (§4) is a later unit and shares no commit with step 4.
+Constraints: no step may lower an existing ceiling, change the exit code, regenerate a golden, ship a
+value without step 3's authorisation, or add the member without the E counter that feeds it. R2 (§4) is
+a future unit and shares no commit with step 4.
 
 ## 9. Open decisions for management
 
 | # | Question | Why it is not decided here |
 |---|---|---|
-| Q1 | Approve the R1 scope as **one `tables` member** (the published slot bound), with the envelope profile and Σ`L²` untouched and the composite dropped? | §3.2–§3.4 state the reasoning; the correction removes an envelope addition rather than adding one. |
-| Q2 | Authorise the bounded calibration of §5.4, with that protocol and no dependency on the new member? | Calibration is a separate authorisation and a separate task; this document only specifies it. |
-| Q3 | Which ceiling ships: 16,384, 32,768, 65,536, or something else inside the derived band? | §5.1–§5.2: a value inside a theoretical band is not thereby approved; the calibration record must justify it. |
-| Q4 | Confirm the comparison order **composed bound first, then slots**, preserving today's refusal reason? | §6.4. The reverse order would change which counter a document over both reports. |
-| Q5 | Is the envelope slot control (option E) with its `k × n` analysis an issue-#27 follow-up rather than part of R1? | §3.4. It needs its own analysis and ceiling; folding it in would repeat the coupling this correction removes. |
-| Q6 | Accept that a `tables` document processed today becomes `failed` at `0.1.0`? | §6.3. The precedent exists, but this is a new kind of refusal for that profile. |
-| Q7 | Do `details` stay at three keys and `CONTRACT_VERSION` at `0.1.0`? | §6.1–§6.2. Reuse keeps the shape; a fourth key is type-legal but unnecessary. |
-| Q8 | Is R2 acceptable as a later, independently reviewed unit with the corrections in §4 recorded now? | §4. The facts are corrected here so the later unit does not inherit the previous draft's claims. |
-| Q9 | Does repairing the `docs/test-strategy.md` CI job table (it lists six jobs `ci.yml` does not define) belong to this change? | Unrelated drift; §7.3 cites `ci.yml` and the inspected CodeQL check rather than the table. |
-| Q10 | Who reviews, and what counts as acceptance? | `AGENTS.md`: implementation completion is not acceptance; the issue stays open until a reviewer records an explicit PASS. |
+| Q1 | Approve **E** (Σ(1 + literal commas)) as the `tables` metric, with B left published-only? | §3.1–§3.4 state the comparison; E is the only figure whose unit is a column count. |
+| Q2 | Accept the one new measurement leaf, and the 28 → 29 pin change, as the price of E? | §3.5, §6.4. Reusing B would pay zero and inherit B's length-sensitive unit. |
+| Q3 | Authorise the bounded calibration of §5.4, knowing it cannot prove the new comparison? | §5.4. It is a separate authorisation and a separate task. |
+| Q4 | Which ceiling ships, and is rejecting the manager's shape a policy choice we take? | §5.1–§5.2. Only derivations are recorded — 2¹⁵ is the largest power of two rejecting that shape under E, with 16,384× anchor headroom — and none is approved. |
+| Q5 | Confirm the comparison order **composed bound first, then E**, preserving today's refusal reason? | §3.4, §6.4. The reverse order would change which counter a document over both reports. |
+| Q6 | Accept that some `tables` documents processed today become `failed` at `0.1.0`? | §6.3. It is a new kind of refusal for that profile. |
+| Q7 | Keep `details` at three keys and `CONTRACT_VERSION` at `0.1.0`? | §6.1–§6.2. Reuse keeps the shape. |
+| Q8 | Is R2 acceptable as a future independent unit with the restricted proxy and the named test gap? | §4. The declared-only collision case has no committed test and must be closed there. |
+| Q9 | Does the `docs/test-strategy.md` CI job-table drift (six jobs listed, two in `ci.yml`) belong to this change? | Unrelated drift; §7.3 cites `ci.yml` and the inspected CodeQL check instead. |
+| Q10 | Who reviews, and what counts as acceptance and integration? | §8. Acceptance, integration and publication are separate authorisations. |
 
-**Where the ten reconciling points live, for review:** problem and evidence §1, §2; the R1 `tables`
-control §3.2–§3.3, §6.4; the envelope follow-up §3.4, Q5; R2 as a future unit §4, Q8;
-non-coverage §1.5, §3.5, §3.6, §7.3; calibration first §5.4, §8; no shipping threshold §5.1, Q3;
-safe tests §7.1–§7.2; compatibility and precedence §6, Q6–Q7; open decisions Q1–Q10.
+**Review map:** problem and evidence §1, §2; the metric decision §3; the envelope stay-out §3.7; R2 as a
+future unit §4; calibration first §5.4, §8; no shipping threshold §5.1, Q4; the derived illustration
+§5.3; safe tests and the skip proof §7.1; invariants, contract and precedence §1.5, §6; open decisions
+§9.
