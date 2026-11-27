@@ -144,6 +144,20 @@ const MIXED_DOCUMENT = [
   'Query="select 2"',
   'Position="Main",50,50',
 ];
+/**
+ * One entity whose opt-in is undecidable and whose two declared columns collide
+ * case-insensitively (`id` vs `ID`): the regression case for partial collision flags.
+ */
+const PARTIAL_COLLISION_DOCUMENT = [
+  ...HEADER,
+  '',
+  '[Entity]',
+  'PName="twins"',
+  'UsingCommonColumns=2',
+  'Field="ID","id","Serial","NOT NULL",0,"","",$FFFFFFFF,""',
+  'Field="ID-upper","ID","Serial","NOT NULL",1,"","",$FFFFFFFF,""',
+  'Position="Main",10,10',
+];
 
 /** A deterministic stream for the command-level cases: every write succeeds. */
 class FakeStream {
@@ -256,6 +270,34 @@ describe('a5er columns — text', () => {
       );
       expect(result.stdout).toContain(
         '# note: UsingCommonColumns is neither 1 nor 0, so common columns are not composed',
+      );
+      // The complete-total line would claim a total the file does not support.
+      expect(result.stdout).not.toContain('# columns: ');
+    });
+  });
+  it('keeps declared-declared collision flags and details visible while partial', async () => {
+    await withDocument(PARTIAL_COLLISION_DOCUMENT, async (path) => {
+      const document = JSON.parse(
+        (await runCli(['columns', '--format', 'json', path, 'twins'])).stdout,
+      ) as JsonColumnsEnvelope;
+      const payload = document.result;
+      if (payload === null || payload.kind !== 'entity') throw new Error('expected an entity');
+      expect(payload.columns.status).toBe('partial');
+      expect(payload.columns.columns.map((column) => [column.pname, column.collision])).toEqual([
+        ['id', true],
+        ['ID', true],
+      ]);
+      expect(payload.columns.collisions).toHaveLength(1);
+      expect(payload.columns.collisions[0]?.pname).toBe('id');
+      expect(payload.columns.collisions[0]?.spans.map((span) => span.keyLine)).toEqual([9, 10]);
+
+      const result = await runCli(['columns', path, 'twins']);
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('1  id     ID        D    !');
+      expect(result.stdout).toContain('2  ID     ID-upper  D    !');
+      expect(result.stdout).toContain('#   id at lines 9, 10');
+      expect(result.stdout).toContain(
+        '# columns shown: 2 declared; common-derived columns are not fully known',
       );
       // The complete-total line would claim a total the file does not support.
       expect(result.stdout).not.toContain('# columns: ');

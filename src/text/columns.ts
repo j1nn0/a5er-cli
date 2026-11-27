@@ -8,8 +8,8 @@
  *
  * **The table.** `N` is 1-based, `PNAME` and `LNAME` are rendered through `renderNamePieces` (quoted
  * and escaped where the escape set requires it, never truncated), `SRC` is `D` for a declared column
- * and `C` for a composed one, and `COLL` is `!` when the physical name also arrives from the other
- * source, `-` otherwise. Names wider than the alignment cap are written in full and the row simply
+ * and `C` for a composed one, and `COLL` is `!` when the name collides, `-` otherwise. Names wider than
+ * the alignment cap are written in full and the row simply
  * stops being aligned; padding never grows with a name, which is what keeps one 200,001-character
  * name from costing hundreds of millions of cells.
  *
@@ -91,14 +91,14 @@ function padRight(text: string, width: number): string {
 }
 
 /**
- * The rows of a result: the effective list of a complete entity, the declared list of a partial one.
+ * The rows of a result: the effective list, which carries the calculated collision flags in both complete and partial states.
  *
  * A view contributes none — its record has no list — and the notes below say why.
  */
 function rowsOf(result: JsonColumnsResult | null): ColumnRow[] {
   if (result === null || result.kind === 'view') return [];
   const columns: JsonEntityColumns = result.columns;
-  const list = columns.status === 'complete' ? columns.columns : columns.declared;
+  const list = columns.columns;
   return list.map((column, index) => ({
     n: index + 1,
     pname: column.pname,
@@ -235,7 +235,7 @@ function* textPieces(envelope: JsonColumnsEnvelope): Generator<string, void, und
       yield `${NOTE_PREFIX} note: ${PARTIAL_REASON[columns.reason]}\n`;
     }
     yield `${NOTE_PREFIX} using common columns: ${usingCommonColumnsText(columns)}\n`;
-    if (columns.status === 'complete' && columns.collisions.length > 0) {
+    if (columns.collisions.length > 0) {
       yield `${NOTE_PREFIX} collisions: ${String(columns.collisions.length)}\n`;
       for (const collision of columns.collisions) yield* collisionPieces(collision);
     }
