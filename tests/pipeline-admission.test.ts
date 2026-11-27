@@ -87,6 +87,16 @@ vi.mock('../src/syntax/index.js', async (importOriginal) => {
   return { ...actual, scanSource: vi.fn(actual.scanSource) };
 });
 
+/**
+ * `classify` is **wrapped, not replaced**, for the same reason: the spy delegates to the real
+ * implementation, so its call count is evidence about the stage order — zero on a post-scan refusal,
+ * one on the same document with the ceiling raised — and never a stub that changes the result.
+ */
+vi.mock('../src/schema/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/schema/index.js')>();
+  return { ...actual, classify: vi.fn(actual.classify) };
+});
+
 /** §11's message for the code, written out from the taxonomy, never read from the module. */
 const BUDGET_MESSAGE = 'The input would need more work than the processing budget allows';
 
@@ -136,6 +146,7 @@ const ENVELOPE_BELOW_SEM07: ResourceBudget = {
 const TABLES_BELOW_SEM07: ResourceBudget = {
   profile: 'tables',
   composedColumnsUpperBound: SEM07_COMPOSED - 1,
+  relationColumnCountUpperBound: PERMISSIVE_SHAPE,
   entityFieldOccurrences: PERMISSIVE_SHAPE,
   contentLineOccurrences: PERMISSIVE_SHAPE,
 };
@@ -144,6 +155,7 @@ const TABLES_BELOW_SEM07: ResourceBudget = {
 const TABLES_OVER_FMT01: ResourceBudget = {
   profile: 'tables',
   composedColumnsUpperBound: 1,
+  relationColumnCountUpperBound: PERMISSIVE_SHAPE,
   entityFieldOccurrences: PERMISSIVE_SHAPE,
   contentLineOccurrences: PERMISSIVE_SHAPE,
 };
@@ -337,9 +349,10 @@ function capture(): { stream: OutputStream; chunks: string[] } {
 function measureWith(
   relationValueLengthSquares: number,
   composedUpperBound: number,
+  relationColumnCountUpperBound = 0,
 ): ResourceMeasure {
   return {
-    counters: { relationValueLengthSquares },
+    counters: { relationValueLengthSquares, relationColumnCountUpperBound },
     bounds: { composedColumnsUpperBound: { upperBound: composedUpperBound } },
     accounting: {},
   } as unknown as ResourceMeasure;
@@ -655,10 +668,22 @@ describe('pipeline admission — internal errors stay internal', () => {
       createPipeline({
         profile: 'tables',
         composedColumnsUpperBound: Number.NaN,
+        relationColumnCountUpperBound: 1,
         entityFieldOccurrences: 1,
         contentLineOccurrences: 1,
       }),
     ).toThrow('admission: the composedColumnsUpperBound ceiling is not a positive safe integer');
+    expect(() =>
+      createPipeline({
+        profile: 'tables',
+        composedColumnsUpperBound: 1,
+        relationColumnCountUpperBound: 0,
+        entityFieldOccurrences: 1,
+        contentLineOccurrences: 1,
+      }),
+    ).toThrow(
+      'admission: the relationColumnCountUpperBound ceiling is not a positive safe integer',
+    );
   });
 
   it('keeps tables Phase A at exit 70 for both budget-module error classes', async () => {
@@ -801,8 +826,104 @@ describe('pipeline admission — order', () => {
   });
 });
 
-describe('pipeline admission — the seven default ceilings', () => {
-  it('pins all seven, at and one past each, with pure admit() and admitShape() calls', () => {
+// ── the tables relation-column ceiling (F4-D1 R1) ─────────────────────────
+
+/**
+ * The small document the wiring cases use: one entity and one self-relation.
+ *
+ * `Fields1="a,b"` declares two columns and `Fields2="c"` one, so the figure under test is `3` —
+ * hand arithmetic on the raw values, never a number read back from `measure()`.
+ */
+const RELATION_COLUMNS = 2 + 1;
+
+function columnsDocument(): string {
+  return [
+    '# A5:ER FORMAT:21',
+    '[Manager]',
+    'PageInfo="Main",3,"A4Landscape","$FFFFFF"',
+    '[Entity]',
+    'PName="t"',
+    'Field="列","id","Serial","NOT NULL",0,"","",$FFFFFFFF,""',
+    'Position="Main",0,0',
+    '[Relation]',
+    'Entity1="t"',
+    'Entity2="t"',
+    'Fields1="a,b"',
+    'Fields2="c"',
+    'RelationType1=1',
+    'RelationType2=3',
+    'Position="Main",0,100,100,100,R,R,""',
+    '',
+  ].join('\n');
+}
+
+/** One column below the document's three; the composed bound (0) fits its ceiling. */
+const TABLES_BELOW_COLUMNS: ResourceBudget = {
+  profile: 'tables',
+  composedColumnsUpperBound: 1,
+  relationColumnCountUpperBound: RELATION_COLUMNS - 1,
+  entityFieldOccurrences: PERMISSIVE_SHAPE,
+  contentLineOccurrences: PERMISSIVE_SHAPE,
+};
+
+/** Exactly at the document's three columns: the boundary that must admit. */
+const TABLES_AT_COLUMNS: ResourceBudget = {
+  ...TABLES_BELOW_COLUMNS,
+  relationColumnCountUpperBound: RELATION_COLUMNS,
+};
+
+describe('pipeline admission — the tables relation-column ceiling', () => {
+  it('refuses on the relation-column count and never classifies the document', () => {
+    withTempFile('columns.a5er', Buffer.from(columnsDocument(), 'utf8'), (path) => {
+      const classified = vi.mocked(classify);
+
+      classified.mockClear();
+      const input = createPipeline(TABLES_BELOW_COLUMNS)(path);
+      if (input.load.ok) throw new Error('the document was admitted');
+      const load = input.load;
+
+      // The refused arm: one fatal, the applied limits, and no stage result at all.
+      expect(Object.keys(input)).toEqual(['load']);
+      expect(load.limits).toEqual(DEFAULT_LIMITS);
+      expect(load.diagnostics).toHaveLength(1);
+      const diagnostic = load.diagnostics[0];
+      if (diagnostic === undefined) throw new Error('the refusal carried no diagnostic');
+      expect(diagnostic).toMatchObject({
+        code: 'E_LIMIT_BUDGET',
+        severity: 'fatal',
+        message: BUDGET_MESSAGE,
+        span: null,
+        construct: 'Source',
+      });
+      // Exactly the three details keys, the new counter, and the two numbers hand-derived above.
+      expect(diagnostic.details).toEqual({
+        counter: 'relationColumnCountUpperBound',
+        observed: RELATION_COLUMNS,
+        ceiling: RELATION_COLUMNS - 1,
+      });
+      expect(integrate(input).exitPolicy).toEqual({ inspect: 1, validate: 1 });
+
+      // `classify()` is the stage after the gate, so it did not run for this document.
+      expect(classified).not.toHaveBeenCalled();
+    });
+  });
+
+  it('classifies the same document once the ceiling admits its columns', () => {
+    withTempFile('columns.a5er', Buffer.from(columnsDocument(), 'utf8'), (path) => {
+      const classified = vi.mocked(classify);
+
+      classified.mockClear();
+      const input = createPipeline(TABLES_AT_COLUMNS)(path);
+
+      expect(input.load.ok).toBe(true);
+      // One call, which is what makes the zero above a measurement rather than a dead spy.
+      expect(classified).toHaveBeenCalledTimes(1);
+      expect(integrate(input).status).not.toBe('failed');
+    });
+  });
+});
+describe('pipeline admission — the eight default ceilings', () => {
+  it('pins all eight, at and one past each, with pure admit() and admitShape() calls', () => {
     // Explicit copies: the pipeline's defaults are these numbers, and a silent change to any of
     // them must fail here as well as in `tests/budget-admission.test.ts`.
     expect(DEFAULT_RESOURCE_BUDGETS.envelope).toEqual({
@@ -815,6 +936,7 @@ describe('pipeline admission — the seven default ceilings', () => {
     expect(DEFAULT_RESOURCE_BUDGETS.tables).toEqual({
       profile: 'tables',
       composedColumnsUpperBound: 4_194_304,
+      relationColumnCountUpperBound: 32_768,
       entityFieldOccurrences: 500_000,
       contentLineOccurrences: 1_000_000,
     });
@@ -852,6 +974,18 @@ describe('pipeline admission — the seven default ceilings', () => {
       ceiling: 4_194_304,
     });
 
+    // The tables relation-column ceiling: a column budget, at and one past.
+    expect(admit(measureWith(0, 0, tables.relationColumnCountUpperBound), tables)).toEqual({
+      admitted: true,
+    });
+    expect(admit(measureWith(0, 0, tables.relationColumnCountUpperBound + 1), tables)).toEqual({
+      admitted: false,
+      counter: 'relationColumnCountUpperBound',
+      observed: 32_768 + 1,
+      ceiling: 32_768,
+    });
+    // A long name is not a column: one column is admitted regardless of how long its name is.
+    expect(admit(measureWith(0, 0, 1), tables)).toEqual({ admitted: true });
     // The four pre-scan ceilings, decided by `admitShape()` on the shipped numbers.
     expect(
       admitShape(
@@ -889,16 +1023,23 @@ describe('pipeline admission — the seven default ceilings', () => {
   });
 
   it('leaves every committed fixture far below all three, so no golden can trip them', () => {
-    // The measured maxima over the 39 synthetic fixtures: 277 and 2. Stated so a future fixture
+    // The maxima over the 39 synthetic fixtures, counted by hand from their own text: Σ`L²` 277,
+    // composed columns 2 and relation columns 5 (`sem-03`). Stated so a future fixture that grows
+    // towards a ceiling is a visible decision rather than a surprise refusal.
     // that grows towards a ceiling is a visible decision rather than a surprise refusal.
     const FIXTURE_MAX_SQUARES = 277;
     const FIXTURE_MAX_COMPOSED = 2;
+    const FIXTURE_MAX_RELATION_COLUMNS = 5;
 
     expect(FIXTURE_MAX_SQUARES * 100_000).toBeLessThan(
       DEFAULT_RESOURCE_BUDGETS.envelope.relationValueLengthSquares,
     );
     expect(FIXTURE_MAX_COMPOSED * 100_000).toBeLessThan(
       DEFAULT_RESOURCE_BUDGETS.tables.composedColumnsUpperBound,
+    );
+    // A column budget, so the comparison is direct: the largest fixture needs 5 of the 32,768.
+    expect(FIXTURE_MAX_RELATION_COLUMNS * 1_000).toBeLessThan(
+      DEFAULT_RESOURCE_BUDGETS.tables.relationColumnCountUpperBound,
     );
   });
 });

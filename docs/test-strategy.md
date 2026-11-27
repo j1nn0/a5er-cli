@@ -420,28 +420,41 @@ the guard tests are deleted (TBD-T2).
 
 ### 10.1 The admission gates (U5-ADMIT1, U5-ADMIT2)
 
-The seven ceilings (`architecture.md` §10.5) are far above every fixture — the 39 synthetic fixtures
-measure at most Σ`L²` **277** and composed columns **2**, and none is refused — so no committed
-document can reach one under the default limits, and none may be grown towards one. Reaching the
-envelope Σ`L²` ceiling (134,217,728) would take a single relation value of 11,586 UTF-16 code units —
-quoting and escapes included, the same unit as `String.length`, 11,586² being the first square above
-the ceiling. The composed-column ceiling is `[Entity]` sections × `CommonField=` declarations above
-524,288: one section needs that many declarations and two need half of them, so "thousands of
-entities" is not required but a single section is not either. The pre-scan ceilings are counts of
-lines — 200,000 `Field=` occurrences and 400,000 content lines for the envelope profile, 500,000 and
-1,000,000 for `tables` — so reaching one takes a document with that many lines, not a large value.
+The eight ceilings (`architecture.md` §10.5) are far above every fixture — the 39 synthetic fixtures
+measure at most Σ`L²` **277**, composed columns **2** and relation columns **5**, and none is
+refused — so no committed document can reach one under the default limits, and none may be grown
+towards one. Reaching the envelope Σ`L²` ceiling (134,217,728) would take a single relation value of
+11,586 UTF-16 code units — quoting and escapes included, the same unit as `String.length`, 11,586²
+being the first square above the ceiling. The composed-column ceiling is `[Entity]` sections ×
+`CommonField=` declarations above 524,288: one section needs that many declarations and two need half
+of them, so "thousands of entities" is not required but a single section is not either. The pre-scan
+ceilings are counts of lines — 200,000 `Field=` occurrences and 400,000 content lines for the
+envelope profile, 500,000 and 1,000,000 for `tables` — so reaching one takes a document with that
+many lines, not a large value. The `tables` relation-column ceiling (32,768) counts columns, not
+characters: a long name costs nothing extra, so reaching it takes tens of thousands of declared
+columns — and that is the one ceiling whose refusal is a **policy choice** (F4-D1), not a recorded
+boundary.
 
 The numbers themselves are **provisional operating values, partly extrapolated** from small samples
 (`architecture.md` §10.5). The gates fix the mechanism — which counter is compared, at which point, in
-which order, against which ceiling, and what a refusal looks like — and pin all seven figures so a
+which order, against which ceiling, and what a refusal looks like — and pin all eight figures so a
 silent change fails a test. Neither the mechanism nor the numbers is a claim about memory.
 
-The gates are tested in three layers instead.
+**The measurement is a layer of its own.** `measure()` publishes the figures the decision reads, so a
+wrong figure would make every well-tested decision wrong: `budget-measure.test.ts` derives each one
+from the fixture's or the hand-written document's own text, including the relation-column count (one
+plus every literal comma) and the invariant that it is never below the columns the relation stage
+retains. A fixture-wide equality is deliberately *not* asserted: a duplicate occurrence or an omitted
+trailing element makes the count an over-estimate.
+
+The gates are tested in four layers besides that measurement layer.
 
 1. **The decision** (`budget-admission.test.ts`) — hand-built `ResourceMeasure` and hand-built
-   `SourceShape` records: every boundary at and one past each of the seven ceilings, the
-   `Field`-before-content order, invalid observations and ceilings, immutability, determinism, and a
-   fixed exception message that repeats no input value.
+   `SourceShape` records: every boundary at and one past each of the eight ceilings, in both
+   directions (a fixed ceiling against three observations, a fixed observation against three
+   ceilings), the `Field`-before-content order, the composed-before-columns order on `tables`,
+   invalid observations and ceilings, profile separation, immutability, determinism, and a fixed
+   exception message that repeats no input value.
 2. **The wiring** (`pipeline-admission.test.ts`) — committed synthetic fixtures staged as disposable
    copies, hand-written small documents, and a **small budget passed as the one argument of
    `createPipeline(budget)`**. That argument carries the profile and exactly the ceilings it caps, so
@@ -467,9 +480,17 @@ The gates are tested in three layers instead.
    **The pre-scan ceilings are not observable that way, and no CLI refusal at a shipped pre-scan
    value is claimed.** A ceiling + 1 case for the envelope profile would take 200,001 `Field=` lines
    or 400,001 content lines, and no such run exists. What is verified instead: the defaults assertion
-   pins all seven numbers per profile, pure `admitShape()` decisions cover each shipped value at the
+   pins all eight numbers, pure `admitShape()` decisions cover each shipped pre-scan value at the
    ceiling and one past, and the small injected budgets of point 2 drive the same refusal arm through
    the real pipeline.
+   **The shipped relation-column ceiling is not driven through the CLI either, and that limitation is
+   recorded rather than papered over.** No test runs a document past `tables` 32,768 columns: a
+   witness would declare 32,769 columns, and if the comparison were mis-wired the admitted side would
+   pay for them. What covers it instead: the defaults pin asserts the configured value, pure
+   `admit()` decisions cover it at the ceiling and one past, and the small injected budget of point 2
+   drives the refusal arm end to end. A wrong *value* in the default is therefore caught; a
+   comparison that ignored the configured value in the pipeline would be caught only by the injected
+   case, not at the shipped number.
    **The one large CLI case that does exist, and what it shows.** `tests/cli-large-diagnostics.test.ts`
    spawns `inspect` on a generated document with exactly 200,000 `Field=` lines in one entity — the
    envelope ceiling itself, which the spec admits — and asserts exit `0`, the envelope and one finding
@@ -478,31 +499,37 @@ The gates are tested in three layers instead.
    line further. **What the order pin can and cannot show.** It reads
    `src/pipeline.ts` as text, so it proves where the calls sit, not what they do at run time; the
    run-time half is a delegating wrapper around `scanSource`, which asserts zero calls on a pre-scan
-   refusal and exactly one on the same document with the ceiling raised. **What the fixture-maxima
-   pin can and cannot show.** The 277 / 2 pair is a recorded constant, not recomputed per run, so it
-   proves headroom against the recorded maxima only; the pre-scan ceilings' headroom on the corpus is
+   pin can and cannot show.** The 277 / 2 / 5 triple is a recorded constant, not recomputed per run,
+   so it proves headroom against the recorded maxima only; the ceilings' headroom on the corpus is
    evidenced by the 156/156 comparison below, not by a maxima assertion.
 3. **The corpus** — the gate is invisible where it must be. G-10's in-repo fence covers the 88
    `inspect`/`validate` runs. The recorded extension is 39 synthetic fixtures × 4 command forms
    (`inspect`, `validate`, `tables`, `tables --format json`), compared with a base build on stdout
    bytes, stderr bytes and exit code — **156 of 156 identical** against the pre-gate build at base
-   commit `1c6a4320` for U5-ADMIT1, and **156 of 156** again against base `251ec00` (which already
-   contains that gate) for the pre-scan gate. Those comparisons are recorded pre-merge runs rather
-   than CI jobs: each needs the base build as well as the head one.
+   commit `1c6a4320` for U5-ADMIT1, **156 of 156** again against base `251ec00` for the pre-scan gate,
+   and **156 of 156** against base `dd09850` for the F4-D1 relation-column ceiling. Those comparisons
+   are recorded pre-merge runs rather than CI jobs: each needs the base build as well as the head one.
+4. **The configured default** (`budget-admission.test.ts`, `pipeline-admission.test.ts`) — the frozen
+   `DEFAULT_RESOURCE_BUDGETS` pins assert each profile's exact member set and every number, including
+   `tables` `relationColumnCountUpperBound` 32,768, and `withResourceBudget()` refuses a missing,
+   non-positive or mistyped member at construction. This layer reads the configuration; it does not
+   run a document through the shipped relation-column ceiling (that limit is stated in point 2).
 
 Consequences for the fixture policy and the gates:
 
 - **What touches a shipped default.** The ~12,100-byte production-wiring document is past the shipped Σ`L²` ceiling by construction — that being the only way to tell the two profiles apart from outside the process — and `inspect`/`validate` refuse it with exit `1` across three separate CLI runs; that is a real default-ceiling refusal, not an injected one. The 200,000-`Field` case above sits exactly on the envelope `Field` ceiling and must be admitted, and that existing CLI test generates its large input and its large JSON envelope output. No file was added to the fixture corpus, and no test drives a shipped pre-scan ceiling + 1 through the CLI.
 - **What is not reproduced here.** No OOM or `RangeError` run from the record was re-executed on this HEAD. A test that wants a pre-scan refusal injects a ceiling; the shipped pre-scan boundaries are pinned by pure `admitShape()` decisions and the defaults assertion instead.
 - **`E_LIMIT_BUDGET` is outside G-3 by construction**: G-3 covers the non-fatal codes, so a fatal no
-  fixture can reach needs no exemption, and layers 1–2 are its coverage.
+  fixture can reach needs no exemption, and the measurement, decision and wiring layers are its
+  coverage.
 - **The 44 goldens are unchanged** and none carries the new code: no fixture is refused, so no
   expected envelope changed.
-- **The four figures are not envelope members.** A refusal publishes one of them inside
+- **The five figures are not envelope members.** A refusal publishes one of them inside
   `E_LIMIT_BUDGET.details`; an admitted document publishes nothing about them.
 - **`observed` is an aggregate, not a quotation.** It is computed from the document's structure — a
-  count of lines or of `Field=` occurrences from the text, Σ`L²` over relation value lengths or
-  sections × declarations from the scan — so a refusal's `details` embed no file body, key, column
+  count of lines or of `Field=` occurrences from the text, Σ`L²` over relation value lengths, the
+  retained relation-column count, or sections × declarations from the scan — so a refusal's `details`
+  embed no file body, key, column
   or path, and a test asserting that nothing in them derives from the file would assert the wrong
   thing (`architecture.md` §12).
 
@@ -595,7 +622,7 @@ from the recorded shape and the counter definitions, not a fresh observation: **
 re-executed on the current HEAD**, so no measured refusal is stated for it. A document of the
 recorded single-entity `Field` shape is counted by `entityFieldOccurrences`, at 200,000 for
 `inspect`/`validate` and 500,000 for `tables`. What the gate does not do is bound memory: a document
-below all seven ceilings can still exhaust the heap or reach the string limit, which is the risk
+below all eight ceilings can still exhaust the heap or reach the string limit, which is the risk
 [issue #27](https://github.com/j1nn0/a5er-cli/issues/27) tracks.
 
 **The B-6 run as recorded.** Node.js 24.22.3; a synthetic document of one entity carrying 1,999,000

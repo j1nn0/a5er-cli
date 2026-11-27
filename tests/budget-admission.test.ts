@@ -5,7 +5,7 @@
  * no `E_LIMIT_BUDGET` diagnostic, envelope or exit code is asserted here.
  *
  * 1. **defaults** — the ceilings this build applies are written out from the unit's specification
- *    (2²⁷, 2¹⁹, 2²² and the four pre-scan counts) and pinned exactly, so a silent change fails
+ *    (2²⁷, 2¹⁹, 2²², 2¹⁵ and the four pre-scan counts) and pinned exactly, so a silent change fails
  *    here rather than in a golden;
  *    the table and each profile object are also frozen at runtime, not only `as const`;
  * 2. **profiles** — `tables` carries no Σ`L²` member at all, so its absence is asserted structurally
@@ -14,9 +14,11 @@
  *    runtime value, so an unknown, empty, mistyped or missing profile throws instead of becoming
  *    the `tables` arm;
  * 3. **the boundary is a comparison** — `observed <= ceiling` admits and `observed > ceiling` refuses,
- *    exactly at the ceiling too, on both counters and on both profiles;
+ *    exactly at the ceiling too, on every counter of both profiles;
  * 4. **order** — on the envelope profile Σ`L²` is decided first, so a document over both reports the
- *    relation value proxy; both observations are proved comparable before either is compared;
+ *    relation value proxy; on `tables` the composed bound is decided first, so a document over both
+ *    reports the reason that profile already reported. Every observation a profile reads is proved
+ *    comparable before the first comparison;
  * 5. **contract violations throw** — an observation that is not a non-negative safe integer and a
  *    ceiling that is not a positive safe integer raise `ResourceAdmissionError`, never a refusal, and
  *    nothing is clamped, rounded or saturated into a comparable number;
@@ -56,6 +58,13 @@ const ENVELOPE_RELATION_CEILING = 134_217_728;
 const ENVELOPE_COMPOSED_CEILING = 524_288;
 /** Composed-column ceiling for `tables`: 2²² — four times the envelope profile's, no Σ`L²` cap. */
 const TABLES_COMPOSED_CEILING = 4_194_304;
+/**
+ * Retained relation-column ceiling for `tables`: 2¹⁵, the F4-D1 design's approved value.
+ *
+ * A column budget: one `Fields1`/`Fields2` value scores `1 + its literal commas`, so a long name
+ * costs nothing extra and the whole committed corpus (at most 2 columns) sits far below it.
+ */
+const TABLES_RELATION_COLUMN_CEILING = 32_768;
 /** `Field=` occurrences ceiling for `inspect`/`validate`: 200,000, from the U5-ADMIT2 spec. */
 const ENVELOPE_ENTITY_FIELD_CEILING = 200_000;
 /** Content-line ceiling for `inspect`/`validate`: 400,000. */
@@ -76,25 +85,31 @@ const ENVELOPE_BUDGET: EnvelopeResourceBudget = {
 const TABLES_BUDGET: TablesResourceBudget = {
   profile: 'tables',
   composedColumnsUpperBound: TABLES_COMPOSED_CEILING,
+  relationColumnCountUpperBound: TABLES_RELATION_COLUMN_CEILING,
   entityFieldOccurrences: TABLES_ENTITY_FIELD_CEILING,
   contentLineOccurrences: TABLES_CONTENT_CEILING,
 };
 
 /**
- * A measurement carrying the two figures admission reads and nothing else.
+ * A measurement carrying the figures admission reads and nothing else.
  *
- * `admit()` consults `counters.relationValueLengthSquares` (envelope only) and
- * `bounds.composedColumnsUpperBound.upperBound`; the other sixteen counters, the slot bound and the
- * scan's `accounting` are not part of the decision. Building the smallest record that answers those
- * two questions is what lets a boundary sit at `Number.MAX_SAFE_INTEGER` without a document that
- * large — the cast is the shortcut, not a relaxation: `admit()` reads the same two members.
+ * `admit()` consults `counters.relationValueLengthSquares` (envelope only),
+ * `bounds.composedColumnsUpperBound.upperBound` and `counters.relationColumnCountUpperBound`
+ * (`tables` only); the other counters, the slot bound and the scan's `accounting` are not part of
+ * the decision. Building the smallest record that answers those questions is what lets a boundary
+ * sit at `Number.MAX_SAFE_INTEGER` without a document that large — the cast is the shortcut, not a
+ * relaxation: `admit()` reads the same members.
+ *
+ * The relation-column count defaults to `0`, the value a document with no relation value has, so a
+ * case about another figure does not have to state it.
  */
 function measureWith(
   relationValueLengthSquares: number,
   composedUpperBound: number,
+  relationColumnCountUpperBound = 0,
 ): ResourceMeasure {
   return {
-    counters: { relationValueLengthSquares },
+    counters: { relationValueLengthSquares, relationColumnCountUpperBound },
     bounds: { composedColumnsUpperBound: { upperBound: composedUpperBound } },
     accounting: {},
   } as unknown as ResourceMeasure;
@@ -104,9 +119,10 @@ function measureWith(
 function frozenMeasure(
   relationValueLengthSquares: number,
   composedUpperBound: number,
+  relationColumnCountUpperBound = 0,
 ): ResourceMeasure {
   return Object.freeze({
-    counters: Object.freeze({ relationValueLengthSquares }),
+    counters: Object.freeze({ relationValueLengthSquares, relationColumnCountUpperBound }),
     bounds: Object.freeze({
       composedColumnsUpperBound: Object.freeze({ upperBound: composedUpperBound }),
     }),
@@ -119,17 +135,21 @@ function refusalOf(
   relationValueLengthSquares: number,
   composedUpperBound: number,
   budget: ResourceBudget,
+  relationColumnCountUpperBound = 0,
 ): Admission {
-  return admit(measureWith(relationValueLengthSquares, composedUpperBound), budget);
+  return admit(
+    measureWith(relationValueLengthSquares, composedUpperBound, relationColumnCountUpperBound),
+    budget,
+  );
 }
 
 describe('admission — the defaults this build applies', () => {
-  it('caps both figures on the envelope profile and one on tables', () => {
+  it('caps two figures on the envelope profile and two on tables', () => {
     expect(DEFAULT_RESOURCE_BUDGETS.envelope).toEqual(ENVELOPE_BUDGET);
     expect(DEFAULT_RESOURCE_BUDGETS.tables).toEqual(TABLES_BUDGET);
   });
 
-  it('states the ceilings as positive safe integers, the three original ones as powers of two', () => {
+  it('states the four post-scan ceilings as positive safe integers, each a power of two', () => {
     for (const [counter, value] of [
       [
         'envelope.relationValueLengthSquares',
@@ -143,6 +163,10 @@ describe('admission — the defaults this build applies', () => {
         'tables.composedColumnsUpperBound',
         DEFAULT_RESOURCE_BUDGETS.tables.composedColumnsUpperBound,
       ],
+      [
+        'tables.relationColumnCountUpperBound',
+        DEFAULT_RESOURCE_BUDGETS.tables.relationColumnCountUpperBound,
+      ],
     ] as const) {
       expect(Number.isSafeInteger(value), counter).toBe(true);
       expect(value, counter).toBeGreaterThan(0);
@@ -152,6 +176,7 @@ describe('admission — the defaults this build applies', () => {
     expect(ENVELOPE_RELATION_CEILING).toBe(2 ** 27);
     expect(ENVELOPE_COMPOSED_CEILING).toBe(2 ** 19);
     expect(TABLES_COMPOSED_CEILING).toBe(2 ** 22);
+    expect(TABLES_RELATION_COLUMN_CEILING).toBe(2 ** 15);
   });
 
   it('states the four pre-scan ceilings as positive safe integers, at their approved values', () => {
@@ -174,13 +199,15 @@ describe('admission — the defaults this build applies', () => {
 
   it('leaves ΣL² off the tables profile structurally, not as a large ceiling', () => {
     expect('relationValueLengthSquares' in DEFAULT_RESOURCE_BUDGETS.tables).toBe(false);
-    // Four members per profile: the shared pre-scan pair plus the profile's own post-scan figures,
-    // seven ceilings in all. The exact member sets are the contract this unit extends.
+    // Five keys per profile — the discriminant plus four ceilings — and eight ceilings in all. The
+    // exact member sets are the contract this unit extends; the envelope profile gained nothing.
+    expect('relationColumnCountUpperBound' in DEFAULT_RESOURCE_BUDGETS.envelope).toBe(false);
     expect(Object.keys(DEFAULT_RESOURCE_BUDGETS.tables).sort()).toEqual([
       'composedColumnsUpperBound',
       'contentLineOccurrences',
       'entityFieldOccurrences',
       'profile',
+      'relationColumnCountUpperBound',
     ]);
     expect(Object.keys(DEFAULT_RESOURCE_BUDGETS.envelope).sort()).toEqual([
       'composedColumnsUpperBound',
@@ -296,6 +323,7 @@ describe('admission — withResourceBudget', () => {
     const forged = {
       profile: 'tables',
       composedColumnsUpperBound: 10,
+      relationColumnCountUpperBound: 40,
       entityFieldOccurrences: 20,
       contentLineOccurrences: 30,
       relationValueLengthSquares: 0,
@@ -307,6 +335,7 @@ describe('admission — withResourceBudget', () => {
     expect(applied).toEqual({
       profile: 'tables',
       composedColumnsUpperBound: 10,
+      relationColumnCountUpperBound: 40,
       entityFieldOccurrences: 20,
       contentLineOccurrences: 30,
     });
@@ -489,6 +518,88 @@ describe('admission — the tables profile', () => {
     // And an observation that would be a contract violation if it were read is not read either:
     expect(refusalOf(Number.NaN, 0, TABLES_BUDGET)).toEqual({ admitted: true });
   });
+
+  it('decides the relation-column count exactly at its own ceiling and refuses one more', () => {
+    expect(refusalOf(0, 0, TABLES_BUDGET, TABLES_RELATION_COLUMN_CEILING)).toEqual({
+      admitted: true,
+    });
+    expect(refusalOf(0, 0, TABLES_BUDGET, TABLES_RELATION_COLUMN_CEILING + 1)).toEqual({
+      admitted: false,
+      counter: 'relationColumnCountUpperBound',
+      observed: TABLES_RELATION_COLUMN_CEILING + 1,
+      ceiling: TABLES_RELATION_COLUMN_CEILING,
+    });
+  });
+
+  it('states the relation-column boundary in both directions', () => {
+    // Both directions are needed: a comparison with the wrong operator, or against the wrong member,
+    // can pass one of them alone. Here the varied parameter is the observation, then the ceiling.
+    const S = 1_000;
+    const withCeiling = (ceiling: number): TablesResourceBudget => ({
+      ...TABLES_BUDGET,
+      relationColumnCountUpperBound: ceiling,
+    });
+
+    for (const observed of [S - 1, S]) {
+      expect(refusalOf(0, 0, withCeiling(S), observed), String(observed)).toEqual({
+        admitted: true,
+      });
+    }
+    expect(refusalOf(0, 0, withCeiling(S), S + 1)).toEqual({
+      admitted: false,
+      counter: 'relationColumnCountUpperBound',
+      observed: S + 1,
+      ceiling: S,
+    });
+
+    expect(refusalOf(0, 0, withCeiling(S - 1), S)).toEqual({
+      admitted: false,
+      counter: 'relationColumnCountUpperBound',
+      observed: S,
+      ceiling: S - 1,
+    });
+    for (const ceiling of [S, S + 1]) {
+      expect(refusalOf(0, 0, withCeiling(ceiling), S), String(ceiling)).toEqual({
+        admitted: true,
+      });
+    }
+  });
+
+  it('decides the composed bound before the relation-column count', () => {
+    // The order is what keeps today's refusal reason: a document over both reports the composed
+    // bound, exactly as it did before this counter existed.
+    const overComposed = {
+      admitted: false,
+      counter: 'composedColumnsUpperBound',
+      observed: TABLES_COMPOSED_CEILING + 1,
+      ceiling: TABLES_COMPOSED_CEILING,
+    };
+    const overColumns = {
+      admitted: false,
+      counter: 'relationColumnCountUpperBound',
+      observed: TABLES_RELATION_COLUMN_CEILING + 1,
+      ceiling: TABLES_RELATION_COLUMN_CEILING,
+    };
+
+    expect(
+      refusalOf(0, TABLES_COMPOSED_CEILING + 1, TABLES_BUDGET, TABLES_RELATION_COLUMN_CEILING + 1),
+    ).toEqual(overComposed);
+    expect(
+      refusalOf(0, TABLES_COMPOSED_CEILING + 1, TABLES_BUDGET, TABLES_RELATION_COLUMN_CEILING),
+    ).toEqual(overComposed);
+    expect(
+      refusalOf(0, TABLES_COMPOSED_CEILING, TABLES_BUDGET, TABLES_RELATION_COLUMN_CEILING + 1),
+    ).toEqual(overColumns);
+    expect(
+      refusalOf(0, TABLES_COMPOSED_CEILING, TABLES_BUDGET, TABLES_RELATION_COLUMN_CEILING),
+    ).toEqual({ admitted: true });
+  });
+
+  it('never reads the relation-column count on the envelope profile', () => {
+    // Profile separation is behavioural, not only structural: a value that would be a contract
+    // violation on `tables` changes nothing here because the envelope branch never reads it.
+    expect(refusalOf(0, 0, ENVELOPE_BUDGET, Number.NaN)).toEqual({ admitted: true });
+  });
 });
 
 describe('admission — contract violations throw, they never become a refusal', () => {
@@ -501,9 +612,8 @@ describe('admission — contract violations throw, they never become a refusal',
     expect(() => refusalOf(Number.NaN, ENVELOPE_COMPOSED_CEILING + 1, ENVELOPE_BUDGET)).toThrow(
       'admission: relationValueLengthSquares is not a non-negative safe integer',
     );
-
-    // `tables` reads the composed bound only, so an unreadable ΣL² is not a fault there: the two
-    // profiles do not validate each other's counters.
+    // `tables` reads the composed bound and the relation-column count only, so an unreadable ΣL² is
+    // not a fault there: the two profiles do not validate each other's counters.
     expect(refusalOf(Number.NaN, TABLES_COMPOSED_CEILING + 1, TABLES_BUDGET)).toEqual({
       admitted: false,
       counter: 'composedColumnsUpperBound',
@@ -513,6 +623,20 @@ describe('admission — contract violations throw, they never become a refusal',
     expect(refusalOf(Number.NaN, TABLES_COMPOSED_CEILING, TABLES_BUDGET)).toEqual({
       admitted: true,
     });
+  });
+
+  it('proves both tables observations before it compares either of them', () => {
+    // Either figure being unreadable is a defect in this tool's own measurement, so the answer is
+    // not a refusal about the document: it throws, whichever figure comes first in the order.
+    expect(() => refusalOf(0, Number.NaN, TABLES_BUDGET, 1)).toThrow(
+      'admission: composedColumnsUpperBound is not a non-negative safe integer',
+    );
+    expect(() => refusalOf(0, 0, TABLES_BUDGET, Number.NaN)).toThrow(
+      'admission: relationColumnCountUpperBound is not a non-negative safe integer',
+    );
+    expect(() => refusalOf(0, TABLES_COMPOSED_CEILING + 1, TABLES_BUDGET, Number.NaN)).toThrow(
+      'admission: relationColumnCountUpperBound is not a non-negative safe integer',
+    );
   });
   it('refuses to compare an observation that is not a non-negative safe integer', () => {
     for (const invalid of [
@@ -533,10 +657,22 @@ describe('admission — contract violations throw, they never become a refusal',
       expect(() => admit(measureWith(0, invalid), TABLES_BUDGET), String(invalid)).toThrow(
         ResourceAdmissionError,
       );
+      expect(() => admit(measureWith(0, 0, invalid), TABLES_BUDGET), String(invalid)).toThrow(
+        ResourceAdmissionError,
+      );
     }
   });
 
   it('refuses to compare an observation whose type is not a number', () => {
+    // Built member by member: an absent argument would fall back to the helper's default and never
+    // reach `checkedObserved()`, which is exactly the case `undefined` must still exercise.
+    const withColumns = (value: unknown): ResourceMeasure =>
+      ({
+        counters: { relationValueLengthSquares: 0, relationColumnCountUpperBound: value },
+        bounds: { composedColumnsUpperBound: { upperBound: 0 } },
+        accounting: {},
+      }) as unknown as ResourceMeasure;
+
     for (const invalid of ['10', null, undefined, true, {}, []]) {
       expect(() => admit(measureWith(invalid as unknown as number, 0), ENVELOPE_BUDGET)).toThrow(
         ResourceAdmissionError,
@@ -544,6 +680,7 @@ describe('admission — contract violations throw, they never become a refusal',
       expect(() => admit(measureWith(0, invalid as unknown as number), TABLES_BUDGET)).toThrow(
         ResourceAdmissionError,
       );
+      expect(() => admit(withColumns(invalid), TABLES_BUDGET)).toThrow(ResourceAdmissionError);
     }
   });
 
@@ -557,6 +694,12 @@ describe('admission — contract violations throw, they never become a refusal',
       ).toThrow(ResourceAdmissionError);
       expect(() =>
         admit(measureWith(1, 1), { ...TABLES_BUDGET, composedColumnsUpperBound: invalid }),
+      ).toThrow(ResourceAdmissionError);
+      expect(() =>
+        admit(measureWith(1, 1), {
+          ...TABLES_BUDGET,
+          relationColumnCountUpperBound: invalid,
+        }),
       ).toThrow(ResourceAdmissionError);
     }
   });
@@ -636,6 +779,7 @@ describe('admission — the error is typed, fixed and input-free', () => {
     const budget: ResourceBudget = {
       profile: 'tables',
       composedColumnsUpperBound: 10,
+      relationColumnCountUpperBound: 10,
       entityFieldOccurrences: 100,
       contentLineOccurrences: 200,
     };

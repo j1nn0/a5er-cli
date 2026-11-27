@@ -14,7 +14,8 @@
  *
  * - **`envelope`** (`inspect`, `validate`): `relationValueLengthSquares` first (the relation-column
  *   amplification), then `composedColumnsUpperBound.upperBound` (the common-column composition).
- * - **`tables`**: `composedColumnsUpperBound.upperBound` only.
+ * - **`tables`**: `composedColumnsUpperBound.upperBound` first, then `relationColumnCountUpperBound`
+ *   (the columns the relation stage retains).
  *
  * **Two entry points, one rule.** `admit()` decides a finished `measure()`; `admitShape()` decides
  * the pre-scan figures `measureSourceShape()` counts, so a Field- or content-heavy document can be
@@ -49,11 +50,12 @@ export type BudgetProfile = 'envelope' | 'tables';
 /**
  * The counters a budget can cap.
  *
- * Two of them are the figures `measure()` publishes after the scan — `relationValueLengthSquares`
- * (Σ`L²` over relation values) and `composedColumnsUpperBound` (`[Entity]` sections × decoded
- * `CommonField` declarations) — and two are the pre-scan figures `measureSourceShape()` counts
- * before the scan exists: `entityFieldOccurrences` (`Field=` lines in `[Entity]` sections) and
- * `contentLineOccurrences` (section headers, keys and raw lines together).
+ * Three of them are the figures `measure()` publishes after the scan — `relationValueLengthSquares`
+ * (Σ`L²` over relation values), `composedColumnsUpperBound` (`[Entity]` sections × decoded
+ * `CommonField` declarations) and `relationColumnCountUpperBound` (the columns the relation stage
+ * retains) — and two are the pre-scan figures `measureSourceShape()` counts before the scan exists:
+ * `entityFieldOccurrences` (`Field=` lines in `[Entity]` sections) and `contentLineOccurrences`
+ * (section headers, keys and raw lines together).
  *
  * Byte counts are already refused by `io/`/`decode/` and never appear here. Neither do total lines,
  * comments or blank lines: the read limits bound the input, and the pre-scan ceilings cap the two
@@ -62,6 +64,7 @@ export type BudgetProfile = 'envelope' | 'tables';
 export type BudgetCounter =
   | 'relationValueLengthSquares'
   | 'composedColumnsUpperBound'
+  | 'relationColumnCountUpperBound'
   | 'entityFieldOccurrences'
   | 'contentLineOccurrences';
 
@@ -82,17 +85,28 @@ export interface EnvelopeResourceBudget {
 }
 
 /**
- * The ceilings `tables` applies: the common-column composition and the two pre-scan figures.
+ * The ceilings `tables` applies: the common-column composition, the retained relation columns and the
+ * two pre-scan figures.
  *
  * Σ`L²` has no member here on purpose. `tables` renders a projection of the same record; the
- * relation-column amplification observed in `inspect`/`validate` is not part of its work, so capping
+ * relation-length amplification observed in `inspect`/`validate` is not part of its work, so capping
  * it would refuse documents this command can answer. That absence is structural: the type has no
- * such member, and `withResourceBudget()` never copies one in. The pre-scan figures *are* capped
- * here, at this profile's own values: the scan they protect runs for `tables` too.
+ * such member, and `withResourceBudget()` never copies one in. The *number* of retained relation
+ * columns is a different figure and a real cost here — every one of them is a record the command
+ * holds and, when its endpoint does not resolve, a `V_DANGLING_COLUMN` diagnostic it writes. The
+ * pre-scan figures *are* capped here too, at this profile's own values: the scan they protect runs
+ * for `tables` as well.
  */
 export interface TablesResourceBudget {
   readonly profile: 'tables';
   readonly composedColumnsUpperBound: number;
+  /**
+   * Columns the relation stage may retain.
+   *
+   * Compared **after** the composed bound, so a document over both still reports the reason this
+   * profile reported before the member existed.
+   */
+  readonly relationColumnCountUpperBound: number;
   readonly entityFieldOccurrences: number;
   readonly contentLineOccurrences: number;
 }
@@ -108,6 +122,16 @@ export type ResourceBudget = EnvelopeResourceBudget | TablesResourceBudget;
  * it takes a handful of very long values. `524_288` (2¹⁹) composed columns for the envelope
  * profile, and `4_194_304` (2²²) for `tables`, which holds no relation text and therefore has the
  * stricter of its two costs removed.
+ *
+ * `32_768` (2¹⁵) is the `tables` ceiling on `relationColumnCountUpperBound` (F4-D1). Its unit is a
+ * **column budget**, not a length: one value scores `1 + its literal commas`, so a long column name
+ * costs nothing extra (a single name scores `1`, and the committed two-column anchor `2`) while a
+ * document declaring tens of thousands of columns is refused. The recorded F4-M1A shape — about
+ * 57,001 columns, a shape-dependent estimate from its diagnostic count, not a measurement of this
+ * figure — is past this ceiling. The committed fixtures measure at most `5` columns and the
+ * committed anchor `2`, so the ceiling leaves the whole corpus admitted with more than three orders
+ * of magnitude of headroom. This is the F4-D1 design's approved value, recorded here as given;
+ * rejecting that shape is a policy choice the value records, and the module calibrates nothing.
  *
  * The two pre-scan ceilings are counts of lines a linear walk visits, so they are round numbers
  * rather than powers of two: `200_000` `Field=` occurrences and `400_000` content lines for the
@@ -134,6 +158,7 @@ export const DEFAULT_RESOURCE_BUDGETS = Object.freeze({
   tables: Object.freeze<TablesResourceBudget>({
     profile: 'tables',
     composedColumnsUpperBound: 4_194_304,
+    relationColumnCountUpperBound: 32_768,
     entityFieldOccurrences: 500_000,
     contentLineOccurrences: 1_000_000,
   }),
@@ -240,6 +265,10 @@ export function withResourceBudget(budget: ResourceBudget): ResourceBudget {
         budget.composedColumnsUpperBound,
         'composedColumnsUpperBound',
       ),
+      relationColumnCountUpperBound: checkedCeiling(
+        budget.relationColumnCountUpperBound,
+        'relationColumnCountUpperBound',
+      ),
       entityFieldOccurrences: checkedCeiling(
         budget.entityFieldOccurrences,
         'entityFieldOccurrences',
@@ -285,7 +314,8 @@ function refuseIfOver(
  *
  * The profile decides which counters exist, and the order is fixed: on `envelope`, Σ`L²` is compared
  * first, so a document that is over both reports the relation value proxy rather than the composed
- * bound. `tables` compares its one counter and never reads `counters` at all.
+ * bound. `tables` compares the composed bound first and the retained relation-column count second, so
+ * a document over both reports the reason this profile already reported, and it never reads Σ`L²`.
  *
  * **Every observation this profile reads is proved comparable before the first comparison.** The
  * order that decides the answer and the order that decides "can I decide?" are not the same one: a
@@ -305,7 +335,7 @@ export function admit(measurement: ResourceMeasure, budget: ResourceBudget): Adm
 
   if (applied.profile === 'envelope') {
     // Both figures this profile reads, proved before either is compared. `tables` reads the composed
-    // bound only and reaches it below, so an unreadable Σ`L²` is not a fault there.
+    // bound and the relation-column count below, so an unreadable Σ`L²` is not a fault there.
     const relationValues = checkedObserved(
       measurement.counters.relationValueLengthSquares,
       'relationValueLengthSquares',
@@ -329,14 +359,24 @@ export function admit(measurement: ResourceMeasure, budget: ResourceBudget): Adm
     );
   }
 
+  // `tables` reads two figures. Both are proved comparable before either is compared, and the
+  // composed bound keeps its first place: adding a counter must not change which reason a document
+  // over both reports today.
+  const composedColumns = checkedObserved(
+    measurement.bounds.composedColumnsUpperBound.upperBound,
+    'composedColumnsUpperBound',
+  );
+  const relationColumns = checkedObserved(
+    measurement.counters.relationColumnCountUpperBound,
+    'relationColumnCountUpperBound',
+  );
+
   return (
+    refuseIfOver(composedColumns, applied.composedColumnsUpperBound, 'composedColumnsUpperBound') ??
     refuseIfOver(
-      checkedObserved(
-        measurement.bounds.composedColumnsUpperBound.upperBound,
-        'composedColumnsUpperBound',
-      ),
-      applied.composedColumnsUpperBound,
-      'composedColumnsUpperBound',
+      relationColumns,
+      applied.relationColumnCountUpperBound,
+      'relationColumnCountUpperBound',
     ) ?? { admitted: true }
   );
 }

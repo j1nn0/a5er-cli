@@ -37,8 +37,9 @@
  * Purity: the scan is read, never modified; the result is new and flat. No filesystem, process,
  * clock, environment or V8 heap figure is consulted, no parser or decoder is re-implemented, and
  * the same scan yields the same result. One pass over the sections and every section entry,
- * `O(S+E)` with `S` sections and `E` key plus raw-line entries, with a fixed-size group of
- * counters and no input-proportional intermediate array.
+ * `O(S+E+ΣL)` with `S` sections, `E` key plus raw-line entries and `ΣL` the UTF-16 code units of
+ * the `Fields1`/`Fields2` values, which are also walked once — character by character, allocating no
+ * list — with a fixed-size group of counters and no input-proportional intermediate array.
  *
  * Not to be confused with `src/text/tables.ts`, which has a private `measure(rows)` that measures
  * **column widths** for the `tables` renderer. Same word, unrelated job; this module never widens a
@@ -147,6 +148,30 @@ function checkedAdded(total: number, addend: number, field: string): number {
 function addValueSquare(total: number, length: number): number {
   const field = 'counters.relationValueLengthSquares';
   return checkedAdded(total, checkedProduct(length, length, field), field);
+}
+
+/**
+ * The relation columns one raw `Fields1`/`Fields2` value declares: `1 + its literal commas`.
+ *
+ * A character scan, not `split(',').length`: splitting would allocate an array and one substring per
+ * column, and this figure is read for every relation value of every document. The caller has already
+ * proven the value is a string (`checkedValueLength`), so no type check is repeated here.
+ */
+function relationColumnsOfValue(value: string): number {
+  let columns = 1;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value.charCodeAt(index) === 0x2c) columns += 1;
+  }
+  return columns;
+}
+
+/** `total + the relation columns one raw value declares`, the running total checked after the add. */
+function addRelationColumns(total: number, value: string): number {
+  return checkedAdded(
+    total,
+    relationColumnsOfValue(value),
+    'counters.relationColumnCountUpperBound',
+  );
 }
 
 /**
@@ -314,6 +339,42 @@ export interface ResourceCounters {
    * decisions that have not been made.
    */
   readonly relationValueLengthSquares: number;
+  /**
+   * Σ over every `Fields1`/`Fields2` key occurrence in a relation section of 1 + the number of
+   * literal commas in the raw value text, quoting and escapes included.
+   *
+   * `[Relationship]` counts as `Relation`, every duplicate key counts once per occurrence, a value
+   * with no text at all (`Fields1=`) adds `1`, and a `Fields1`/`Fields2` line in any other section
+   * adds nothing.
+   *
+   * **An upper bound on the columns the relation stage retains, not a promise of equality.** The
+   * element splitter yields one slice per comma outside quotes plus a final one, `readPart` maps each
+   * slice to exactly one part, and `columnsOf` turns each kept part into `commas + 1` columns
+   * (`src/semantic/relations.ts:188-193`), so one value declares exactly `1 + its literal commas`
+   * columns. On top of that the figure over-counts, always in the safe direction: an occurrence that
+   * `columnsOf` never reads (a later duplicate replaces it, it has no span, it fails to decode) is
+   * still counted in full, and a value whose trailing element is omitted contributes the one column
+   * that `columnsOf` drops. Equality therefore holds only where no `Fields1`/`Fields2` occurrence is
+   * replaced by a duplicate and no trailing element is omitted; the figure is never *below* the
+   * retained count.
+   *
+   * **The maintenance obligation.** That soundness depends on the grammar `columnsOf` implements:
+   * every literal comma outside double quotes becomes a column boundary, and no other separator
+   * exists. A change that adds a separator, CSV-style `""` doubling or any path by which a comma
+   * reaches a part's text from somewhere other than the raw value must re-derive this figure in the
+   * same change; the counter mirrors a grammar, not a measurement of its own.
+   *
+   * **Range.** Per value `commas + 1 ≤ L + 1 ≤ maxLineLength + 1` (4,194,305), and the running total
+   * is at most `occurrences × (maxLineLength + 1) ≤ 2,000,000 × 4,194,305 ≈ 8.4·10¹²`, far below
+   * `Number.MAX_SAFE_INTEGER`. It is accumulated through `checkedAdded()`, so an anomalous scan throws
+   * `ResourceMeasureError` instead of publishing a rounded figure.
+   *
+   * **Not an output-size bound.** It bounds the retained column records and the column-driven
+   * diagnostics of the relation path, not the bytes they hold, the heap behind them or the whole
+   * `tables` output: endpoint and required-key findings are linear in the relation count and are
+   * bounded by the pre-scan content-line ceiling instead (`architecture.md` §10.5).
+   */
+  readonly relationColumnCountUpperBound: number;
 }
 
 /**
@@ -400,10 +461,11 @@ function assertPublishedNumbers(value: unknown, path: string): void {
  * Returns a new record; the scan, its sections and its entries are only read. See the module
  * comment for why every figure here is a structural fact or a documented upper bound.
  *
- * The numbers and value types that come in and the numbers that go out are checked: every declared
  * numeric field of `scan.accounting` is read through `checkedCount()`, every section kind and every
- * `Fields1`/`Fields2` value is checked before it is counted, the two aggregates use
- * `checkedProduct()` and `checkedSum()`, and the finished counters and bounds are checked once more
+ * `Fields1`/`Fields2` value is checked before it is counted, the two bound aggregates use
+ * `checkedProduct()` and `checkedSum()`, the relation-column count and Σ`L²` are accumulated with the
+ * same `checkedAdded()` rule, and the finished counters and bounds are checked once more before they
+ * are returned.
  * before they are returned. A value that is not a non-negative safe integer — or that has the wrong
  * type for the field it feeds — throws `ResourceMeasureError`; there is no clamp, no rounding and no
  * fail-open path, because a bound that lost precision is not a bound. Normal scans are unaffected:
@@ -454,6 +516,7 @@ export function measure(scan: SyntaxScan): ResourceMeasure {
   let fields1ValueCodeUnits = 0;
   let fields2ValueCodeUnits = 0;
   let relationValueLengthSquares = 0;
+  let relationColumnCountUpperBound = 0;
 
   for (const section of scan.sections) {
     // The kind is checked before it is written: an undeclared one would otherwise create a NaN
@@ -486,11 +549,20 @@ export function measure(scan: SyntaxScan): ResourceMeasure {
           // ΣL² is accumulated one value at a time: no list of squares is built, so the extra
           // memory stays constant however many relation values the scan holds.
           relationValueLengthSquares = addValueSquare(relationValueLengthSquares, length);
+          // The same value feeds the column count, character by character: no split array.
+          relationColumnCountUpperBound = addRelationColumns(
+            relationColumnCountUpperBound,
+            entry.value,
+          );
         } else if (entry.key === 'Fields2') {
           const length = checkedValueLength(entry.value, 'counters.fields2ValueCodeUnits');
           fields2ValueCodeUnits += length;
           relationFields2Occurrences += 1;
           relationValueLengthSquares = addValueSquare(relationValueLengthSquares, length);
+          relationColumnCountUpperBound = addRelationColumns(
+            relationColumnCountUpperBound,
+            entry.value,
+          );
         }
       }
     }
@@ -539,6 +611,7 @@ export function measure(scan: SyntaxScan): ResourceMeasure {
       fields1ValueCodeUnits,
       fields2ValueCodeUnits,
       relationValueLengthSquares,
+      relationColumnCountUpperBound,
     },
     bounds: { composedColumnsUpperBound, relationColumnSlotsUpperBound },
     accounting,

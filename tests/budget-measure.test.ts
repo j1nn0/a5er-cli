@@ -133,6 +133,22 @@ function squaresOfScan(scan: SyntaxScan): number {
   return total;
 }
 
+/** 1 + literal commas over one scan's relation values, summed here rather than by the module. */
+function columnsOfScan(scan: SyntaxScan): number {
+  let total = 0;
+  for (const section of scan.sections) {
+    if (section.kind !== 'Relation') continue;
+    for (const entry of section.entries) {
+      if (entry.kind !== 'key') continue;
+      if (entry.key !== 'Fields1' && entry.key !== 'Fields2') continue;
+      let columns = 1;
+      for (const character of entry.value) if (character === ',') columns += 1;
+      total += columns;
+    }
+  }
+  return total;
+}
+
 /** Recursively freeze an input so any mutation attempt becomes a TypeError in strict mode. */
 function deepFreeze<T>(value: T): T {
   if (typeof value !== 'object' || value === null) return value;
@@ -716,6 +732,188 @@ describe('measure — the squares counter obeys the safe-integer rule', () => {
   });
 });
 
+// ── the relation-column count (F4-D1) ─────────────────────
+
+/**
+ * One `[Entity]` and a self-relation whose raw `Fields1`/`Fields2` lines are written verbatim.
+ *
+ * `relationSection()` quotes its arguments; these cases need the raw text exactly as a file would
+ * carry it (extra quotes, unquoted lists, an empty value), so the lines are built here.
+ */
+function relationRows(fields1: readonly string[], fields2: readonly string[]): string {
+  return (
+    `[Manager]\n${MANAGER_KEYS}` +
+    entitySection('a', `${FIELD('id')}\n${POSITION(1, 1)}`) +
+    `[Relation]\nEntity1="a"\nEntity2="a"\n` +
+    `${[...fields1, ...fields2].join('\n')}\n` +
+    'RelationType1=1\nRelationType2=3\nPosition="Main",0,100,100,100,R,R,""\n'
+  );
+}
+
+describe('measure — the relation-column count (E)', () => {
+  it('counts one plus every literal comma, case by case', () => {
+    // Every expectation is hand arithmetic on the raw value text — quotes and escapes included —
+    // never a copy of the implementation's output: `n` literal commas declare `n + 1` columns.
+    // `listed` is what the relation stage retains, derived from the code's own rule.
+    const cases: Array<{
+      readonly label: string;
+      readonly fields1: readonly string[];
+      readonly fields2: readonly string[];
+      readonly expected: number;
+      readonly listed: number;
+    }> = [
+      {
+        label: 'quoted list',
+        fields1: ['Fields1="a,b"'],
+        fields2: ['Fields2="id"'],
+        expected: 2 + 1,
+        listed: 2 + 1,
+      },
+      {
+        label: 'two quoted elements',
+        fields1: ['Fields1="a","b"'],
+        fields2: ['Fields2="id"'],
+        expected: 2 + 1,
+        listed: 2 + 1,
+      },
+      {
+        label: 'unquoted list',
+        fields1: ['Fields1=a,c'],
+        fields2: ['Fields2=id'],
+        expected: 2 + 1,
+        listed: 2 + 1,
+      },
+      {
+        label: 'trailing separator omits one declared slot',
+        fields1: ['Fields1=a,c,'],
+        fields2: ['Fields2=id'],
+        expected: 3 + 1,
+        listed: 2 + 1,
+      },
+      {
+        label: 'quoted empty element declares a slot',
+        fields1: ['Fields1="a",""'],
+        fields2: ['Fields2="id"'],
+        expected: 2 + 1,
+        listed: 2 + 1,
+      },
+      {
+        label: 'empty value is one empty slot',
+        fields1: ['Fields1='],
+        fields2: ['Fields2="id"'],
+        expected: 1 + 1,
+        listed: 1 + 1,
+      },
+      {
+        label: 'a value that is one comma',
+        fields1: ['Fields1=","'],
+        fields2: ['Fields2="id"'],
+        expected: 2 + 1,
+        listed: 2 + 1,
+      },
+      {
+        label: 'escaped comma is not an escape, so it still separates',
+        fields1: ['Fields1="a\\,b,c"'],
+        fields2: ['Fields2="id"'],
+        expected: 3 + 1,
+        listed: 3 + 1,
+      },
+      {
+        label: 'escaped backslash before a comma',
+        fields1: ['Fields1="a\\\\,b"'],
+        fields2: ['Fields2="id"'],
+        expected: 2 + 1,
+        listed: 2 + 1,
+      },
+      {
+        label: 'unterminated quote keeps the raw remainder as one element',
+        fields1: ['Fields1="a,b'],
+        fields2: ['Fields2="id"'],
+        expected: 2 + 1,
+        listed: 2 + 1,
+      },
+      {
+        label: 'padding around an element is trimmed, the comma still counts',
+        fields1: ['Fields1="a" , "b"'],
+        fields2: ['Fields2="id"'],
+        expected: 2 + 1,
+        listed: 2 + 1,
+      },
+    ];
+
+    for (const { label, fields1, fields2, expected, listed } of cases) {
+      const scan = scanOf(relationRows(fields1, fields2));
+
+      expect(measure(scan).counters.relationColumnCountUpperBound, label).toBe(expected);
+      // The same figure, computed here from the scan's own text by a separate walk.
+      expect(columnsOfScan(scan), label).toBe(expected);
+      expect(listedColumnSlots(scan), label).toBe(listed);
+    }
+  });
+
+  it('reports the unterminated-quote diagnostic at the decode stage, alongside the count', () => {
+    // The splitter runs in the registry stage, so the diagnostic is there; `measure()` itself is
+    // diagnostic-free and only counts the raw text.
+    const scan = scanOf(relationRows(['Fields1="a,b'], ['Fields2="id"']));
+
+    expect(classify(scan).diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      'S_COMPLEX_UNTERMINATED_QUOTE',
+    );
+    expect(measure(scan).counters.relationColumnCountUpperBound).toBe(2 + 1);
+  });
+
+  it('counts a duplicate key twice while the relation stage keeps one list', () => {
+    // The last decoded occurrence wins in `columnsOf`, so only two columns are retained; both
+    // occurrences are counted, which is the over-count the design documents as safe.
+    const scan = scanOf(relationRows(['Fields1="x,y,z"', 'Fields1="id"'], ['Fields2="id"']));
+
+    // `x,y,z` declares 3 columns, the replacing `id` one, and the second side's `id` one.
+    expect(measure(scan).counters.relationColumnCountUpperBound).toBe(3 + 1 + 1);
+    expect(listedColumnSlots(scan)).toBe(1 + 1);
+  });
+
+  it('ignores a Fields1 line that is not a key at all', () => {
+    // No `=`: the scanner keeps the line as a raw line, not a key, so nothing is declared.
+    const scan = scanOf(relationRows(['Fields1'], ['Fields2="id"']));
+
+    expect(measure(scan).counters.relationColumnCountUpperBound).toBe(1);
+    expect(measure(scan).counters.relationFields1Occurrences).toBe(0);
+  });
+
+  it('is blind to name length: one long single-column name still scores 1', () => {
+    // The property that separates this figure from the length-weighted slot bound and ΣL².
+    const longName = 'a'.repeat(5_000);
+    const scan = scanOf(relationRows([`Fields1="${longName}"`], [`Fields2="${longName}"`]));
+    const result = measure(scan);
+
+    expect(result.counters.relationColumnCountUpperBound).toBe(1 + 1);
+    expect(listedColumnSlots(scan)).toBe(1 + 1);
+    // The length-weighted figures see the name; the count does not.
+    expect(result.bounds.relationColumnSlotsUpperBound).toBeGreaterThan(5_000 + 5_000);
+    expect(result.counters.relationValueLengthSquares).toBeGreaterThan(25_000_000);
+  });
+
+  it('states the range precondition: occurrences × (maxLineLength + 1) stays a safe integer', () => {
+    // `maxLines` is 2,000,000 and `maxLineLength` is 4 MiB (§10.2), so the running total cannot
+    // leave the safe-integer range on any document the reader accepts.
+    const perValue = 4 * 1024 * 1024 + 1;
+
+    expect(2_000_000 * perValue).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER);
+    expect(Number.isSafeInteger(2_000_000 * perValue)).toBe(true);
+  });
+
+  it('refuses a non-string value before any column is added', () => {
+    // The value is proven a string first: a hand-built entry cannot smuggle a fake length in.
+    const scan = scanWithRelationEntries([
+      { key: 'Fields1', value: '"a,b"' },
+      { key: 'Fields2', value: { length: 2 } },
+    ]);
+
+    expect(() => measure(scan)).toThrow(
+      'measure(): counters.fields2ValueCodeUnits has a non-string value',
+    );
+  });
+});
 // ── every committed synthetic fixture ──────────────────────────────────────
 
 describe('measure — the committed synthetic fixtures', () => {
@@ -776,14 +974,19 @@ describe('measure — the committed synthetic fixtures', () => {
   });
 
   it('adds exactly one numeric leaf to a measurement', () => {
-    // 16 counters (with the nine `sectionsByKind` numbers) plus 4 bound numbers: the quadratic
-    // proxy is the only leaf this unit adds, and no existing leaf disappears.
+    // 17 counters (with the nine `sectionsByKind` numbers) plus 4 bound numbers: the quadratic
+    // proxy and the relation-column count are the leaves this unit adds, and no existing leaf
+    // disappears.
     for (const spec of SYNTHETIC) {
       const leaves = numericLeaves(measure(scanOfFixture(spec.id))).map(([path]) => path);
 
-      expect(leaves, spec.id).toHaveLength(28);
+      expect(leaves, spec.id).toHaveLength(29);
       expect(
         leaves.filter((path) => path === 'counters.relationValueLengthSquares'),
+        spec.id,
+      ).toHaveLength(1);
+      expect(
+        leaves.filter((path) => path === 'counters.relationColumnCountUpperBound'),
         spec.id,
       ).toHaveLength(1);
     }
@@ -797,6 +1000,25 @@ describe('measure — the committed synthetic fixtures', () => {
       const actual = listedColumnSlots(scan);
 
       if (actual > bound) violations.push(`${spec.id}: ${actual} > ${bound}`);
+    }
+
+    expect(violations).toEqual([]);
+  });
+
+  it('derives the relation-column count from every fixture’s own values, and never below the listed columns', () => {
+    // Both sides of the invariant, stated separately: the count is exactly the hand sum over the
+    // fixture's own raw values (so the figure cannot drift from its definition), and it is at least
+    // the columns the relation stage lists (the property admission relies on). Equality is not
+    // asserted: a duplicate key or an omitted trailing element over-counts by one per value.
+    const violations: string[] = [];
+    for (const spec of SYNTHETIC) {
+      const scan = scanOfFixture(spec.id);
+      const counted = columnsOfScan(scan);
+      const measured = measure(scan).counters.relationColumnCountUpperBound;
+      const listed = listedColumnSlots(scan);
+
+      expect(measured, spec.id).toBe(counted);
+      if (measured < listed) violations.push(`${spec.id}: ${measured} < ${listed}`);
     }
 
     expect(violations).toEqual([]);
@@ -1226,8 +1448,9 @@ describe('measure — unknown-section keys stay inside §13’s one counter', ()
     );
   });
 
-  it('publishes exactly the sixteen declared counters', () => {
-    // The quadratic proxy is the one approved addition; nothing else appears or disappears.
+  it('publishes exactly the seventeen declared counters', () => {
+    // The quadratic proxy and the relation-column count are the approved additions; nothing else
+    // appears or disappears.
     expect(Object.keys(measureOf('').counters).sort()).toEqual(
       [
         'entityFieldOccurrences',
@@ -1235,6 +1458,7 @@ describe('measure — unknown-section keys stay inside §13’s one counter', ()
         'fields1ValueCodeUnits',
         'fields2ValueCodeUnits',
         'managerCommonFieldOccurrences',
+        'relationColumnCountUpperBound',
         'relationFields1Occurrences',
         'relationFields2Occurrences',
         'relationValueLengthSquares',

@@ -844,13 +844,16 @@ already held 594 MiB at the end of it (§10.3). What the two figures count, exac
   blank lines are §7.4's non-data and are excluded; every other physical line is counted, including
   unknown keys and malformed lines.
 
-**The post-scan gate (U5-ADMIT1) then decides what only the scan can see.** Two stages amplify, so
-each gets one counter: the relation stage turns one `Fields1`/`Fields2` value into a column list
-whose work grows with the value's length, and common columns give every entity that adopts them the
-document's whole `CommonField` list, so that work grows with `[Entity]` sections × declarations.
-`relationValueLengthSquares` therefore targets the relation stage's quadratic amplification and
-`composedColumnsUpperBound` the entity × common-column composition — two proxies for downstream
-work, not a measurement of memory (§10.3).
+**The post-scan gate (U5-ADMIT1) then decides what only the scan can see.** Three figures, each
+for a cost the scan reveals: the relation stage turns one `Fields1`/`Fields2` value into a column
+list whose work grows with the value's length and whose retained columns the `tables` projection
+writes a diagnostic for when their endpoint does not resolve; common columns give every entity that
+adopts them the document's whole `CommonField` list, so that work grows with `[Entity]` sections ×
+declarations. `relationValueLengthSquares` therefore targets the relation stage's quadratic
+amplification, `relationColumnCountUpperBound` the columns it retains (one plus every literal comma
+in the raw value text — an upper bound, since a duplicate occurrence and an omitted trailing element
+only over-count), and `composedColumnsUpperBound` the entity × common-column composition — three
+proxies for downstream work, not a measurement of memory (§10.3).
 
 | Counter | Gate | How it is measured (§13) | Profiles |
 |---|---|---|---|
@@ -858,13 +861,15 @@ work, not a measurement of memory (§10.3).
 | `contentLineOccurrences` | pre-scan | section headers + `key=value` lines + raw lines; comments and blanks excluded | `inspect`, `validate`, `tables` |
 | `relationValueLengthSquares` | post-scan | Σ`L²` over every `Fields1`/`Fields2` value in a relation section, `L` the raw value's UTF-16 code-unit length — quoting and escapes included, the same unit as `String.length` | `inspect`, `validate` |
 | `composedColumnsUpperBound` | post-scan | `[Entity]` section count × `CommonField=` line count — an upper bound, since a declaration that fails to decode can only shrink the real count | `inspect`, `validate`, `tables` |
+| `relationColumnCountUpperBound` | post-scan | Σ over every `Fields1`/`Fields2` value in a relation section of 1 + the number of literal commas in the raw value text — an upper bound on the columns the relation stage retains | `tables` |
 
 **Two profiles, and the absence of Σ`L²` for `tables` is structural.** `tables` renders a projection
 of the same record and holds no relation text, so it has no Σ`L²` ceiling at all: the member does not
 exist on its budget type, rather than being set to a value large enough to never fire. `inspect` and
-`validate` build one envelope string from all four stages and cap all four figures. `tables` caps the
-composed bound and both pre-scan figures, because the scan the pre-scan gate protects runs for
-`tables` too.
+`validate` build one envelope string from all four stages and cap all four figures they read.
+`tables` caps the composed bound, the retained relation-column count and both pre-scan figures,
+because the scan the pre-scan gate protects runs for `tables` too — and it pays for the relation
+columns it retains, one diagnostic per unresolved one.
 
 | Figure | Ceiling | Profiles |
 |---|---|---|
@@ -875,12 +880,22 @@ composed bound and both pre-scan figures, because the scan the pre-scan gate pro
 | Σ`L²` (`relationValueLengthSquares`) | 134,217,728 (2²⁷) | `inspect`, `validate` |
 | composed columns (`composedColumnsUpperBound`) | 524,288 (2¹⁹) | `inspect`, `validate` |
 | composed columns (`composedColumnsUpperBound`) | 4,194,304 (2²²) | `tables` |
+| relation columns (`relationColumnCountUpperBound`) | 32,768 (2¹⁵) | `tables` |
 
+
+**What the relation-column count does not bound.** Endpoint findings (`V_DANGLING_ENTITY`, up to two
+per relation) and missing-required-key findings (one per relation section) are linear in the
+**relation count**, not in the column count, and are bounded by the pre-scan content-line ceiling
+instead. The figure also leaves out the bytes the retained columns hold (each keeps its element's
+text), the transient arrays built while decoding a value, and the size of the whole `tables`
+document. It is a bound on retained relation columns and on the column-driven diagnostics, not on
+the command's output.
 The comparison is `observed <= ceiling`: a document exactly at a ceiling is admitted, one past it is
 refused. The pre-scan gate compares `entityFieldOccurrences` first, so a document over both reports
-the `Field` count; the post-scan gate compares Σ`L²` first, so a document over both reports the
-relation value proxy. In both gates, every figure the profile reads is proved comparable before the
-first comparison. Nothing is clamped, rounded or saturated — an observation that cannot be read as a
+the `Field` count; the post-scan gate compares Σ`L²` first on the envelope profile, so a document over
+both reports the relation value proxy, and the composed bound first on `tables`, so a document over
+both there reports the composition. In both gates, every figure the profile reads is proved
+comparable before the first comparison. Nothing is clamped, rounded or saturated — an observation that cannot be read as a
 non-negative safe integer, or a ceiling that cannot be read as a positive safe integer, is an
 internal defect (`ResourceMeasureError`, `ResourceAdmissionError`) and never a refusal, because a
 refusal is a statement about a document and a caller defect is not. There are no environment
@@ -891,7 +906,7 @@ the ceilings that profile caps, and `createPipeline(budget)` takes that one argu
 be paired with ceilings that decide against something else, because there is no second value to pass.
 Construction resolves the budget through `withResourceBudget()`, which accepts exactly the two profile
 values at runtime — an unknown, empty, mistyped or missing `profile` throws `ResourceAdmissionError`
-rather than falling into the `tables` branch — and re-checks all seven ceilings. A bad configuration
+rather than falling into the `tables` branch — and re-checks all eight ceilings. A bad configuration
 is therefore a defect that stops the pipeline **before any file is opened**, while a document over a
 ceiling is a refusal; the two are never the same answer. `src/cli.ts` passes
 `DEFAULT_RESOURCE_BUDGETS.envelope` and `src/tables-command.ts` `DEFAULT_RESOURCE_BUDGETS.tables`, and
@@ -960,10 +975,14 @@ not share one kind of evidence, so they are stated apart.
   peak RSS at whole-command granularity (docs/proposals/human-cli.md §7.1, §10.3), none of them a refusal boundary for any
   counter, and those figures neither prove nor disconfirm these three numbers. Whether they sit above
   or below the real boundary is unknown.
-- All seven ceilings, the anchored 200,000 included, are **operating thresholds this build ships**,
+- All eight ceilings, the anchored 200,000 included, are **operating thresholds this build ships**,
   not measured boundaries. None carries a proven relation to heap or RSS usage, and they are expected
   to move once F-4 ([issue #27](https://github.com/j1nn0/a5er-cli/issues/27)) measures where the
-  boundary really is.
+  boundary really is. The F4-D1 relation-column ceiling is the one whose *value* is a recorded policy
+  choice rather than an operational judgement: it is a column budget, so a long name cannot reach it,
+  and the committed corpus measures at most 5 columns against its 32,768.
+
+*Inference from the recorded shapes, and it is static rather than reproduced.* Both readings below
 
 *Inference from the recorded shapes, and it is static rather than reproduced.* Both readings below
 follow from the counter definitions in this section, not from a new run. The recorded
@@ -980,7 +999,7 @@ measurement backs it.
 document with few lines and very long values passes the pre-scan gate and is decided by the
 post-scan ceilings, or by neither, exactly as before. A single line is bounded by `maxLineLength`
 (4 MiB) and the file by `maxBytes`, so the residual risk for a mixed document — many sections and a
-few very long values — is the one §10.3 describes: a document below all seven ceilings can still
+few very long values — is the one §10.3 describes: a document below all eight ceilings can still
 exhaust a small heap or reach the engine's string limit. A refusal is therefore a **cost bound, not
 a safety proof**.
 
@@ -989,7 +1008,7 @@ to pass Σ`L²`, with more than 524,288 composed columns — the bound is `[Enti
 `CommonField=` declarations, so one section needs that many declarations and two need half of them —
 or with more than 200,000 `Field=` lines in its entity sections or more than 400,000 content lines
 (the envelope profile's values; `tables` sits higher), is refused although it might have completed.
-**False negatives** are expected: a document under all seven ceilings can still exhaust the heap or
+**False negatives** are expected: a document under all eight ceilings can still exhaust the heap or
 reach the string limit below them, because the recorded failures were driven by line counts,
 envelope size and name length, and only the line counts are bounded here. The gate never claims the
 file is invalid — the diagnostics before it are silent about correctness.
@@ -1000,7 +1019,7 @@ stdout-, stderr- and exit-code-identical to the pre-gate build, 156 of 156 (`tes
 G-10), and the same 156 of 156 holds against the build before the pre-scan gate was added. The one
 behaviour change is intentional and new: a document above a ceiling that used to be processed —
 expensively — is now refused, and a document past a pre-scan ceiling is now refused before its scan
-runs. A document **below all seven ceilings** behaves as it did, and that includes the cases where
+runs. A document **below all eight ceilings** behaves as it did, and that includes the cases where
 the heap runs out (§10.3): the gate was not built to catch those.
 
 ---
@@ -1051,7 +1070,7 @@ Initial code list (frozen enough to test against, not a promise of completeness)
 | `E_IO`, `E_NOT_A_FILE`, `E_EMPTY_INPUT`, `E_BINARY_INPUT` | fatal | cannot treat input as text |
 | `E_TRUNCATED_INPUT` | fatal | the OS returned fewer bytes than the file declared — a partial read, refused |
 | `E_LIMIT_BYTES`, `E_LIMIT_LINES`, `E_LIMIT_LINE_LENGTH` | fatal | a documented limit refused the whole file — nothing was partially accepted |
-| `E_LIMIT_BUDGET` | fatal | the document would cost more downstream work than the processing budget allows — measured from the decoded text before the scan (`Field=` and content-line counts) and from the scan before the classification (Σ`L²` and the composed bound, §10.5); `details` carry `counter`, `observed`, `ceiling` and no file text (§12) |
+| `E_LIMIT_BUDGET` | fatal | the document would cost more downstream work than the processing budget allows — measured from the decoded text before the scan (`Field=` and content-line counts) and from the scan before the classification (Σ`L²`, the composed bound and the `tables` relation-column count, §10.5); `details` carry `counter`, `observed`, `ceiling` and no file text (§12) |
 | `E_UNDECODABLE`, `E_CODEC_UNAVAILABLE` | fatal | no strict decoder succeeded |
 | `E_UNRECOGNIZED_DOCUMENT`, `E_FILE_CHANGED_DURING_READ` | fatal | not an a5er, or unstable input |
 | `D_BOM_MISSING`, `D_ENCODING_ASSUMED` | info | spec-preferred form absent |
@@ -1227,12 +1246,13 @@ for, and `E_LIMIT_BUDGET` (§10.5) is the first of those to arrive after `0.1.0`
 
 **A new `counter` value is data too.** `E_LIMIT_BUDGET.details.counter` is a string inside the
 details record, and the set of values it can take grew when the pre-scan gate added
-`entityFieldOccurrences` and `contentLineOccurrences` (§10.5). Nothing about the envelope changes:
+`entityFieldOccurrences` and `contentLineOccurrences`, and again when F4-D1 added
+`relationColumnCountUpperBound` to the `tables` profile (§10.5). Nothing about the envelope changes:
 the ten members, their order and the meaning of every existing value are as they were, so
 `contractVersion` stays `0.1.0` for the same reason a new diagnostic code does. A consumer that
 types `counter` as a string, or ignores it and decides from `severity`, needs no change. A
-**strict-enum** consumer whose `counter` type enumerates the previous two values must add the two
-new ones to compile against a pre-scan refusal — the same obligation the strict-enum `code` consumer
+**strict-enum** consumer whose `counter` type enumerates the values it knew must add the ones it did
+not to compile against a refusal from that gate — the same obligation the strict-enum `code` consumer
 below already has.
 
 **The intentional part is an outcome change, not a shape change, and the two gates add refusal
