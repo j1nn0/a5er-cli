@@ -121,6 +121,27 @@ jobs:
             exit 1
           fi
 
+      # The GitHub Release body is the curated notes file stored in the
+      # repository, not a string this workflow builds from the tag. Refuse to
+      # publish without one, so the npm release and its Release page can never
+      # disagree about what the version contains. There is no generic fallback,
+      # and the check sits after the refusal above so a re-run of an older tag
+      # still stops with the already-published message rather than this one.
+      - name: Require curated release notes for this version
+        shell: bash
+        run: |
+          NOTES="docs/releases/${GITHUB_REF_NAME}.md"
+          if [ ! -f "$NOTES" ]; then
+            echo "missing release notes: $NOTES"
+            exit 1
+          fi
+          # A notes file of only blank lines cannot become a Release body.
+          if ! grep -q '[^[:space:]]' "$NOTES"; then
+            echo "release notes are blank: $NOTES"
+            exit 1
+          fi
+          echo "release notes found: $NOTES ($(wc -c < "$NOTES") bytes)"
+
       - name: Inspect the publish candidate tarball
         shell: bash
         run: |
@@ -224,12 +245,29 @@ jobs:
       contents: write
     timeout-minutes: 10
     steps:
+      # The Release body is the curated notes file, so this job needs the
+      # repository content at the exact tagged commit. The action is pinned to
+      # the same commit as the checkout in the release job above.
+      - name: Checkout the tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
       - name: Create GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${GITHUB_REF_NAME}"
-          VER="${TAG#v}"
+          NOTES="docs/releases/${TAG}.md"
+          # The release job already refused a tag that is not vX.Y.Z and a version
+          # without notes. Re-check both here so the --notes-file argument is never
+          # built from a value this job has not validated itself.
+          if ! [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "not a stable version tag: ${TAG}"
+            exit 1
+          fi
+          if ! grep -q '[^[:space:]]' "$NOTES"; then
+            echo "release notes are missing or blank: $NOTES"
+            exit 1
+          fi
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" \
-            --notes "Release $TAG of @j1nn0/a5er-cli ($VER), published to npm as @j1nn0/a5er-cli@$VER. Install with: npm install -g @j1nn0/a5er-cli@$VER"
+            --notes-file "$NOTES"
