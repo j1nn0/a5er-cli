@@ -35,7 +35,7 @@
  * `strictReplacer` gains an `export` and no behaviour (§5.8, S-3).
  */
 
-import type { JsonColumnsEnvelope, JsonTablesEnvelope } from './envelope.js';
+import type { JsonColumnsEnvelope, JsonRelationsEnvelope, JsonTablesEnvelope } from './envelope.js';
 import { strictReplacer } from './serialize.js';
 
 /** At most this many code units per escaped string slice (§5.10). */
@@ -230,7 +230,7 @@ function* buffered(source: Iterable<string>): Generator<string, void, undefined>
 
 /** Every piece of the document, ending with the one newline the command writes (§3.6). */
 function* documentPieces(
-  document: JsonTablesEnvelope | JsonColumnsEnvelope,
+  document: JsonTablesEnvelope | JsonColumnsEnvelope | JsonRelationsEnvelope,
 ): Generator<string, void, undefined> {
   // The root holder is `{ '': document }`, which is what `JSON.stringify` hands its replacer.
   const root: Record<string, unknown> = { '': document };
@@ -246,6 +246,8 @@ function* documentPieces(
  * The last chunk ends with `\n`, so the whole stream is one JSON document plus the newline that
  * ends it.
  */
-export function encodeJson(document: JsonTablesEnvelope | JsonColumnsEnvelope): Iterable<string> {
+export function encodeJson(
+  document: JsonTablesEnvelope | JsonColumnsEnvelope | JsonRelationsEnvelope,
+): Iterable<string> {
   return buffered(documentPieces(document));
 }

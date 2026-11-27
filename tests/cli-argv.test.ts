@@ -14,12 +14,15 @@
  *    included; the leftmost violation wins;
  * 2. the post-scan checks: help, version, a command, a non-empty operand, no third operand, and a
  *    format the chosen command accepts;
- * 3. what `tables` changed: it is a command now, so `tables` alone reports a missing file operand
+ * 3. what `tables` and `relations` changed: both are commands now, so each reports its own operand
+ *    errors instead of an unknown command, and `inspect`/`validate` refuse `--format text` by name;
  *    instead of an unknown command, and `inspect`/`validate` refuse `--format text` by name;
  * 4. `quoteArg`: printable ASCII is unchanged, and an argument holding a code point of §4.4.2's
  *    escape set reaches stderr as its `\uXXXX` escape, never raw.
  *
- * The help text is compared byte for byte with §3.4's block. It is copied from the specification,
+ * The help text is compared byte for byte with §3.4's block, plus the `relations` lines this build
+ * adds (the proposal is not edited). It is written out here, not blessed from the implementation's
+ * output.
  * not blessed from the implementation's output.
  */
 
@@ -71,6 +74,7 @@ const HELP_LINES = [
   '  a5er validate [--format json] <file>',
   '  a5er tables [--format text|json] <file>',
   '  a5er columns [--format text|json] <file> <name>',
+  '  a5er relations [--format text|json] <file>',
   '  a5er --help',
   '  a5er --version',
   '',
@@ -82,27 +86,31 @@ const HELP_LINES = [
   '                   default, one JSON envelope with --format json',
   "  columns          List one entity's columns, selected by exact physical name;",
   '                   text by default, one JSON envelope with --format json',
+  "  relations        List every relation the file declares, with its endpoints'",
+  '                   resolution; text by default, one JSON envelope with --format',
+  '                   json',
   '',
   'Options:',
   '  --format FORMAT  Output format. inspect and validate: json (the default and',
-  '                   only format). tables and columns: text (the default) or json',
+  '                   only format). tables, columns and relations: text (the default)',
+  '                   or json',
   '  -h, --help       Show this help and exit',
   '  -v, --version    Print the version and exit',
   '',
   'Exit codes:',
-  '  0   The read was not fatal (inspect, tables and columns, degraded included)',
-  '      and validate found no error-severity finding',
+  '  0   The read was not fatal (inspect, tables, columns and relations, degraded',
+  '      included) and validate found no error-severity finding',
   '  1   The file could not be read into a schema (fatal diagnostic)',
   '  2   Command-line misuse; nothing is read, and stdout stays empty',
   '  3   validate found an error-severity finding',
   '  4   columns selected no single entity or view; nothing is written to stdout',
-  '  70  tables or columns failed internally while generating its output; stdout',
-  '      is incomplete',
-  '  74  tables or columns could not write its output (a write error other than a',
-  '      closed pipe, or stdout closed early); stdout is incomplete',
+  '  70  tables, columns or relations failed internally while generating its output;',
+  '      stdout is incomplete',
+  '  74  tables, columns or relations could not write its output (a write error other',
+  '      than a closed pipe, or stdout closed early); stdout is incomplete',
   '',
   'With --format json, stdout carries exactly one JSON envelope and nothing else.',
-  "tables and columns text is one table plus note lines that start with '#'.",
+  "tables, columns and relations text is one table plus note lines that start with '#'.",
   'Human-readable lines for fatal and error diagnostics go to stderr.',
 ];
 
@@ -116,6 +124,7 @@ const USAGE_LINES = [
   '  a5er validate [--format json] <file>',
   '  a5er tables [--format text|json] <file>',
   '  a5er columns [--format text|json] <file> <name>',
+  '  a5er relations [--format text|json] <file>',
   '  a5er --help | --version',
 ];
 
@@ -225,21 +234,29 @@ describe('a5er argv — the scan rules of §3.2', () => {
 });
 
 describe('a5er argv — the post-scan checks of §3.2', () => {
-  it('names all four commands in the missing-command message', async () => {
+  it('names every command in the missing-command message', async () => {
     await expectMisuse(
       ['--format', 'json'],
-      'missing a command (inspect, validate, tables or columns)',
+      'missing a command (inspect, validate, tables, columns or relations)',
     );
   });
 
   it('refuses a word that is not a command', async () => {
     await expectMisuse(['search', '/tmp/never-read.a5er'], 'unknown command "search"');
     await expectMisuse(['export', '/tmp/never-read.a5er'], 'unknown command "export"');
-    await expectMisuse(['relations', '/tmp/never-read.a5er'], 'unknown command "relations"');
+    // `relations` is a command too, so the example is a word the roadmap still holds back.
+    await expectMisuse(['annotate', '/tmp/never-read.a5er'], 'unknown command "annotate"');
   });
 
-  it('accepts tables as a command: its operand errors are operand errors', async () => {
+  it('accepts tables and relations as commands: their operand errors are operand errors', async () => {
     // No `unknown command "tables"` any more, and the parse stops before any file is opened.
+    // `relations` takes the same one operand, so the same rule applies to it.
+    await expectMisuse(['relations'], 'missing the file operand for relations');
+    await expectMisuse(
+      ['relations', 'a.a5er', 'b.a5er'],
+      'extra operand "b.a5er"; exactly one file is read',
+    );
+    await expectMisuse(['relations', '--format', 'text'], 'missing the file operand for relations');
     await expectMisuse(['tables'], 'missing the file operand for tables');
     await expectMisuse(
       ['tables', 'a.a5er', 'b.a5er'],

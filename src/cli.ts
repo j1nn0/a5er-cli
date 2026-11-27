@@ -2,11 +2,12 @@
 /**
  * `a5er` command-line entry point.
  *
- * Four commands read a `.a5er` file: `inspect`, `validate`, `tables` and `columns`. All four run
- * the one pipeline `src/pipeline.ts` owns — `loadSource` → `scanSource` → `measure` → `admit` →
- * `classify` → `derivePartialSemantics` — and hand the stage results to `integrate()` for the exit
- * policy and to `serialize()` for the envelope. Nothing about the file is decided here: the exit
- * code is `integrate().exitPolicy[command]` (`architecture.md` §11, §12, §17 TBD-O7), and the bytes
+ * Five commands read a `.a5er` file: `inspect`, `validate`, `tables`, `columns` and `relations`. All
+ * five run the one pipeline `src/pipeline.ts` owns — `loadSource` → `scanSource` → `measure` →
+ * `admit` → `classify` → `derivePartialSemantics` — and hand the stage results to `integrate()` for
+ * the exit policy and to `serialize()` for the envelope. Nothing about the file is decided here: the
+ * exit code is `integrate().exitPolicy[command]` (`architecture.md` §11, §12, §17 TBD-O7), and the
+ * bytes
  * on stdout are `toJsonString()` plus the one trailing newline that §12's
  * one-envelope-per-invocation rule implies. A document the admission gate refuses arrives here as a
  * `failed` read, so the refusal needs no case of its own: it is the fatal family's envelope with
@@ -15,8 +16,9 @@
  * `inspect` and `validate` differ only in the exit policy and the `command` member. `tables` reads
  * the same bytes and prints a projection of the same envelope — text by default, one JSON document
  * with `--format json` (`docs/proposals/human-cli.md` §3–§5); `columns` prints one selected
- * object's columns the same way. Both are written through the bounded writer of `src/io/stdout.ts`
- * (`src/tables-command.ts`, `src/columns-command.ts`), because they may stream output far larger
+ * object's columns the same way, and `relations` lists every relation the file declares. All three
+ * are written through the bounded writer of `src/io/stdout.ts` (`src/tables-command.ts`,
+ * `src/columns-command.ts`, `src/relations-command.ts`), because they may stream output far larger
  * than one string; `inspect` and `validate` keep their single synchronous write and their
  * one-string stderr unchanged (§3.10, F-1).
  *
@@ -33,7 +35,7 @@
  *
  * **Scope.** `--format json` is accepted and is the only format. The commands the roadmap still
  * holds back are not part of this build: they do not parse as commands, so they exit `2` with the
- * usage block, and the help text names only the three that exist.
+ * usage block, and the help text names only the commands that exist.
  *
  * The executable bit is not stored in this repository. `package.json#bin` points npm/pnpm at
  * `dist/cli.js`, and the package manager sets the mode when the package is linked or installed;
@@ -43,7 +45,13 @@
 import { DEFAULT_RESOURCE_BUDGETS } from './budget/index.js';
 import { VERSION } from './index.js';
 import { runColumnsCommand } from './columns-command.js';
-import type { JsonColumnsCommand, JsonCommand, JsonTablesCommand } from './json/index.js';
+import { runRelationsCommand } from './relations-command.js';
+import type {
+  JsonColumnsCommand,
+  JsonCommand,
+  JsonRelationsCommand,
+  JsonTablesCommand,
+} from './json/index.js';
 import { serialize, toJsonString } from './json/index.js';
 import { createPipeline } from './pipeline.js';
 import { runTablesCommand } from './tables-command.js';
@@ -54,11 +62,11 @@ import { integrate } from './validate/index.js';
 // re-exports it here so the misuse messages keep their bytes.
 import { quoteArg } from './text/index.js';
 
-/** The formats a command can be asked for; `text` is a known value, accepted only by `tables`. */
+/** The formats a command can be asked for; `text` is accepted only by the listing commands. */
 type OutputFormat = 'text' | 'json';
 
-/** Every command this CLI parses: `JsonCommand` plus the two whose documents are projections. */
-type CliCommand = JsonCommand | JsonTablesCommand | JsonColumnsCommand;
+/** Every command this CLI parses: `JsonCommand` plus the three whose documents are projections. */
+type CliCommand = JsonCommand | JsonTablesCommand | JsonColumnsCommand | JsonRelationsCommand;
 
 const HELP = `a5er — read-only CLI for A5:SQL Mk-2 ER diagram (.a5er) files
 
@@ -67,6 +75,7 @@ Usage:
   a5er validate [--format json] <file>
   a5er tables [--format text|json] <file>
   a5er columns [--format text|json] <file> <name>
+  a5er relations [--format text|json] <file>
   a5er --help
   a5er --version
 
@@ -78,27 +87,31 @@ Commands:
                    default, one JSON envelope with --format json
   columns          List one entity's columns, selected by exact physical name;
                    text by default, one JSON envelope with --format json
+  relations        List every relation the file declares, with its endpoints'
+                   resolution; text by default, one JSON envelope with --format
+                   json
 
 Options:
   --format FORMAT  Output format. inspect and validate: json (the default and
-                   only format). tables and columns: text (the default) or json
+                   only format). tables, columns and relations: text (the default)
+                   or json
   -h, --help       Show this help and exit
   -v, --version    Print the version and exit
 
 Exit codes:
-  0   The read was not fatal (inspect, tables and columns, degraded included)
-      and validate found no error-severity finding
+  0   The read was not fatal (inspect, tables, columns and relations, degraded
+      included) and validate found no error-severity finding
   1   The file could not be read into a schema (fatal diagnostic)
   2   Command-line misuse; nothing is read, and stdout stays empty
   3   validate found an error-severity finding
   4   columns selected no single entity or view; nothing is written to stdout
-  70  tables or columns failed internally while generating its output; stdout
-      is incomplete
-  74  tables or columns could not write its output (a write error other than a
-      closed pipe, or stdout closed early); stdout is incomplete
+  70  tables, columns or relations failed internally while generating its output;
+      stdout is incomplete
+  74  tables, columns or relations could not write its output (a write error other
+      than a closed pipe, or stdout closed early); stdout is incomplete
 
 With --format json, stdout carries exactly one JSON envelope and nothing else.
-tables and columns text is one table plus note lines that start with '#'.
+tables, columns and relations text is one table plus note lines that start with '#'.
 Human-readable lines for fatal and error diagnostics go to stderr.
 `;
 
@@ -107,6 +120,7 @@ const USAGE = `Usage:
   a5er validate [--format json] <file>
   a5er tables [--format text|json] <file>
   a5er columns [--format text|json] <file> <name>
+  a5er relations [--format text|json] <file>
   a5er --help | --version`;
 
 /** Long and short spellings accepted by this build. */
@@ -114,13 +128,13 @@ const HELP_FLAGS: readonly string[] = ['--help', '-h'];
 const VERSION_FLAGS: readonly string[] = ['--version', '-v'];
 
 /**
- * The four commands this build implements, and the only ones the help text may name.
+ * The five commands this build implements, and the only ones the help text may name.
  *
- * Wider than `JsonCommand`, which stays `inspect | validate`: `tables` and `columns` each emit a
- * different document (`docs/proposals/human-cli.md` §5.1), so adding them there would change the
- * schema envelope's contract instead of adding to it.
+ * Wider than `JsonCommand`, which stays `inspect | validate`: `tables`, `columns` and `relations`
+ * each emit a different document (`docs/proposals/human-cli.md` §5.1, `docs/architecture.md` §12), so
+ * adding them there would change the schema envelope's contract instead of adding to it.
  */
-const COMMANDS: readonly CliCommand[] = ['inspect', 'validate', 'tables', 'columns'];
+const COMMANDS: readonly CliCommand[] = ['inspect', 'validate', 'tables', 'columns', 'relations'];
 
 /**
  * The output-format flag and the values it accepts (§3.2).
@@ -140,7 +154,9 @@ interface CliResult {
 }
 
 /**
- * How argv parsed. The `command` and `tables` arms are the only ones that read a file; the other
+ * How argv parsed. The `command`, `tables` and `relations` arms are the only ones that read a file;
+ * the other four are decided from the tokens alone, which is what keeps misuse off the filesystem
+ * and stdout empty.
  * three are decided from the tokens alone, which is what keeps misuse off the filesystem and
  * stdout empty.
  */
@@ -150,6 +166,7 @@ type Parsed =
   | { readonly kind: 'version' }
   | { readonly kind: 'command'; readonly command: JsonCommand; readonly path: string }
   | { readonly kind: 'tables'; readonly path: string; readonly format: OutputFormat }
+  | { readonly kind: 'relations'; readonly path: string; readonly format: OutputFormat }
   | {
       readonly kind: 'columns';
       readonly path: string;
@@ -242,7 +259,10 @@ function parse(argv: readonly string[]): Parsed {
 
   const command = tokenAt(operands, 0);
   if (command === null)
-    return { kind: 'misuse', message: 'missing a command (inspect, validate, tables or columns)' };
+    return {
+      kind: 'misuse',
+      message: 'missing a command (inspect, validate, tables, columns or relations)',
+    };
   if (!isCommand(command))
     return { kind: 'misuse', message: `unknown command ${quoteArg(command)}` };
 
@@ -274,7 +294,9 @@ function parse(argv: readonly string[]): Parsed {
     };
   }
 
-  if (command === 'tables') return { kind: 'tables', path, format: format ?? 'text' };
+  if (command === 'tables' || command === 'relations') {
+    return { kind: command, path, format: format ?? 'text' };
+  }
 
   if (format === 'text') {
     return {
@@ -336,13 +358,16 @@ function run(command: JsonCommand, path: string): CliResult {
 /**
  * What one invocation is: two streams to write, or a command that owns its own writer.
  *
- * `inspect` and `validate` return the finished bytes, exactly as they always have. `tables` cannot:
+ * `inspect` and `validate` return the finished bytes, exactly as they always have. `tables`,
+ * `columns` and `relations` cannot: their output is streamed through `src/io/stdout.ts`, which
+ * resolves with the exit code, so the entry point awaits them instead of writing here.
  * its output is streamed through `src/io/stdout.ts`, which resolves with the exit code, so the
  * entry point awaits it instead of writing here.
  */
 type Invocation =
   | { readonly kind: 'result'; readonly result: CliResult }
   | { readonly kind: 'tables'; readonly path: string; readonly format: OutputFormat }
+  | { readonly kind: 'relations'; readonly path: string; readonly format: OutputFormat }
   | {
       readonly kind: 'columns';
       readonly path: string;
@@ -375,6 +400,8 @@ function main(argv: readonly string[]): Invocation {
       return { kind: 'result', result: run(parsed.command, parsed.path) };
     case 'tables':
       return { kind: 'tables', path: parsed.path, format: parsed.format };
+    case 'relations':
+      return { kind: 'relations', path: parsed.path, format: parsed.format };
     case 'columns':
       return {
         kind: 'columns',
@@ -386,7 +413,10 @@ function main(argv: readonly string[]): Invocation {
 }
 
 /*
- * `tables` and `columns` write through the bounded writer and resolve with their exit code;
+ * `tables`, `columns` and `relations` write through the bounded writer and resolve with their exit
+ * code; `inspect` and `validate` keep the synchronous write below. `process.exit()` is never called:
+ * a pipe write is asynchronous on POSIX, so exiting early could cut off output that is still queued
+ * (§7.2 rule 1).
  * `inspect` and `validate` keep the synchronous write below. `process.exit()` is never called: a
  * pipe write is asynchronous on POSIX, so exiting early could cut off output that is still queued
  * (§7.2 rule 1).
@@ -412,6 +442,17 @@ if (invocation.kind === 'tables') {
     stdout: process.stdout,
     stderr: process.stderr,
     // The read's or the selection's code is assigned before the first write (§7.2 item 1).
+    onPhaseACode: (code): void => {
+      process.exitCode = code;
+    },
+  });
+} else if (invocation.kind === 'relations') {
+  process.exitCode = await runRelationsCommand({
+    path: invocation.path,
+    format: invocation.format,
+    stdout: process.stdout,
+    stderr: process.stderr,
+    // The read's code is assigned before the first write (§7.2 item 1).
     onPhaseACode: (code): void => {
       process.exitCode = code;
     },

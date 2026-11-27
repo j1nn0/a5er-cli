@@ -90,7 +90,7 @@ Semantic Validation
 CLI Commands / Output
    │  §11,§12 (and `docs/proposals/human-cli.md` §3.7 for `tables`)
    ▼
-stdout: one JSON envelope (inspect, validate) or a listing (tables, columns: text or one JSON envelope)
+stdout: one JSON envelope (inspect, validate) or a listing (tables, columns, relations: text or one JSON envelope)
 stderr: human-readable diagnostics, as one line per fatal/error finding
 ```
 
@@ -1112,18 +1112,19 @@ the stream is exactly one JSON document plus the newline that ends it, so a cons
 whole. `tables` writes a human-readable listing by default and one envelope of its own shape with
 `--format json`; both are specified in `docs/proposals/human-cli.md` §4 and §5. `columns` follows the
 same two-format rule for a different payload: the columns of **one** object, selected by its exact
-physical name. Human-readable diagnostics go to **stderr**; JSON is never mixed with prose. stderr
+physical name. `relations` lists every `[Relation]`/`[Relationship]` the file declares with the same
+two-format rule. Human-readable diagnostics go to **stderr**; JSON is never mixed with prose. stderr
 carries one line per `fatal` or `error` diagnostic — the two severities that can decide a non-zero
 exit — and nothing for `warning`/`info`, whose complete record is the envelope. The format is a
 per-command concern: `json` is the only format of `inspect` and `validate` and the default of both,
-while `tables` and `columns` take `text` (the default) or `json`.
+while `tables`, `columns` and `relations` take `text` (the default) or `json`.
 
-**Three shapes, one selection key.** A document is discriminated on `command`: `inspect` and
-`validate` carry `schema` at position 7, `tables` and `columns` carry `result` there. `command` sits
-at position 3 and `contractVersion` at position 1 in every shape, so a consumer selects its decoder
-from `(command, contractVersion)` and must reject a pair it does not support instead of guessing
-the shape from which keys happen to be present. The tables shape is specified in
-`docs/proposals/human-cli.md` §5.2; its shared members are the ones below, verbatim.
+**Four shapes, one selection key.** A document is discriminated on `command`: `inspect` and
+`validate` carry `schema` at position 7, `tables`, `columns` and `relations` carry `result` there.
+`command` sits at position 3 and `contractVersion` at position 1 in every shape, so a consumer
+selects its decoder from `(command, contractVersion)` and must reject a pair it does not support
+instead of guessing the shape from which keys happen to be present. The tables shape is specified
+in `docs/proposals/human-cli.md` §5.2; its shared members are the ones below, verbatim.
 
 **The columns payload is the inspected object's own record.** `result` carries `kind`, the object's
 `sectionIndex`, `span`, decoded `pname` and `lname`, and `columns` — which is the same
@@ -1135,12 +1136,26 @@ The selection operand is compared against the decoded `PName` exactly and case-s
 match, more than one match, or a single subtype writes nothing to stdout in either format, one line
 to stderr, and exits `4`. A fatal read takes precedence over the selection and exits `1`.
 
-**The listing framing is qualified.** `tables` and `columns` text emit no envelope, and for both
-the "exactly one JSON document" framing holds only when the write succeeds: after exit `70` (output
-generation failed) or `74` (stdout write failed or closed early), stdout may hold any prefix of
-the output, and "accepted" means accepted by Node, not delivered. An invocation that exits `0`
-through the bounded writer is not proof that a reader received every byte. The `inspect` and
-`validate` sentences are unchanged: their write path does not change. A **failed** document does
+**The relations payload is the semantic record, minimally projected.** `result` is an array in file
+order — `[]` for a document that declares no relation — and each row carries `sectionIndex`, the
+header exactly as written (`[Relation]` or the `[Relationship]` alias), the relation's own `pname`
+or `null`, and `from`/`to`: the declared endpoint name, its resolution `status`, the number of
+`[Entity]` sections that declare that name (`candidates`) and the resolved entity or `null`. An
+endpoint key the section does not carry is `null` — a missing-required-key finding, never
+`dangling`. `fields1Count`/`fields2Count` are the slot counts of `Fields1`/`Fields2`, empty slots
+included; a list the section does not carry is `null`, which is *unknown*, never `0`, and a list it
+does carry is a number, possibly `1` for a single empty slot. `relationType1/2` and
+`cardinarity1/2` are the declared values or `null` (`Cardinarity` keeps the format's own misspelling
+of the key), and `columnsAligned` is three-valued: `true`/`false` when both lists are present,
+`null` when a side is absent. An unresolved endpoint is a diagnostic inside the document, not a
+failed read: the exit code stays `0`.
+
+**The listing framing is qualified.** `tables`, `columns` and `relations` text emit no envelope, and
+for each of them the "exactly one JSON document" framing holds only when the write succeeds: after
+exit `70` (output generation failed) or `74` (stdout write failed or closed early), stdout may hold
+any prefix of the output, and "accepted" means accepted by Node, not delivered. An invocation that
+exits `0` through the bounded writer is not proof that a reader received every byte. The `inspect`
+and `validate` sentences are unchanged: their write path does not change. A **failed** document does
 not turn their text into an envelope either: the framing follows the format, not the status, and
 `E_LIMIT_BUDGET` is described per format once, in §10.5.
 
@@ -1337,13 +1352,13 @@ command to its column and adds nothing. The remaining rows are decided elsewhere
 
 | Code | `inspect` | `validate` | What was written |
 |---|---|---|---|
-| `0` | any non-failed read, `degraded` included | no `error`-severity diagnostic | one envelope on stdout for `inspect`, `validate`, `tables --format json` and `columns --format json`; the text formats write their listing instead. stderr stays empty unless the result carries a `fatal`/`error` diagnostic — `warning`/`info` findings live only in the envelope |
-| `1` | any `fatal` diagnostic | any `fatal` diagnostic | `inspect`/`validate` still emit their envelope, with `source`, the payload and `completeness` `null`; `tables`/`columns --format json` emit their document with `result` `null`, and their text formats a failure framing; stderr carries the fatal line |
+| `0` | any non-failed read, `degraded` included | no `error`-severity diagnostic | one envelope on stdout for `inspect`, `validate`, `tables --format json`, `columns --format json` and `relations --format json`; the text formats write their listing instead. stderr stays empty unless the result carries a `fatal`/`error` diagnostic — `warning`/`info` findings live only in the envelope |
+| `1` | any `fatal` diagnostic | any `fatal` diagnostic | `inspect`/`validate` still emit their envelope, with `source`, the payload and `completeness` `null`; `tables`/`columns`/`relations --format json` emit their document with `result` `null`, and their text formats a failure framing; stderr carries the fatal line |
 | `3` | never | any `error`-severity diagnostic | one envelope whose `status` is `degraded`; stderr carries the error line |
 | `2` | — | — | nothing on stdout; the usage block on stderr. Decided before any input is read, so no file can cause it |
 | `4` | — | — | `columns` only: the operand selects no single entity or view. Nothing on stdout in either format; one escaped line on stderr naming the operand, and for several matches the candidate section indexes in document order |
-| `70` | — | — | `tables` and `columns`: the output could not be generated, so stdout is incomplete and must be discarded |
-| `74` | — | — | `tables` and `columns`: the stdout write failed (anything but a closed pipe) or closed early, so stdout is incomplete |
+| `70` | — | — | `tables`, `columns` and `relations`: the output could not be generated, so stdout is incomplete and must be discarded |
+| `74` | — | — | `tables`, `columns` and `relations`: the stdout write failed (anything but a closed pipe) or closed early, so stdout is incomplete |
 
 The split is what makes `V_DUPLICATE_OBJECT_NAME` (sem-08) and `V_MISSING_REQUIRED_KEY` (sem-09)
 exit `0` under `inspect` and `3` under `validate` (`test-strategy.md` §14 stage 5).

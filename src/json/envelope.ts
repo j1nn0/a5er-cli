@@ -48,6 +48,7 @@ import type {
 } from '../schema/position.js';
 import type { KeySpec } from '../schema/registry.js';
 import type { InvalidReason, ValueType } from '../schema/values.js';
+import type { EndpointStatus } from '../semantic/relations.js';
 import type { SubtypeScalarToken } from '../semantic/subtypes.js';
 import type { LNameByCommentToken, ViewColumnReason } from '../semantic/views.js';
 import type { SectionKind } from '../syntax/sections.js';
@@ -934,7 +935,11 @@ export type JsonTablesCommand = 'tables';
 export type JsonSchemaDocument = JsonEnvelope & { readonly result?: never };
 
 /** Every document the CLI can emit, discriminated on `command` (§5.1). */
-export type JsonDocument = JsonSchemaDocument | JsonTablesEnvelope | JsonColumnsEnvelope;
+export type JsonDocument =
+  | JsonSchemaDocument
+  | JsonTablesEnvelope
+  | JsonColumnsEnvelope
+  | JsonRelationsEnvelope;
 
 /**
  * `a5er tables --format json` for a read that is not fatal (§5.2).
@@ -1136,6 +1141,99 @@ export interface JsonColumnsEnvelopeFailed {
 }
 
 export type JsonColumnsEnvelope = JsonColumnsEnvelopeRead | JsonColumnsEnvelopeFailed;
+
+/**
+ * `a5er relations` — every `[Relation]`/`[Relationship]` of the document (`docs/architecture.md` §12).
+ *
+ * A command of its own shape, like `tables` and `columns`: the shared ten members, `result` at
+ * position 7, and `contractVersion` still `0.1.0` because no existing field or meaning moves.
+ */
+export type JsonRelationsCommand = 'relations';
+
+/**
+ * One endpoint, as declared and as far as it resolved (§9.2).
+ *
+ * `declared` is the file's spelling — quotes removed, escapes applied, case untouched — so a
+ * consumer can compare it with what it expected. An endpoint the section does not declare at all
+ * has no record: the row's `from`/`to` is `null`, which is a missing-required-key finding, never
+ * `dangling`. `candidates` is how many `[Entity]` sections declare that name, so
+ * `status: 'ambiguous'` is explained rather than merely asserted.
+ */
+export interface JsonRelationsEndpoint {
+  readonly declared: string;
+  readonly status: EndpointStatus;
+  /** `[Entity]` sections declaring `declared`; `1` exactly when `status` is `resolved`. */
+  readonly candidates: number;
+  /** The `[Entity]` `PName` it resolved to, or `null` when it did not resolve uniquely. */
+  readonly resolvedEntity: string | null;
+}
+
+/**
+ * One relation, minimally: what the file declared and what this build resolved.
+ *
+ * Every count is `null` when the relationship is unknown, never `0`: a `Fields1` list the section
+ * does not carry is not an empty list, and a present-but-empty list is `0`. `columnsAligned` is
+ * three-valued for the same reason (`null` = a side is absent). `cardinarity1/2` keeps the
+ * format's own spelling of the key and the declared string, because the value is not interpreted.
+ */
+export interface JsonRelationsRow {
+  readonly sectionIndex: number;
+  /** Header exactly as written: `[Relation]`, or `[Relationship]` for the alias. */
+  readonly sectionHeader: string;
+  readonly pname: string | null;
+  readonly from: JsonRelationsEndpoint | null;
+  readonly to: JsonRelationsEndpoint | null;
+  /** Slots in `Fields1`, present-empty slots included; `null` when the key is absent. */
+  readonly fields1Count: number | null;
+  readonly fields2Count: number | null;
+  readonly relationType1: number | null;
+  readonly relationType2: number | null;
+  readonly cardinarity1: string | null;
+  readonly cardinarity2: string | null;
+  readonly columnsAligned: boolean | null;
+}
+
+/** The relations payload: every relation in file order, and an empty list when there are none. */
+export type JsonRelationsResult = readonly JsonRelationsRow[];
+
+/** `a5er relations --format json` for a read that is not fatal. */
+export interface JsonRelationsEnvelopeRead {
+  readonly contractVersion: typeof CONTRACT_VERSION;
+  readonly tool: {
+    readonly name: typeof TOOL_NAME;
+    readonly version: typeof TOOL_VERSION;
+  };
+  readonly command: JsonRelationsCommand;
+  readonly status: 'ok' | 'degraded';
+  readonly source: JsonSource;
+  readonly limits: JsonLimits;
+  readonly result: JsonRelationsResult;
+  readonly unsupported: readonly JsonUnsupported[];
+  readonly diagnostics: readonly JsonDiagnostic[];
+  readonly completeness: JsonCompleteness;
+  /** Type-level only: a relations envelope never has a `schema` key. Not emitted. */
+  readonly schema?: never;
+}
+
+/** `a5er relations --format json` for a fatal read: no source, no result and no counts. */
+export interface JsonRelationsEnvelopeFailed {
+  readonly contractVersion: typeof CONTRACT_VERSION;
+  readonly tool: {
+    readonly name: typeof TOOL_NAME;
+    readonly version: typeof TOOL_VERSION;
+  };
+  readonly command: JsonRelationsCommand;
+  readonly status: 'failed';
+  readonly source: null;
+  readonly limits: JsonLimits;
+  readonly result: null;
+  readonly unsupported: readonly JsonUnsupported[];
+  readonly diagnostics: readonly JsonDiagnostic[];
+  readonly completeness: null;
+  readonly schema?: never;
+}
+
+export type JsonRelationsEnvelope = JsonRelationsEnvelopeRead | JsonRelationsEnvelopeFailed;
 
 /** Re-exported for `serialize.ts`'s narrowing; keeps the JSON layer's imports in one place. */
 export type { ObjectPosition, RawElement, RelationPosition, Span };

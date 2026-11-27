@@ -156,12 +156,13 @@ describe('a5er cli — help, version and usage', () => {
   it('names only the commands that exist', async () => {
     const result = await runCli(['--help']);
 
-    // `tables` and `columns` now exist; the words that do not are listed without them, and the
-    // help must name every command this build implements.
-    expect(result.stdout).toContain('tables');
+    // `tables`, `columns` and `relations` exist; the words that do not are listed without them,
+    // and the help must name every command this build implements.
     expect(result.stdout).toContain('columns');
+    expect(result.stdout).toContain('tables');
+    expect(result.stdout).toContain('relations');
     expect(result.stdout).toContain('--format text|json');
-    for (const absent of ['relations', 'search', 'export']) {
+    for (const absent of ['search', 'export']) {
       expect(result.stdout).not.toContain(absent);
     }
   });
@@ -239,9 +240,10 @@ describe('a5er cli — command-line misuse leaves stdout empty', () => {
   }
 
   it('rejects a command this build does not implement', async () => {
-    // `tables` and `columns` parse as commands now, so the example is a word the roadmap still
+    // `tables`, `columns` and `relations` parse as commands now, so the example is a word the
+    // roadmap still holds back (docs/proposals/human-cli.md §9, T-1).
     // holds back (docs/proposals/human-cli.md §9, T-1).
-    await expectMisuse(['relations', '/tmp/never-read.a5er'], 'unknown command "relations"');
+    await expectMisuse(['search', '/tmp/never-read.a5er'], 'unknown command "search"');
   });
 
   it('rejects a missing file operand', async () => {

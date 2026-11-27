@@ -66,15 +66,18 @@ a5er tables diagram.a5er      # list the entities and views: one table plus note
 a5er tables --format json diagram.a5er   # the same listing as one JSON envelope
 a5er columns diagram.a5er users          # one object's columns, by exact physical name
 a5er columns --format json diagram.a5er users   # the same selection as one JSON envelope
+a5er relations diagram.a5er            # every relation, with its endpoints' resolution
+a5er relations --format json diagram.a5er   # the same listing as one JSON envelope
 a5er --help                   # also -h, or run a5er with no arguments
 a5er --version                # also -v
 ```
 
 `--format` is per command. `inspect` and `validate` accept only `json`, which is also their default;
-`tables` and `columns` accept `text` (the default) or `json`. `columns` compares the name exactly and
-case-sensitively: a name that matches no entity or view, more than one object, or a subtype writes
-nothing to stdout and exits 4. The commands the roadmap still holds back — such as `export` — do not
-exist yet: any other word exits 2 with the usage text on stderr.
+`tables`, `columns` and `relations` accept `text` (the default) or `json`. `columns` compares the name
+exactly and case-sensitively: a name that matches no entity or view, more than one object, or a
+subtype writes nothing to stdout and exits 4. `relations` takes no operand and never exits 4: an
+empty relation list is a complete answer. The commands the roadmap still holds back — such as
+`export` — do not exist yet: any other word exits 2 with the usage text on stderr.
 
 To read one field without keeping the envelope, pipe stdout only:
 
@@ -87,8 +90,8 @@ commit. Do not merge stderr into stdout (`2>&1`): the diagnostic prose would bre
 
 ## Output
 
-`inspect` and `validate` write exactly one JSON envelope and a final newline to `stdout`. `tables`
-and `columns` write one table followed by notes — every note starts with `#` — or, with
+`inspect` and `validate` write exactly one JSON envelope and a final newline to `stdout`. `tables`,
+`columns` and `relations` write one table followed by notes — every note starts with `#` — or, with
 `--format json`, one envelope of their own shape. `--help` and `--version` print plain text to
 `stdout`, while a misused command exits 2 with the usage text on `stderr` and nothing on `stdout`.
 `stderr` carries one line per `fatal` or `error` diagnostic; `warning` and `info` findings appear
@@ -96,7 +99,7 @@ only in the envelope (and, in the text listings, in their notes).
 
 Every envelope has the keys `contractVersion`, `tool`, `command`, `status`, `source`, `limits`,
 `unsupported`, `diagnostics` and `completeness`, plus one payload key at the seventh position:
-`schema` for `inspect` and `validate`, `result` for `tables` and `columns`. `status` is `ok`,
+`schema` for `inspect` and `validate`, `result` for `tables`, `columns` and `relations`. `status` is `ok`,
 `degraded` (readable, with findings) or `failed`. A `failed` envelope is still valid JSON, with
 `source`, the payload and `completeness` set to `null`. A consumer selects its decoder from
 `(command, contractVersion)`; `contractVersion` is versioned per command and independently of the
@@ -106,6 +109,11 @@ package. The full contract is in
 own `effectiveColumns` record, so an entity's `complete`/`partial` arms and a view's `unknown` arm
 mean exactly what they mean in an `inspect` envelope.
 
+`relations` reuses the resolved relation records: `from`/`to` carry the declared name, the resolution
+status, the candidate count and the resolved entity, and `fields1Count`/`fields2Count` are the
+slot counts — `null` when the section carries no such list, never `0`. A relation with an
+unresolved endpoint is a finding, not a failed read, so the exit code stays `0`.
+
 | Exit | Meaning                                                                                      |
 | ---- | -------------------------------------------------------------------------------------------- |
 | `0`  | Envelope written. `inspect`: any read that is not `failed`; `validate`: no `error` diagnostic |
@@ -113,13 +121,13 @@ mean exactly what they mean in an `inspect` envelope.
 | `2`  | Incorrect usage; nothing on stdout, usage text on stderr, decided before any input is read   |
 | `3`  | `validate` only: an `error`-severity diagnostic; the envelope is `degraded`                  |
 | `4`  | `columns` only: the name selected no single entity or view; nothing is written to stdout       |
-| `70` | `tables` and `columns`: the output could not be generated; stdout must be discarded           |
-| `74` | `tables` and `columns`: the stdout write failed, or stdout closed before the output completed  |
+| `70` | `tables`, `columns` and `relations`: the output could not be generated; stdout must be discarded |
+| `74` | `tables`, `columns` and `relations`: the stdout write failed, or stdout closed before the output completed |
 
 `inspect` never exits 3: it reports what is in the file, while `validate` decides whether it is
 acceptable. An `error` finding under `inspect` still exits 0 and appears on stderr.
 
-`70` and `74` belong to the two listing commands. After either one — and after a pipe that was
+`70` and `74` belong to the three listing commands. After either one — and after a pipe that was
 closed early — `stdout` may hold any prefix of the output, or nothing, so discard it rather than
 parsing it. A closed pipe is not an error: `a5er tables big.a5er | head -n 3` exits `0` (or `1` for
 a file that could not be read), and a writer that leaves mid-listing does not crash the process.
