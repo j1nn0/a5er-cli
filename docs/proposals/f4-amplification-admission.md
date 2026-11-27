@@ -149,7 +149,7 @@ refuses at its pre-scan gate.
 | Invariant | Detail |
 |---|---|
 | Seven shipped ceilings unchanged | Σ`L²` 134,217,728; composed 524,288 (envelope) / 4,194,304 (`tables`); Field 200,000 / 500,000; content lines 400,000 / 1,000,000 (`src/budget/admission.ts:129-138`) |
-| Envelope profile unchanged in R1 | no new member, no new counter, Σ`L²` still its only relation figure |
+| Envelope profile unchanged in R1 | no new member and no new comparison: the shared `measure()` gains the counter, but the envelope profile compares only Σ`L²` and the composed bound |
 | The target is `tables` | the profile that emits no relation text but carries the diagnostics list |
 | Composed precedence | the composed bound is still compared first, so today's refusal reason survives |
 | `details` exactly three keys | `{counter, observed, ceiling}`; no document text (`src/pipeline.ts:69-86`) |
@@ -233,7 +233,7 @@ re-run for this proposal, and the per-diagnostic figure below is **arithmetic** 
 | Demonstrated amplification rejected | the manager's shape at any ceiling `< ≈114,006`; the §5.3 illustration at any sane ceiling | the manager's shape at any ceiling `< ≈57,001`; the §5.3 illustration at any sane ceiling |
 | Calibration still required | yes, and awkwardly: no ceiling below `maxLineLength + 1` (4,194,305) is free of long-name refusals | yes, but the number is directly a column budget; rejecting the manager's shape is a **policy choice** |
 | Contract impact | none — the figure exists; only a member and a comparison are added, and the 28-leaf pin is untouched | **one new leaf**: a new `ResourceCounters` field makes the pin 28 → **29** (§3.5, §6.4) and adds one `BudgetCounter` value |
-| Test requirements | reuse the slots-bound tests; add the gate cases and the one-column long-name case, which must be admitted at whatever value is chosen | all of B's gate tests **plus** a fixture-wide agreement test: `E` equals the actual `columnsOf` count on every fixture, the analogue of `tests/budget-measure.test.ts:790-800` |
+| Test requirements | reuse the slots-bound tests; add the gate cases and a long-name case, which for B is a false-positive test: its unit is length-weighted, so a long single name scores high for one column | all of B's gate tests, with the long-name case reframed as an **admission** test (a long name scores `E` 1, so it proves no length false positive and can never exercise a ceiling in the tens of thousands), **plus** two dedicated E tests (§7.1 L1): hand-computed exact values for every §3.2 case, and a fixture-wide invariant `E ≥` the retained relation-column count, **never** universal equality |
 | Verdict | **stays published-only**, no consumer | **recommended** for the `tables` ceiling |
 
 ### 3.2 Why E is sound — proof sketch
@@ -597,37 +597,113 @@ envelope. No change is required. A refusal is already reported as a failed docum
 
 ## 7. Verification plan
 
-### 7.1 Safe tests the implementation PR must contain
+### 7.1 Five layers, and the evidence each one can produce
 
-None of these needs a large document, a shipped ceiling, a load run, or a production seam.
+The plan is layered so that no test is credited with evidence it cannot produce. **L1–L4 need no large
+document, no load run and no production seam**, and they are required exactly as written. **L5 is the
+only layer that runs the approved production value through a real command, and its refusal half is
+deferred by default**; that deferral is a recorded coverage limitation (§7.3), never a reason to weaken
+another layer.
 
-| Test | File | What it must show |
-|---|---|---|
-| Measurement | `tests/budget-measure.test.ts` | E equals a hand-computed value per hand-built scan (all §3.2 cases); the slot bound and Σ`L²` are unchanged; checked arithmetic rejects an out-of-range accumulation; the leaf pin is edited from 28 to 29 with its reason |
-| **Agreement** | `tests/budget-measure.test.ts` | on **every** one of the 39 fixtures, E is at least the actual `columnsOf` column count — the analogue of the existing slots-bound test (`:790-800`). Without this, the proof in §3.2 is only a comment |
-| Pure admission, varied **observed** | `tests/budget-admission.test.ts` | with a **fixed injected ceiling `S`**: observed `S − 1` admits, `S` admits, `S + 1` refuses — the varied parameter is the observation |
-| Pure admission, varied **ceiling** | `tests/budget-admission.test.ts` | with a **fixed observed `S`**: an injected ceiling `S − 1` refuses, `S` admits, `S + 1` admits — the varied parameter is the ceiling |
-| Order and pre-check | `tests/budget-admission.test.ts` | composed is reported when both are exceeded (precedence); an invalid observation throws instead of refusing; the envelope profile has no E member (profile separation); the defaults pin the member once a value exists |
-| **Skip proof** | `tests/pipeline-admission.test.ts` | with an injected `tables` budget that refuses, a Vitest `vi.mock` of `../src/schema/index.js` whose `classify` is a **delegating spy** (it calls through to the real implementation) records **zero** invocations; on the admitted twin of the same document it records **one**. A `scanSource` wrapper is **not** proof of this and must not be offered as such; no production seam is authorised |
-| Wiring (small) | `tests/pipeline-admission.test.ts` | the small refused document yields one fatal `E_LIMIT_BUDGET` naming `relationColumnCountUpperBound`, `details` of three keys, `source`/`result` `null`, exit `1`; the admitted twin yields the unchanged document |
-| Immutability | `tests/immutability.test.ts`, `tests/json-goldens.test.ts`, `tests/cli-tables-cases.test.ts` | every committed envelope is byte-identical; staged copies only; no fixture edited |
-| Diagnostics and exit | `tests/pipeline-admission.test.ts` | the fatal line, exit `1` and the failed JSON document for `tables` text and JSON; the pre-scan refusal still precedes the post-scan one; `70`/`74` unaffected |
+#### L1 — the measurement is correct (`tests/budget-measure.test.ts`)
+
+| Test | What it must show |
+|---|---|
+| Dedicated exact cases | For every §3.2 case, a hand-built scan whose expected `E` is derived **independently by hand** from the raw text, never copied from the implementation: quoted list (`"a,b"` → 2), two quoted elements (`"a","b"` → 2), unquoted list (`a,b` → 2), trailing separator (`a,b,` → `E` 3 against 2 retained columns), quoted empty element (`"a",""` → 2), empty value (`Fields1=` → 1), a value that is one comma (`","` → 2), escaped comma (`"a\,b,c"` → 3), escaped backslash then comma (`"a\\,b"` → 2), unterminated quote (`"a,b` → 2, with its `S_COMPLEX_UNTERMINATED_QUOTE`), padded elements (`"a" , "b"` → 2), duplicate keys (`E` counts both occurrences while one list is retained) and a `Fields1` line with no `=` (neither counted) |
+| Fixture-wide invariant | On **every** one of the 39 fixtures, `E` is **at least** the number of `RelationColumn` records the semantics actually retained (`ResolvedRelation.fromColumns`/`toColumns`, `src/semantic/partial.ts:108`, `:308`) — the analogue of the existing slots-bound test (`:790-800`). **Equality is never asserted as a universal property**: `E` over-counts one per duplicate occurrence and one per trailing-omitted value (§3.2), and every occurrence `columnsOf` skips is still counted by `measure()` (a non-`parsed` entry, a null span, a failed decode, a non-object value — `src/semantic/relations.ts:180-186` against `src/budget/measure.ts:479-493`), so each of those only widens the gap in the safe direction. A fixture with neither over-count may additionally assert equality **for that fixture** |
+| Unchanged figures and arithmetic | Σ`L²` and the slot bound are unchanged; checked arithmetic rejects an out-of-range accumulation instead of publishing a rounded figure |
+| Leaf pin | The numeric-leaf pin (`tests/budget-measure.test.ts:784`) moves 28 → 29 in the same change, with the reason recorded |
+
+**A long name is an admission case, not a ceiling case.** `E` counts commas, not characters: a
+one-column name of any length scores `E` 1, the same as a one-character name, and the committed
+two-column anchor scores `E` 2. Neither can reach a ceiling in the tens of thousands, however long the
+name is. A long-name test therefore shows that the metric does **not** refuse a document for a long
+name — the false positive `B` has — and it must never be offered as evidence that the ceiling fires.
+That evidence comes from L2 (the decision), L3 (the wiring) and, conditionally, L5 (a real command).
+
+#### L2 — the decision is right (`tests/budget-admission.test.ts`, pure `admit()`)
+
+| Test | What it must show |
+|---|---|
+| Fixed ceiling, varied observation | With a **fixed injected ceiling `S`**: observed `S − 1` admits, `S` admits (the boundary is inclusive, `src/budget/admission.ts:274-281`) and `S + 1` refuses, reporting `{counter, observed, ceiling}` |
+| Fixed observation, varied ceiling | With a **fixed observation `S`**: an injected ceiling `S − 1` refuses, `S` admits and `S + 1` admits. Both directions are required: a comparison written with the wrong operator, or against the wrong member, can pass one direction alone |
+| Invalid observation | An observation that is not a non-negative safe integer makes `admit()` **throw** from its pre-comparison check (`checkedObserved`, `src/budget/admission.ts:290-295`, `:305-341`) instead of reporting a refusal. `NaN` is the case to pin: a refusal would state a cost the figures do not support |
+| Precedence | When both the composed bound and `E` are over their ceilings, the reported `counter` is `composedColumnsUpperBound` — the `tables` order of §3.4, preserved so today's refusal reason survives |
+| Profile separation | The envelope profile has no `E` member and its decision is unchanged by the new figure: the shared `measure()` computes the counter for every document, but the envelope branch compares only Σ`L²` and the composed bound (`src/budget/admission.ts:306-330`). A missing member is a compile error through `withResourceBudget()`'s member-by-member construction (`:206-252`), and no ceiling rides along from the other profile |
+
+#### L3 — the wiring is right, on small inputs (`tests/pipeline-admission.test.ts`)
+
+Every case here injects a **small test budget** — the value is a test fixture, not the production
+default (L4) — and uses a small synthetic document staged as a disposable copy.
+
+| Test | What it must show |
+|---|---|
+| Injected refusal | The document yields one fatal `E_LIMIT_BUDGET` naming `relationColumnCountUpperBound`, `details` of exactly three keys, `source`/`result` `null` and exit `1`; its admitted twin yields the unchanged document |
+| Skip proof | With an injected `tables` budget that refuses, a Vitest `vi.mock` of `../src/schema/index.js` whose `classify` is a **delegating spy** (it calls through to the real implementation) records **zero** invocations; on the admitted twin of the same document it records **one**. A `scanSource` wrapper is **not** proof of this and must not be offered as such; no production seam is authorised |
+| Diagnostics and exit | The fatal line, exit `1` and the failed JSON document for `tables` text and JSON; the pre-scan refusal still precedes the post-scan one; `70`/`74` unaffected |
+
+#### L4 — the approved default is configured (`tests/budget-admission.test.ts`)
+
+| Test | What it must show |
+|---|---|
+| Frozen defaults pin | `DEFAULT_RESOURCE_BUDGETS` is frozen and pinned (`src/budget/admission.ts:126-160`, `tests/budget-admission.test.ts:126-233`). The implementation change adds the decided value to `DEFAULT_RESOURCE_BUDGETS.tables` **and** to that pin in the same change, and the pin asserts the exact value and the member set of both profiles |
+| No silent default | The member cannot be omitted: `withResourceBudget()` rebuilds each profile member by member through `checkedCeiling` (`:206-252`), so a missing member is a compile error and no ceiling rides along from the other profile |
+
+L4 reads the configuration and compares nothing: it does **not** run a document through the production
+value; the only layer that does is L5, and by default only on its admitted side.
+
+#### L5 — a real `tables` run at the approved value (deferred in part)
+
+**Admitted side, required once a value ships.** Two small synthetic documents, each staged as a
+disposable copy: a long single name (`E` = 1, `B` large) and a two-column anchor-like shape. These are
+**admission** tests — they show that the gate does not refuse a document because a name is long, and that
+an honest small document is admitted at the shipped value. A long name scores `E` = 1, so it can never
+exercise a ceiling in the tens of thousands and must not be described as evidence that the comparison
+fires.
+
+**Refusal side, conditional and deferred by default.** A real command can only show the production
+comparison firing if a witness document's `E` exceeds the approved ceiling. No such witness is designed
+here and none is authorised by this document. One may be run in the implementation PR only if all of the
+following are written down and established there first:
+
+* its `E` is derived by hand from the raw text, not read from the new counter, and exceeds the approved
+  ceiling by the smallest margin the decision needs;
+* it is small in bytes and content lines, well inside every read limit, and its per-occurrence text is
+  short, so the retained `RelationColumn` records stay small — no `n × L` shape and no large admitted
+  side;
+* it is **fail-open safe**: if the comparison were mis-wired and admitted the document, the pipeline
+  would still finish cheaply. The relation resolves, so a wrong admit produces no per-column diagnostic
+  storm, no multi-hundred-megabyte document and no heap risk. A witness that would emit one
+  dangling-column diagnostic per declared column if wrongly admitted does not meet this condition;
+* it is one bounded document, not a sweep, and it stresses no ceiling and no read limit.
+
+**If no witness meets those conditions, the refusal side of L5 is deferred** and §7.3 records what
+is then unverified: no real `tables` invocation demonstrates the production comparison refusing
+anything between L4's configured value and L3's injected test budget. L2 supplies the decision
+evidence, L3 the wiring evidence and L4 the configuration evidence; none of them becomes a real-CLI
+claim, and no test in L1–L4 is weakened to compensate.
+
+**Compatibility checks that stay exactly as they are:** `tests/immutability.test.ts`,
+`tests/json-goldens.test.ts` and `tests/cli-tables-cases.test.ts` must still show every committed
+envelope byte-identical, with staged copies only and no fixture edited.
 
 The §5.3 illustration is **not** a test input: no pipeline or CLI run may use a document of that size,
 and its numbers are asserted as arithmetic (a pure-admission case can use the same `E` on a small
-hand-built measure).
+hand-built measure). It is not L5's witness either: it is neither small nor fail-open safe.
 
-### 7.2 Post-approval behavioural tests (implementation plan, after the ceiling is decided)
+### 7.2 Post-approval work (implementation plan, after the ceiling is decided)
 
-These need a decided value and belong to the implementation PR, not to the design or the calibration:
+Only the items below need a decided value. They belong to the implementation PR, not to the design or the
+calibration:
 
-* **threshold ± 1 through the real command** on synthetic fixtures staged as disposable copies: for a
-  fixed ceiling, `S − 1` and `S` admit and `S + 1` refuses;
-* **default-profile CLI cases that yield exactly one real column** — a long single name (where E = 1
-  and B is large) and a two-column anchor-like shape — so that even a broken comparison that admits the
-  document runs a resource-bounded case. These are the only admitted-side CLI runs at a shipped
-  ceiling, and they are safe by construction;
+* **L4 values** — the decided value enters `DEFAULT_RESOURCE_BUDGETS.tables` and its frozen pin
+  (§7.1 L4);
+* **L5, if a witness is justified** — the production-ceiling refusal run under §7.1 L5's conditions,
+  or its deferral together with the coverage limitation recorded in §7.3;
 * the **156-of-156** fence of §6.5, after implementation.
+
+Nothing else moves: §7.1 L1–L4 are the same tests before and after a value is chosen, and the
+admitted-side cases of §7.1 L5 stay small by construction.
 
 ### 7.3 Gates and what the plan does not verify
 
@@ -641,7 +717,11 @@ file for it exists in this repository.
 
 What the plan does **not** verify: any ceiling (that is §5.4's separate calibration); the physical heap
 cost of the `n × L` content (unmeasured, a **hypothesis**); any claim that a document below every
-ceiling is cheap; and any behaviour of the new comparison before it is implemented.
+ceiling is cheap; and any behaviour of the new comparison before it is implemented. If the refusal side
+of §7.1 L5 is deferred, the plan also does **not** verify that the production comparison refuses
+anything: L2 establishes the decision for injected ceilings, L3 the wiring for an injected test budget
+and L4 only that the approved value is configured. That gap is the price of not running an unbounded
+witness; it is recorded here rather than hidden, and the implementation PR's report must state it.
 
 ## 8. Implementation sequence
 
@@ -687,8 +767,9 @@ a future unit and shares no commit with step 4.
 | Q8 | Is R2 acceptable as a future independent unit with the restricted proxy and the named test gap? | §4. The declared-only collision case has no committed test and must be closed there. |
 | Q9 | Does the `docs/test-strategy.md` CI job-table drift (six jobs listed, two in `ci.yml`) belong to this change? | Unrelated drift; §7.3 cites `ci.yml` and the inspected CodeQL check instead. |
 | Q10 | Who reviews, and what counts as acceptance and integration? | §8. Acceptance, integration and publication are separate authorisations. |
+| Q11 | Authorise a bounded fail-open-safe witness so §7.1 L5's refusal side can run, or accept the documented coverage limitation of deferring it? | §7.1 L5, §7.3. L1–L4 are unchanged either way, and neither option approves a ceiling. |
 
 **Review map:** problem and evidence §1, §2; the metric decision §3; the envelope stay-out §3.7; R2 as a
 future unit §4; calibration first §5.4, §8; no shipping threshold §5.1, Q4; the derived illustration
-§5.3; safe tests and the skip proof §7.1; invariants, contract and precedence §1.5, §6; open decisions
-§9.
+§5.3; the five verification layers and the skip proof §7.1–§7.2; invariants, contract and precedence
+§1.5, §6; open decisions §9.
