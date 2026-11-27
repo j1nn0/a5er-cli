@@ -46,7 +46,8 @@ pnpm build
 node dist/cli.js --version
 ```
 
-In a checkout, use `node dist/cli.js` wherever this README says `a5er`.
+In a checkout, use `node dist/cli.js` wherever this README says `a5er`. A published npm release can be
+older than the checkout; see the note under Usage.
 
 Verified so far: installing v0.1.0 from the public npm registry and from a locally built tarball,
 and installing v0.1.0 with mise on macOS arm64 (mise 2026.11.10), where only the installation and
@@ -58,6 +59,10 @@ mise does not yet resolve a just-published release as the latest, pin the exact 
 
 `diagram.a5er` below stands for your own file. Each command reads exactly one file; `columns` also
 takes the exact physical name of the one object to list.
+
+The commands below are those of the repository's current source. That source can be ahead of the
+published npm package, and the version string does not tell them apart: run `a5er --help` to see
+which commands the installed binary provides, and use a source checkout for any that it lacks.
 
 ```bash
 a5er inspect diagram.a5er     # emit the JSON envelope
@@ -75,8 +80,8 @@ a5er --version                # also -v
 `--format` is per command. `inspect` and `validate` accept only `json`, which is also their default;
 `tables`, `columns` and `relations` accept `text` (the default) or `json`. `columns` compares the name
 exactly and case-sensitively: a name that matches no entity or view, more than one object, or a
-subtype writes nothing to stdout and exits 4. `relations` takes no operand and never exits 4: an
-empty relation list is a complete answer. The commands the roadmap still holds back — such as
+subtype writes nothing to stdout and exits 4. `relations` takes one file operand and no
+object-selection operand, and never exits 4: an empty relation list is a complete answer. The commands the roadmap still holds back — such as
 `export` — do not exist yet: any other word exits 2 with the usage text on stderr.
 
 To read one field without keeping the envelope, pipe stdout only:
