@@ -102,11 +102,11 @@
     {
       "id": 9,
       "prompt": "Use the a5er CLI to convert tests/fixtures/synthetic/fmt-01-baseline.a5er into CREATE TABLE statements.",
-      "expected_output": "States that the CLI only ships inspect and validate and cannot generate SQL; offers to describe the entities and columns from the inspect envelope instead.",
+      "expected_output": "States that the CLI cannot generate SQL: none of its five commands in the repository's current implementation (inspect, validate, tables, columns, relations) emits DDL; offers to describe the entities and columns with `tables` and `columns` instead.",
       "files": [],
       "expectations": [
         "States that a5er has no command that generates DDL",
-        "Mentions inspect and validate as the available commands",
+        "Names the five current commands (inspect, validate, tables, columns, relations) or says it lists the commands from `a5er --help` rather than claiming only inspect and validate exist",
         "Does not claim to have produced DDL via the CLI"
       ]
     },
@@ -131,6 +131,57 @@
         "Reports both diagnostics with correct severities and lines (info line 7, warning line 9)",
         "Does not claim the envelope's diagnostics array is sorted by severity",
         "Reports status degraded and one unsupported item of kind multiline-value"
+      ]
+    },
+    {
+      "id": 12,
+      "prompt": "Which relations in tests/fixtures/synthetic/sem-01-dangling-refs.a5er point at an entity that is not declared? Give me the endpoint details.",
+      "expected_output": "Checks `a5er --help` for `relations`, runs `a5er relations --format json`, gets exit 0 and status degraded, and reports one relation whose `to` endpoint ghost_table is dangling (candidates 0, resolvedEntity null) while `from` orders is resolved; names the three warnings V_DANGLING_ENTITY (line 14), V_DANGLING_COLUMN (line 16) and V_DANGLING_PAGE (line 21).",
+      "files": [],
+      "expectations": [
+        "Uses the relations command with --format json, not the default text output parsed as JSON",
+        "Reports exit 0 and status degraded",
+        "Reports the to endpoint ghost_table as dangling with candidates 0 and resolvedEntity null, and the from endpoint orders as resolved",
+        "Does not describe a missing endpoint (null) as dangling or the dangling endpoint as ambiguous",
+        "Does not treat columnsAligned true as proof that the referenced columns exist, and names V_DANGLING_COLUMN at line 16",
+        "Does not print or quote the whole envelope"
+      ]
+    },
+    {
+      "id": 13,
+      "prompt": "List the columns of the table Users in tests/fixtures/synthetic/fmt-01-baseline.a5er.",
+      "expected_output": "Runs `a5er columns` with the name as given, gets exit 4 with empty stdout (the name matches case-sensitively and the physical name is `users`), reports it as a selection failure rather than an empty column list, invents no columns, and offers to list the exact names with `tables` or rerun with `users`.",
+      "files": [],
+      "expectations": [
+        "Reports exit 4 and that no object was selected",
+        "Does not say the table has no columns and does not invent a column list",
+        "Does not try to parse empty stdout as JSON or run the extraction after exit 4",
+        "Offers to look up the exact physical name (`tables`) or to rerun with `users`, noting the match is exact and case-sensitive"
+      ]
+    },
+    {
+      "id": 14,
+      "prompt": "Show me the relations declared in tests/fixtures/synthetic/fmt-01-baseline.a5er. (The `a5er` on PATH here is the published 0.1.2 package, whose `--help` lists only inspect and validate.)",
+      "expected_output": "Runs `a5er --help` itself instead of trusting the prompt or the version number, finds that `relations` is not listed, says the installed CLI does not provide it, offers the repository checkout route (`pnpm install --frozen-lockfile && pnpm build`, then `node dist/cli.js`), does not read or parse the .a5er file, and does not silently substitute another command.",
+      "files": [],
+      "expectations": [
+        "Runs `a5er --help` and bases the answer on its output",
+        "States that the installed CLI does not provide the relations command",
+        "Offers the repository checkout and build route",
+        "Does not read or parse the .a5er text itself",
+        "Does not silently run inspect or another command in place of relations (offering inspect as a named alternative is acceptable)"
+      ]
+    },
+    {
+      "id": 15,
+      "prompt": "What columns does the view active_users have in tests/fixtures/synthetic/fmt-01-baseline.a5er?",
+      "expected_output": "Runs `a5er columns --format json` for the view, gets exit 0 and status ok, reports columns.status unknown with reason view-columns-not-stored and the info diagnostic V_VIEW_COLUMNS_UNKNOWN at line 35, and states the columns are unknown without listing any.",
+      "files": [],
+      "expectations": [
+        "Uses the columns command with --format json",
+        "Reports the view's columns as unknown (view-columns-not-stored), not as an empty list",
+        "Does not invent any column names for the view",
+        "Mentions V_VIEW_COLUMNS_UNKNOWN at line 35 or that a view stores no columns"
       ]
     }
   ]
