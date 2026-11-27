@@ -44,7 +44,8 @@ The read limits bound the **input** (§`src/io/limits.ts:17-22`: `maxBytes` 64 M
 (`docs/architecture.md` §10.5; module comment at `src/budget/admission.ts:55-70`). Admission
 therefore runs twice per document — a pre-scan walk before the scan
 (`src/pipeline.ts:116-118`) and a measurement of the finished scan before `classify()`
-(`src/pipeline.ts:124-125`, classification at `:127`) — and compares seven figures in total. Each is a **shape proxy**: the counters count occurrences and code units, and the ceilings
+(`src/pipeline.ts:124-125`, classification at `:127`) — and compares seven figures in total. Each
+is a **shape proxy**: the counters count occurrences and code units, and the ceilings
 name how much of that shape this build tolerates. None of them is a byte, heap or RSS bound
 (`src/budget/measure.ts:305-316`, §10.5).
 
@@ -521,10 +522,10 @@ pushed commit SHA for every job of that matrix. Two traps:
 
 * **No CodeQL workflow file exists** in `.github/workflows/` (only `ci.yml` and `release.yml`), and no
   `codeql` string exists in `.github/` or `package.json`. A `CodeQL` check does run on pull requests,
-  from this repository's GitHub-side default setup rather than from a committed workflow (observed on
-  this proposal's own PR, event `dynamic`). It is not part of `ci.yml`, its configuration is not in
-  this repository, and neither a design nor a review may count it as a gate this project controls or
-  claim coverage it does not have.
+  from this repository's GitHub-side default setup rather than from a committed workflow (observed
+  on this proposal's own PR, event `dynamic`). It is not part of `ci.yml`, its configuration is not
+  in this repository, and neither a design nor a review may count it as a gate this project
+  controls or claim coverage it does not have.
 * `docs/test-strategy.md:545-560` still lists six jobs (`typecheck`, `test`, `test-windows`,
   `build`, `fixture-policy`, `no-update`) that `ci.yml` does not define. That drift predates this
   proposal; §9 asks whether repairing it belongs to this change or to a separate one.
