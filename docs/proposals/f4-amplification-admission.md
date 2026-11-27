@@ -519,8 +519,12 @@ reported, including failures. CI is `.github/workflows/ci.yml` as it exists: two
 matrix, packing the tarball and smoke-testing the CLI from it). CI must be checked against the exact
 pushed commit SHA for every job of that matrix. Two traps:
 
-* **No CodeQL workflow exists** in `.github/workflows/`, and no `codeql` string exists in
-  `.github/` or `package.json`. A design must not claim static-analysis coverage it does not have.
+* **No CodeQL workflow file exists** in `.github/workflows/` (only `ci.yml` and `release.yml`), and no
+  `codeql` string exists in `.github/` or `package.json`. A `CodeQL` check does run on pull requests,
+  from this repository's GitHub-side default setup rather than from a committed workflow (observed on
+  this proposal's own PR, event `dynamic`). It is not part of `ci.yml`, its configuration is not in
+  this repository, and neither a design nor a review may count it as a gate this project controls or
+  claim coverage it does not have.
 * `docs/test-strategy.md:545-560` still lists six jobs (`typecheck`, `test`, `test-windows`,
   `build`, `fixture-policy`, `no-update`) that `ci.yml` does not define. That drift predates this
   proposal; §9 asks whether repairing it belongs to this change or to a separate one.
