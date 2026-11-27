@@ -675,8 +675,13 @@ function jsonEffectiveColumn(column: EffectiveColumn): JsonEffectiveColumn {
   };
 }
 
-/** An entity's effective list, with `partial` for an undecidable common-column opt-in (§4.5, P12). */
-function jsonEntityColumns(columns: EntityColumns): JsonEntityColumns {
+/**
+ * An entity's effective list, with `partial` for an undecidable common-column opt-in (§4.5, P12).
+ *
+ * Exported for `a5er columns`, which publishes the same record for the selected object: one
+ * definition keeps the two commands' statements of "declared, composed, colliding" identical.
+ */
+export function jsonEntityColumns(columns: EntityColumns): JsonEntityColumns {
   const base = {
     columns: columns.effective.map(jsonEffectiveColumn),
     declared: columns.declared.map(jsonEffectiveColumn),

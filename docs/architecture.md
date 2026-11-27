@@ -90,7 +90,7 @@ Semantic Validation
 CLI Commands / Output
    │  §11,§12 (and `docs/proposals/human-cli.md` §3.7 for `tables`)
    ▼
-stdout: one JSON envelope (inspect, validate) or the tables listing (text, or one JSON envelope)
+stdout: one JSON envelope (inspect, validate) or a listing (tables, columns: text or one JSON envelope)
 stderr: human-readable diagnostics, as one line per fatal/error finding
 ```
 
@@ -1037,9 +1037,11 @@ Four families, distinguished by **who can fix them** and **whether schema can be
 
 The Exit column is `ExitPolicy` (`inspect` ∈ {0, 1}, `validate` ∈ {0, 1, 3}), which is
 **Integration data, not an envelope member** (§12). Everything a file can cause is in that table;
-the one exit code outside it is `2` for *command-line misuse* (an unrecognised token), which the
-command layer decides before any input is read and which belongs to stage 7. A file never produces
-`2`, and no `E_`/`D_`/`S_`/`V_` code maps to it.
+the codes outside it belong to the command layer (§12's exit table): `2` for *command-line misuse*,
+decided from the tokens before any input is read; `4` for a `columns` operand that selects no single
+entity or view, which depends on the operand and the file together; and `70`/`74` for the two listing
+commands' output failures. A file never produces `2`, and no `E_`/`D_`/`S_`/`V_` code maps to `2`,
+`4`, `70` or `74`.
 
 ```ts
 export type Severity = 'fatal' | 'error' | 'warning' | 'info'
@@ -1108,27 +1110,38 @@ key is a `warning` (U6 defines no semantics).
 `inspect` and `validate` write one envelope per invocation, on **stdout**, and nothing else there:
 the stream is exactly one JSON document plus the newline that ends it, so a consumer can parse it
 whole. `tables` writes a human-readable listing by default and one envelope of its own shape with
-`--format json`; both are specified in `docs/proposals/human-cli.md` §4 and §5. Human-readable
-diagnostics go to **stderr**; JSON is never mixed with prose. stderr carries one line per `fatal`
-or `error` diagnostic — the two severities that can decide a non-zero exit — and nothing for
-`warning`/`info`, whose complete record is the envelope. The format is a per-command concern:
-`json` is the only format of `inspect` and `validate` and the default of both, while `tables` takes
-`text` (the default) or `json`.
+`--format json`; both are specified in `docs/proposals/human-cli.md` §4 and §5. `columns` follows the
+same two-format rule for a different payload: the columns of **one** object, selected by its exact
+physical name. Human-readable diagnostics go to **stderr**; JSON is never mixed with prose. stderr
+carries one line per `fatal` or `error` diagnostic — the two severities that can decide a non-zero
+exit — and nothing for `warning`/`info`, whose complete record is the envelope. The format is a
+per-command concern: `json` is the only format of `inspect` and `validate` and the default of both,
+while `tables` and `columns` take `text` (the default) or `json`.
 
-**Two shapes, one selection key.** A document is discriminated on `command`: `inspect` and
-`validate` carry `schema` at position 7, `tables` carries `result` there. `command` sits at
-position 3 and `contractVersion` at position 1 in every shape, so a consumer selects its decoder
+**Three shapes, one selection key.** A document is discriminated on `command`: `inspect` and
+`validate` carry `schema` at position 7, `tables` and `columns` carry `result` there. `command` sits
+at position 3 and `contractVersion` at position 1 in every shape, so a consumer selects its decoder
 from `(command, contractVersion)` and must reject a pair it does not support instead of guessing
 the shape from which keys happen to be present. The tables shape is specified in
 `docs/proposals/human-cli.md` §5.2; its shared members are the ones below, verbatim.
 
-**The tables framing is qualified.** `tables` text emits no envelope, and for `tables` the
-"exactly one JSON document" framing holds only when the write succeeds: after exit `70` (output
+**The columns payload is the inspected object's own record.** `result` carries `kind`, the object's
+`sectionIndex`, `span`, decoded `pname` and `lname`, and `columns` — which is the same
+`effectiveColumns` record an inspect object carries: for an entity the three ordered lists
+(`columns`, `declared`, `common`), the collision records, `usingCommonColumns` with its provenance,
+and the `complete` or `partial` arm; for a view the `unknown` arm with its reason and **no list
+member**. A `[Subtype]` is never a result: its membership is unsupported and it declares no columns.
+The selection operand is compared against the decoded `PName` exactly and case-sensitively; no
+match, more than one match, or a single subtype writes nothing to stdout in either format, one line
+to stderr, and exits `4`. A fatal read takes precedence over the selection and exits `1`.
+
+**The listing framing is qualified.** `tables` and `columns` text emit no envelope, and for both
+the "exactly one JSON document" framing holds only when the write succeeds: after exit `70` (output
 generation failed) or `74` (stdout write failed or closed early), stdout may hold any prefix of
 the output, and "accepted" means accepted by Node, not delivered. An invocation that exits `0`
 through the bounded writer is not proof that a reader received every byte. The `inspect` and
 `validate` sentences are unchanged: their write path does not change. A **failed** document does
-not turn `tables` text into an envelope either: the framing follows the format, not the status, and
+not turn their text into an envelope either: the framing follows the format, not the status, and
 `E_LIMIT_BUDGET` is described per format once, in §10.5.
 
 ```json
@@ -1313,22 +1326,24 @@ refusal.
 **Exit codes are not an envelope member.** The envelope has the ten fields above and no
 `exitPolicy`; adding one would be a contract change for information the command layer already owns.
 `ExitPolicy` stays Integration data (`inspect` ∈ {0, 1}, `validate` ∈ {0, 1, 3}), and the codes
-that are not policy answers — `2` for command-line misuse, and `70`/`74` for the two `tables`
-output failures — are decided by the command layer (§11, §17 TBD-O7, and
-`docs/proposals/human-cli.md` §3.7 for the two `tables` codes).
+that are not policy answers — `2` for command-line misuse, `4` for a `columns` selection that is not
+exactly one entity or view, and `70`/`74` for the listing write failures — are decided by the
+command layer (§11, §17 TBD-O7, and `docs/proposals/human-cli.md` §3.7 for the two writer codes).
 
-**The exit table (TBD-O7, decided).** One code per invocation. A file decides every non-misuse
-code, because `integrate()` answers the first two columns from the severities alone; `src/cli.ts`
-maps the command to its column and adds nothing.
+**The exit table (TBD-O7, decided).** One code per invocation. A loaded file decides the first two
+codes, because `integrate()` answers those columns from the severities alone; `src/cli.ts` maps the
+command to its column and adds nothing. The remaining rows are decided elsewhere: `4` by
+`columns`' own selection, and `70`/`74` by the listing writer.
 
 | Code | `inspect` | `validate` | What was written |
 |---|---|---|---|
-| `0` | any non-failed read, `degraded` included | no `error`-severity diagnostic | one envelope on stdout for `inspect`, `validate` and `tables --format json`; `tables` text writes its listing instead. stderr stays empty unless the result carries a `fatal`/`error` diagnostic — `warning`/`info` findings live only in the envelope |
-| `1` | any `fatal` diagnostic | any `fatal` diagnostic | `inspect`/`validate` still emit their envelope, with `source`, the payload and `completeness` `null`; `tables --format json` emits the tables document with `result` `null`, and `tables` text its text failure framing; stderr carries the fatal line |
+| `0` | any non-failed read, `degraded` included | no `error`-severity diagnostic | one envelope on stdout for `inspect`, `validate`, `tables --format json` and `columns --format json`; the text formats write their listing instead. stderr stays empty unless the result carries a `fatal`/`error` diagnostic — `warning`/`info` findings live only in the envelope |
+| `1` | any `fatal` diagnostic | any `fatal` diagnostic | `inspect`/`validate` still emit their envelope, with `source`, the payload and `completeness` `null`; `tables`/`columns --format json` emit their document with `result` `null`, and their text formats a failure framing; stderr carries the fatal line |
 | `3` | never | any `error`-severity diagnostic | one envelope whose `status` is `degraded`; stderr carries the error line |
 | `2` | — | — | nothing on stdout; the usage block on stderr. Decided before any input is read, so no file can cause it |
-| `70` | — | — | `tables` only: the output could not be generated, so stdout is incomplete and must be discarded |
-| `74` | — | — | `tables` only: the stdout write failed (anything but a closed pipe) or closed early, so stdout is incomplete |
+| `4` | — | — | `columns` only: the operand selects no single entity or view. Nothing on stdout in either format; one escaped line on stderr naming the operand, and for several matches the candidate section indexes in document order |
+| `70` | — | — | `tables` and `columns`: the output could not be generated, so stdout is incomplete and must be discarded |
+| `74` | — | — | `tables` and `columns`: the stdout write failed (anything but a closed pipe) or closed early, so stdout is incomplete |
 
 The split is what makes `V_DUPLICATE_OBJECT_NAME` (sem-08) and `V_MISSING_REQUIRED_KEY` (sem-09)
 exit `0` under `inspect` and `3` under `validate` (`test-strategy.md` §14 stage 5).

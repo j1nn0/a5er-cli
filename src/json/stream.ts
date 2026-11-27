@@ -35,7 +35,7 @@
  * `strictReplacer` gains an `export` and no behaviour (§5.8, S-3).
  */
 
-import type { JsonTablesEnvelope } from './envelope.js';
+import type { JsonColumnsEnvelope, JsonTablesEnvelope } from './envelope.js';
 import { strictReplacer } from './serialize.js';
 
 /** At most this many code units per escaped string slice (§5.10). */
@@ -229,7 +229,9 @@ function* buffered(source: Iterable<string>): Generator<string, void, undefined>
 }
 
 /** Every piece of the document, ending with the one newline the command writes (§3.6). */
-function* documentPieces(document: JsonTablesEnvelope): Generator<string, void, undefined> {
+function* documentPieces(
+  document: JsonTablesEnvelope | JsonColumnsEnvelope,
+): Generator<string, void, undefined> {
   // The root holder is `{ '': document }`, which is what `JSON.stringify` hands its replacer.
   const root: Record<string, unknown> = { '': document };
   yield* valuePieces(root, '');
@@ -237,11 +239,13 @@ function* documentPieces(document: JsonTablesEnvelope): Generator<string, void, 
 }
 
 /**
- * Encode a tables document as bounded JSON chunks (§5.10).
+ * Encode a projection document — `tables` or `columns` — as bounded JSON chunks (§5.10).
  *
- * The iterable is lazy: each `next()` buffers one chunk and returns it. The last chunk ends with
- * `\n`, so the whole stream is one JSON document plus the newline that ends it.
+ * The encoder is the shape's: both documents are plain JSON values with no `undefined` member, so the
+ * same strict replacer applies. The iterable is lazy: each `next()` buffers one chunk and returns it.
+ * The last chunk ends with `\n`, so the whole stream is one JSON document plus the newline that
+ * ends it.
  */
-export function encodeJson(document: JsonTablesEnvelope): Iterable<string> {
+export function encodeJson(document: JsonTablesEnvelope | JsonColumnsEnvelope): Iterable<string> {
   return buffered(documentPieces(document));
 }

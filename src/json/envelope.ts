@@ -934,7 +934,7 @@ export type JsonTablesCommand = 'tables';
 export type JsonSchemaDocument = JsonEnvelope & { readonly result?: never };
 
 /** Every document the CLI can emit, discriminated on `command` (§5.1). */
-export type JsonDocument = JsonSchemaDocument | JsonTablesEnvelope;
+export type JsonDocument = JsonSchemaDocument | JsonTablesEnvelope | JsonColumnsEnvelope;
 
 /**
  * `a5er tables --format json` for a read that is not fatal (§5.2).
@@ -1058,6 +1058,84 @@ export interface JsonTablesOmitted {
     readonly sectionIndexes: readonly number[];
   };
 }
+
+/**
+ * `a5er columns` — one object's columns (`docs/architecture.md` §12).
+ *
+ * A command of its own shape, like `tables`: the shared members are the same ten, the payload key is
+ * `result`, and `contractVersion` stays `0.1.0` because the envelope's existing fields and meanings
+ * do not move. Consumers select their decoder from `(command, contractVersion)`.
+ */
+export type JsonColumnsCommand = 'columns';
+
+/** Which object was selected; both arms carry the identity the selection matched. */
+export interface JsonColumnsEntityResult {
+  readonly kind: 'entity';
+  readonly sectionIndex: number;
+  /** The object's `PName` line (the last one), else its header line. */
+  readonly span: JsonSpan;
+  /** The decoded physical name the operand matched, case preserved. */
+  readonly pname: string;
+  readonly lname: string | null;
+  /** The inspect envelope's own record for this entity, reused member for member. */
+  readonly columns: JsonEntityColumns;
+}
+
+/**
+ * A view's columns stay `unknown` with a reason; there is no list member (§9.6).
+ *
+ * `JsonViewColumns` is reused rather than restated, so "a view's columns are not stored" cannot be
+ * spelled two ways in two commands.
+ */
+export interface JsonColumnsViewResult {
+  readonly kind: 'view';
+  readonly sectionIndex: number;
+  readonly span: JsonSpan;
+  readonly pname: string;
+  readonly lname: string | null;
+  readonly columns: JsonViewColumns;
+}
+
+export type JsonColumnsResult = JsonColumnsEntityResult | JsonColumnsViewResult;
+
+/** `a5er columns --format json` for a read that is not fatal. */
+export interface JsonColumnsEnvelopeRead {
+  readonly contractVersion: typeof CONTRACT_VERSION;
+  readonly tool: {
+    readonly name: typeof TOOL_NAME;
+    readonly version: typeof TOOL_VERSION;
+  };
+  readonly command: JsonColumnsCommand;
+  readonly status: 'ok' | 'degraded';
+  readonly source: JsonSource;
+  readonly limits: JsonLimits;
+  readonly result: JsonColumnsResult;
+  readonly unsupported: readonly JsonUnsupported[];
+  readonly diagnostics: readonly JsonDiagnostic[];
+  readonly completeness: JsonCompleteness;
+  /** Type-level only: a columns envelope never has a `schema` key. Not emitted. */
+  readonly schema?: never;
+}
+
+/** `a5er columns --format json` for a fatal read: no source, no result and no counts. */
+export interface JsonColumnsEnvelopeFailed {
+  readonly contractVersion: typeof CONTRACT_VERSION;
+  readonly tool: {
+    readonly name: typeof TOOL_NAME;
+    readonly version: typeof TOOL_VERSION;
+  };
+  readonly command: JsonColumnsCommand;
+  readonly status: 'failed';
+  readonly source: null;
+  readonly limits: JsonLimits;
+  readonly result: null;
+  readonly unsupported: readonly JsonUnsupported[];
+  readonly diagnostics: readonly JsonDiagnostic[];
+  readonly completeness: null;
+  readonly schema?: never;
+}
+
+export type JsonColumnsEnvelope = JsonColumnsEnvelopeRead | JsonColumnsEnvelopeFailed;
 
 /** Re-exported for `serialize.ts`'s narrowing; keeps the JSON layer's imports in one place. */
 export type { ObjectPosition, RawElement, RelationPosition, Span };

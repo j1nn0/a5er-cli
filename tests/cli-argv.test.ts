@@ -70,6 +70,7 @@ const HELP_LINES = [
   '  a5er inspect [--format json] <file>',
   '  a5er validate [--format json] <file>',
   '  a5er tables [--format text|json] <file>',
+  '  a5er columns [--format text|json] <file> <name>',
   '  a5er --help',
   '  a5er --version',
   '',
@@ -79,27 +80,30 @@ const HELP_LINES = [
   '                   error-severity finding is reported',
   '  tables           List the entities and views the file declares; text by',
   '                   default, one JSON envelope with --format json',
+  "  columns          List one entity's columns, selected by exact physical name;",
+  '                   text by default, one JSON envelope with --format json',
   '',
   'Options:',
   '  --format FORMAT  Output format. inspect and validate: json (the default and',
-  '                   only format). tables: text (the default) or json',
+  '                   only format). tables and columns: text (the default) or json',
   '  -h, --help       Show this help and exit',
   '  -v, --version    Print the version and exit',
   '',
   'Exit codes:',
-  '  0   The read was not fatal (inspect and tables, degraded included) and',
-  '      validate found no error-severity finding',
+  '  0   The read was not fatal (inspect, tables and columns, degraded included)',
+  '      and validate found no error-severity finding',
   '  1   The file could not be read into a schema (fatal diagnostic)',
   '  2   Command-line misuse; nothing is read, and stdout stays empty',
   '  3   validate found an error-severity finding',
-  '  70  tables failed internally while generating its output; stdout is',
-  '      incomplete',
-  '  74  tables could not write its output (a write error other than a closed',
-  '      pipe, or stdout closed early); stdout is incomplete',
+  '  4   columns selected no single entity or view; nothing is written to stdout',
+  '  70  tables or columns failed internally while generating its output; stdout',
+  '      is incomplete',
+  '  74  tables or columns could not write its output (a write error other than a',
+  '      closed pipe, or stdout closed early); stdout is incomplete',
   '',
   'With --format json, stdout carries exactly one JSON envelope and nothing else.',
-  "tables text is one table plus note lines that start with '#'. Human-readable",
-  'lines for fatal and error diagnostics go to stderr.',
+  "tables and columns text is one table plus note lines that start with '#'.",
+  'Human-readable lines for fatal and error diagnostics go to stderr.',
 ];
 
 /** The help exactly as §3.4 writes it. */
@@ -111,6 +115,7 @@ const USAGE_LINES = [
   '  a5er inspect [--format json] <file>',
   '  a5er validate [--format json] <file>',
   '  a5er tables [--format text|json] <file>',
+  '  a5er columns [--format text|json] <file> <name>',
   '  a5er --help | --version',
 ];
 
@@ -220,12 +225,14 @@ describe('a5er argv — the scan rules of §3.2', () => {
 });
 
 describe('a5er argv — the post-scan checks of §3.2', () => {
-  it('names all three commands in the missing-command message', async () => {
-    await expectMisuse(['--format', 'json'], 'missing a command (inspect, validate or tables)');
+  it('names all four commands in the missing-command message', async () => {
+    await expectMisuse(
+      ['--format', 'json'],
+      'missing a command (inspect, validate, tables or columns)',
+    );
   });
 
   it('refuses a word that is not a command', async () => {
-    await expectMisuse(['columns', '/tmp/never-read.a5er'], 'unknown command "columns"');
     await expectMisuse(['search', '/tmp/never-read.a5er'], 'unknown command "search"');
     await expectMisuse(['export', '/tmp/never-read.a5er'], 'unknown command "export"');
     await expectMisuse(['relations', '/tmp/never-read.a5er'], 'unknown command "relations"');
