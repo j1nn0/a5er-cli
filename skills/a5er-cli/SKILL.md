@@ -50,28 +50,22 @@ file=tests/fixtures/synthetic/fmt-01-baseline.a5er   # replace with the path to 
     node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
 console.log(j.status,"unsupported="+j.unsupported.length,JSON.stringify(j.completeness));
 j.unsupported.forEach((u,i)=>console.log("unsupported",JSON.stringify({index:i,kind:u.kind,key:u.key})));
-for(const d of j.diagnostics)console.log(d.severity,d.code,d.span?"line "+d.span.startLine:"")' "$tmp/out.json";;
+for(const d of j.diagnostics)console.log(d.severity,d.code,d.span?"line "+d.span.startLine:"")' "$tmp/out.json" || { echo "extraction failed" >&2; exit 98; };;
   esac
   exit "$code"
 )
 ```
 
-stdout is one JSON line. stderr is prose, one line per `fatal` or `error` diagnostic. A tiny file already yields tens of KB of `inspect` JSON, so extract fields instead of printing it. The `case` parses only after exit 0, 1 or 3; exit 2, 4, 70 and 74 leave stdout empty or incomplete. Exit 99 is this block's own setup failure (no CLI ran), not a CLI code.
+stdout is one JSON line. stderr is prose, one line per `fatal` or `error` diagnostic. A tiny file already yields tens of KB of `inspect` JSON, so extract fields instead of printing it. The `case` parses only after exit 0, 1 or 3; exit 2, 4, 70 and 74 leave stdout empty or incomplete. Exit 99 (no temp directory, no CLI ran) and exit 98 (the Node.js extraction failed, so no extracted output can be trusted) are this block's own codes, not CLI codes.
 
-For `tables`, `columns` or `relations` with `--format json`, add this payload line after the diagnostics loop (it prints each row as JSON, minus `span`):
+For `tables`, `columns` or `relations` with `--format json`, insert the lines below inside the `node -e` argument: start a new line right after the `for(const d of j.diagnostics)...` line and place them before the closing single quote `'`. They contain no single quote, so they fit the surrounding shell quoting as they are. They print each row as JSON, minus `span`.
 
-```js
-const r = j.result,
-  omit = (k, v) => (k === 'span' ? undefined : v);
-if (r === null) console.log('no result: status=' + j.status);
-else if (Array.isArray(r)) {
-  console.log('relations=' + r.length);
-  r.forEach((x) => console.log(JSON.stringify(x)));
-} else if (r.tables) {
-  const { tables, ...rest } = r;
-  console.log(JSON.stringify(rest));
-  tables.forEach((x) => console.log(JSON.stringify(x, omit)));
-} else console.log(JSON.stringify(r, omit));
+```text
+const r=j.result,omit=(k,v)=>k==="span"?undefined:v;
+if(r===null)console.log("no result: status="+j.status);
+else if(Array.isArray(r)){console.log("relations="+r.length);r.forEach(x=>console.log(JSON.stringify(x)));}
+else if(r.tables){const{tables,...rest}=r;console.log(JSON.stringify(rest));tables.forEach(x=>console.log(JSON.stringify(x,omit)));}
+else console.log(JSON.stringify(r,omit));
 ```
 
 ## Exit codes
